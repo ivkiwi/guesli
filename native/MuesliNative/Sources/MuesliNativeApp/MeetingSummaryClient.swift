@@ -775,7 +775,11 @@ enum MeetingSummaryClient {
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         do {
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode >= 400 {
+                fputs("[summary] Ollama title generation: HTTP \(httpResponse.statusCode)\n", stderr)
+                return nil
+            }
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let message = json["message"] as? [String: Any],
                   let content = message["content"] as? String,

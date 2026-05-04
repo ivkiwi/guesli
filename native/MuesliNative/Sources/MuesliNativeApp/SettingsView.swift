@@ -437,7 +437,7 @@ struct SettingsView: View {
                     keyStatusRow(key: appState.config.openAIAPIKey)
                 } else if appState.selectedMeetingSummaryBackend == .ollama {
                     settingsRow("Ollama URL", controlWidth: meetingControlWidth) {
-                        PastableSecureField(
+                        PastableTextField(
                             text: appState.config.ollamaURL,
                             placeholder: "http://localhost:11434",
                             onChange: { val in controller.updateConfig { $0.ollamaURL = val } }
