@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Downloading Muesli</title>
+  <meta name="robots" content="noindex">
+  <meta http-equiv="refresh" content="5; url=https://github.com/pHequals7/muesli/releases/latest">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111214;
+      --panel: #191b1f;
+      --text: rgba(255,255,255,0.88);
+      --muted: rgba(255,255,255,0.56);
+      --accent: #34d399;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100svh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 50% 10%, rgba(52,211,153,0.10), transparent 34%),
+        var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+    }
+
+    main {
+      width: min(440px, calc(100vw - 32px));
+      padding: 28px;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 18px;
+      background: color-mix(in srgb, var(--panel) 86%, transparent);
+      box-shadow: 0 24px 90px rgba(0,0,0,0.32);
+      text-align: center;
+    }
+
+    img {
+      width: 64px;
+      height: 64px;
+      border-radius: 14px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      letter-spacing: -0.03em;
+    }
+
+    p {
+      margin: 12px 0 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="../icon.png" alt="Muesli">
+    <h1>Preparing the latest Muesli download</h1>
+    <p id="status">Looking up the latest signed macOS release...</p>
+    <p>If the download does not start, <a id="fallback" href="https://github.com/pHequals7/muesli/releases/latest">open the latest release</a>.</p>
+  </main>
+
+  <script>
+    const fallbackUrl = "https://github.com/pHequals7/muesli/releases/latest";
+    const status = document.getElementById("status");
+    const fallback = document.getElementById("fallback");
+
+    async function redirectToLatestDownload() {
+      try {
+        const response = await fetch("../appcast.xml", { cache: "no-store" });
+        if (!response.ok) throw new Error(`appcast ${response.status}`);
+
+        const appcast = await response.text();
+        const xml = new DOMParser().parseFromString(appcast, "application/xml");
+        const enclosure = xml.querySelector("item enclosure[url]");
+        const url = enclosure?.getAttribute("url");
+
+        if (!url) throw new Error("missing latest release URL");
+
+        status.textContent = "Redirecting to the latest signed DMG...";
+        fallback.href = url;
+        window.location.replace(url);
+      } catch (error) {
+        status.textContent = "Could not resolve the direct DMG automatically. Opening the latest release page instead...";
+        window.location.replace(fallbackUrl);
+      }
+    }
+
+    redirectToLatestDownload();
+  </script>
+</body>
+</html>

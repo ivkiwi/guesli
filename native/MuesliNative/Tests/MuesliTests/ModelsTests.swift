@@ -1,4 +1,5 @@
 import Testing
+import AppKit
 import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
@@ -220,6 +221,16 @@ struct SummaryModelPresetTests {
         }
     }
 
+    @Test("Computer use planner presets include GPT-5.5 default")
+    func computerUsePlannerModels() {
+        #expect(SummaryModelPreset.computerUsePlannerModels.first?.id == "gpt-5.5")
+        #expect(SummaryModelPreset.computerUsePlannerModels.contains { $0.id == "gpt-5.4-mini" })
+        for preset in SummaryModelPreset.computerUsePlannerModels {
+            #expect(!preset.id.isEmpty)
+            #expect(!preset.label.isEmpty)
+        }
+    }
+
     @Test("model menu includes custom configured model")
     func modelMenuIncludesCustomConfiguredModel() {
         let customModel = "anthropic/claude-sonnet-4.5"
@@ -359,6 +370,11 @@ struct AppConfigTests {
         #expect(config.ollamaURL == "http://localhost:11434")
         #expect(config.ollamaModel.isEmpty)
         #expect(config.dictationHotkey == .default)
+        #expect(config.computerUseHotkey == .computerUseDefault)
+        #expect(config.enableComputerUseHotkey == true)
+        #expect(config.enableComputerUsePlanner == true)
+        #expect(config.computerUsePlannerModel.isEmpty)
+        #expect(config.computerUseTimeoutSeconds == 120)
         #expect(config.showFloatingIndicator == true)
         #expect(config.indicatorAnchor == .midTrailing)
         #expect(config.hasCompletedOnboarding == false)
@@ -394,6 +410,11 @@ struct AppConfigTests {
         config.showScheduledMeetingNotifications = false
         config.showMeetingDetectionNotification = false
         config.mutedMeetingDetectionAppBundleIDs = ["com.google.Chrome", "com.tinyspeck.slackmacgap"]
+        config.computerUseHotkey = HotkeyConfig(keyCode: 62, label: "Right Ctrl")
+        config.enableComputerUseHotkey = false
+        config.enableComputerUsePlanner = false
+        config.computerUsePlannerModel = "gpt-5.4"
+        config.computerUseTimeoutSeconds = 180
 
         let data = try JSONEncoder().encode(config)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
@@ -416,6 +437,11 @@ struct AppConfigTests {
         #expect(decoded.mutedMeetingDetectionAppBundleIDs == ["com.google.Chrome", "com.tinyspeck.slackmacgap"])
         #expect(decoded.meetingTranscriptionBackend == config.meetingTranscriptionBackend)
         #expect(decoded.indicatorAnchor == config.indicatorAnchor)
+        #expect(decoded.computerUseHotkey == HotkeyConfig(keyCode: 62, label: "Right Ctrl"))
+        #expect(decoded.enableComputerUseHotkey == false)
+        #expect(decoded.enableComputerUsePlanner == false)
+        #expect(decoded.computerUsePlannerModel == "gpt-5.4")
+        #expect(decoded.computerUseTimeoutSeconds == 180)
     }
 
     @Test("JSON coding keys use snake_case")
@@ -426,6 +452,11 @@ struct AppConfigTests {
 
         #expect(json["stt_backend"] != nil)
         #expect(json["stt_model"] != nil)
+        #expect(json["computer_use_hotkey"] != nil)
+        #expect(json["enable_computer_use_hotkey"] != nil)
+        #expect(json["enable_computer_use_planner"] != nil)
+        #expect(json["computer_use_planner_model"] != nil)
+        #expect(json["computer_use_timeout_seconds"] != nil)
         #expect(json["cohere_language"] != nil)
         #expect(json["meeting_transcription_backend"] != nil)
         #expect(json["meeting_transcription_model"] != nil)
@@ -461,9 +492,32 @@ struct AppConfigTests {
         #expect(config.showMeetingDetectionNotification == true)
         #expect(config.mutedMeetingDetectionAppBundleIDs.isEmpty)
         #expect(config.customMeetingTemplates.isEmpty)
+        #expect(config.computerUseHotkey == .computerUseDefault)
+        #expect(config.enableComputerUseHotkey == true)
+        #expect(config.enableComputerUsePlanner == true)
+        #expect(config.computerUsePlannerModel.isEmpty)
+        #expect(config.computerUseTimeoutSeconds == 120)
         #expect(config.meetingHookEnabled == false)
         #expect(config.meetingHookPath.isEmpty)
         #expect(config.meetingHookTimeoutSeconds == 30)
+    }
+
+    @Test("computer use default avoids existing right command dictation hotkey")
+    func computerUseDefaultAvoidsExistingRightCommandDictationHotkey() throws {
+        let json = """
+        {
+          "dictation_hotkey": {
+            "keyCode": 54,
+            "label": "Right Cmd"
+          }
+        }
+        """
+
+        let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+
+        #expect(config.dictationHotkey == HotkeyConfig(keyCode: 54, label: "Right Cmd"))
+        #expect(config.computerUseHotkey == .default)
+        #expect(config.enableComputerUseHotkey == true)
     }
 
     @Test("unsupported onboarding use case falls back to dictation")
@@ -654,6 +708,63 @@ struct HotkeyMonitorTests {
 
         #expect(cancelCount == 1)
     }
+
+    @Test("local monitor skips fresh hotkey starts while editing text")
+    @MainActor
+    func localMonitorSkipsFreshHotkeyStartsWhileEditingText() async throws {
+        let monitor = HotkeyMonitor()
+        let textView = NSTextView()
+
+        #expect(
+            monitor.shouldHandleLocalEventForTests(
+                type: .flagsChanged,
+                keyCode: 55,
+                firstResponder: textView
+            ) == false
+        )
+    }
+
+    @Test("local monitor preserves key-up cleanup after hotkey session is armed")
+    @MainActor
+    func localMonitorPreservesKeyUpCleanupAfterHotkeySessionIsArmed() async throws {
+        let monitor = HotkeyMonitor()
+        let textView = NSTextView()
+        var stopCount = 0
+        monitor.onStop = {
+            stopCount += 1
+        }
+
+        monitor.setHoldRecordingActiveForTests()
+
+        #expect(
+            monitor.shouldHandleLocalEventForTests(
+                type: .flagsChanged,
+                keyCode: 55,
+                firstResponder: textView
+            ) == true
+        )
+
+        monitor.handleFlagsChanged(keyCode: 55, flags: [])
+
+        #expect(stopCount == 1)
+    }
+
+    @Test("local monitor still lets escape cancel active hold dictation while editing text")
+    @MainActor
+    func localMonitorLetsEscapeCancelActiveHoldDictationWhileEditingText() async throws {
+        let monitor = HotkeyMonitor()
+        let textView = NSTextView()
+
+        monitor.setHoldRecordingActiveForTests()
+
+        #expect(
+            monitor.shouldHandleLocalEventForTests(
+                type: .keyDown,
+                keyCode: 53,
+                firstResponder: textView
+            ) == true
+        )
+    }
 }
 
 @Suite("MeetingResummarizationPolicy")
@@ -817,6 +928,19 @@ struct HotkeyConfigTests {
         let config = HotkeyConfig.default
         #expect(config.keyCode == 55)
         #expect(config.label == "Left Cmd")
+    }
+
+    @Test("computer use default is Right Cmd")
+    func computerUseDefaultConfig() {
+        let config = HotkeyConfig.computerUseDefault
+        #expect(config.keyCode == 54)
+        #expect(config.label == "Right Cmd")
+    }
+
+    @Test("computer use fallback avoids dictation hotkey")
+    func computerUseFallbackAvoidsDictationHotkey() {
+        #expect(HotkeyConfig.computerUseDefault(avoiding: .default) == .computerUseDefault)
+        #expect(HotkeyConfig.computerUseDefault(avoiding: .computerUseDefault) == .default)
     }
 
     @Test("label for known key codes")
