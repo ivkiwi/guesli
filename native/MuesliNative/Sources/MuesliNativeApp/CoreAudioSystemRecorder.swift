@@ -47,7 +47,11 @@ final class CoreAudioSystemRecorder: SystemAudioCapturing {
     private var sourceChannels: UInt32 = 2
 
     deinit {
-        if isRecording || aggregateDeviceID != kAudioObjectUnknown || tapID != kAudioObjectUnknown {
+        if isRecording
+            || outputFile != nil
+            || aggregateDeviceID != kAudioObjectUnknown
+            || tapID != kAudioObjectUnknown
+        {
             _ = stop()
         }
     }
