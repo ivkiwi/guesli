@@ -51,6 +51,25 @@ struct MeetingAutoStopPolicyTests {
         #expect(MeetingAutoStopPolicy.matches(candidate: audioFallback, source: source))
     }
 
+    @Test("ignores unrelated browser audio in the same browser")
+    func ignoresUnrelatedBrowserAudioInSameBrowser() {
+        let source = MeetingAutoStopSource(candidate: googleMeetCandidate())
+        let otherTabAudio = MeetingCandidate(
+            id: "browser:com.google.Chrome:session:1800000999",
+            platform: .unknown,
+            appName: "Chrome",
+            url: nil,
+            evidence: [.audioInputProcess],
+            startedAt: Date(timeIntervalSince1970: 1_800_000_005),
+            meetingTitle: nil,
+            sourceBundleID: "com.google.Chrome",
+            sourcePID: 9876,
+            suppressionID: "browser:com.google.Chrome:session:1800000999"
+        )
+
+        #expect(!MeetingAutoStopPolicy.matches(candidate: otherTabAudio, source: source))
+    }
+
     @Test("ignores unrelated calendar-only activity")
     func ignoresUnrelatedCalendarOnlyActivity() {
         let source = MeetingAutoStopSource(candidate: googleMeetCandidate())
@@ -163,6 +182,31 @@ struct MeetingAutoStopPolicyTests {
         #expect(!shouldStopWhileVisible)
         #expect(tracker.source?.sourceBundleID == "com.google.Chrome")
         #expect(tracker.source?.hasObservedCandidate == true)
+        #expect(shouldStopAfterGrace)
+    }
+
+    @Test("tracker starts disappearance grace at recording start after startup observation")
+    func trackerStartsGraceAtRecordingStartAfterStartupObservation() throws {
+        let url = try #require(URL(string: "https://meet.google.com/aaa-bbbb-ccc"))
+        var tracker = MeetingAutoStopTracker()
+        tracker.arm(source: MeetingAutoStopSource(meetingURL: url))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        tracker.observeBeforeRecordingStarted(candidate: googleMeetCandidate())
+        tracker.markRecordingStarted(now: now.addingTimeInterval(10))
+        let shouldStopBeforeGrace = tracker.observe(
+            candidate: nil,
+            now: now.addingTimeInterval(29),
+            gracePeriod: 20
+        )
+        let shouldStopAfterGrace = tracker.observe(
+            candidate: nil,
+            now: now.addingTimeInterval(31),
+            gracePeriod: 20
+        )
+
+        #expect(tracker.source?.sourceBundleID == "com.google.Chrome")
+        #expect(!shouldStopBeforeGrace)
         #expect(shouldStopAfterGrace)
     }
 

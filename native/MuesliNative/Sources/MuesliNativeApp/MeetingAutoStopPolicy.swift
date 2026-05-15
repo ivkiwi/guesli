@@ -54,6 +54,7 @@ struct MeetingAutoStopSource: Equatable {
 struct MeetingAutoStopTracker: Equatable {
     private(set) var source: MeetingAutoStopSource?
     private(set) var lastSeenAt: Date?
+    private var observedBeforeRecordingStarted = false
 
     var isArmed: Bool {
         source != nil
@@ -62,11 +63,29 @@ struct MeetingAutoStopTracker: Equatable {
     mutating func arm(source: MeetingAutoStopSource?) {
         self.source = source
         lastSeenAt = nil
+        observedBeforeRecordingStarted = false
     }
 
     mutating func disarm() {
         source = nil
         lastSeenAt = nil
+        observedBeforeRecordingStarted = false
+    }
+
+    mutating func observeBeforeRecordingStarted(candidate: MeetingCandidate?) {
+        guard let currentSource = source,
+              let candidate,
+              MeetingAutoStopPolicy.matches(candidate: candidate, source: currentSource) else {
+            return
+        }
+        source = currentSource.refined(with: candidate)
+        observedBeforeRecordingStarted = true
+    }
+
+    mutating func markRecordingStarted(now: Date) {
+        guard observedBeforeRecordingStarted, lastSeenAt == nil else { return }
+        lastSeenAt = now
+        observedBeforeRecordingStarted = false
     }
 
     mutating func observe(
@@ -105,6 +124,12 @@ enum MeetingAutoStopPolicy {
 
         if let normalizedURL = source.normalizedURL, candidate.url == normalizedURL {
             return true
+        }
+
+        guard source.candidateID == nil,
+              source.suppressionID == nil,
+              source.normalizedURL == nil else {
+            return false
         }
 
         if let sourceBundleID = source.sourceBundleID,

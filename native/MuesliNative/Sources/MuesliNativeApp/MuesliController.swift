@@ -353,7 +353,7 @@ final class MuesliController: NSObject {
         }
         meetingMonitor.isRecordingProvider = { [weak self] in
             guard let self else { return false }
-            return self.isMeetingRecording() || self.isDictationActivityInProgress
+            return self.isMeetingRecording()
         }
         meetingMonitor.isStartingRecordingProvider = { [weak self] in
             self?.isStartingMeetingRecording ?? false
@@ -2780,6 +2780,7 @@ final class MuesliController: NSObject {
                 }
                 activeMeetingSession = meetingSession
                 activeMeetingID = meetingID
+                activeMeetingAutoStop.markRecordingStarted(now: Date())
                 meetingMonitor.suppressWhileActive()
                 meetingMonitor.refreshState()
                 statusBarController?.setStatus("Meeting: \(title)")
@@ -3476,6 +3477,13 @@ final class MuesliController: NSObject {
                 latestMeetingActivityCandidate = nil
                 latestMeetingActivityCandidateObservedAt = nil
             }
+        }
+
+        if activeMeetingAutoStop.isArmed,
+           isStartingMeetingRecording,
+           !isStoppingMeetingRecording {
+            activeMeetingAutoStop.observeBeforeRecordingStarted(candidate: candidate)
+            return
         }
 
         guard activeMeetingAutoStop.isArmed,
