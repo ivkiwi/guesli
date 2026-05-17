@@ -212,7 +212,6 @@ final class DictationAudioSessionManager: @unchecked Sendable {
         queue.async { [self] in
             let sessionID = self.stateStorage.sessionID
             guard sessionID != nil else {
-                self.emit(.stopped(nil, wavURL: nil))
                 self.restoreSessionAudioState(completion: nil)
                 return
             }

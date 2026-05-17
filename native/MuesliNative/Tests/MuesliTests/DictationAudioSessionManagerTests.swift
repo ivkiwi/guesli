@@ -153,6 +153,21 @@ struct DictationAudioSessionManagerTests {
         })
     }
 
+    @Test("stop without active session does not emit stale stopped event")
+    func stopWithoutActiveSessionDoesNotEmitStoppedEvent() {
+        let harness = Harness(routeKind: .speakerLike)
+
+        harness.manager.stop()
+        harness.wait()
+
+        #expect(!harness.events.contains { event in
+            if case .stopped = event {
+                return true
+            }
+            return false
+        })
+    }
+
     @Test("route refresh warms graph without opening mic")
     func routeRefreshWarmsGraphWithoutOpeningMic() {
         let harness = Harness(routeKind: .headphoneLike, preferredInputDeviceID: 82)

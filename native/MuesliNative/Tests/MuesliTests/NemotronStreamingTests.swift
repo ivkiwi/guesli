@@ -216,6 +216,29 @@ struct StreamingDictationControllerTests {
     }
 
     @available(macOS 15, *)
+    @Test("stop removes unused recorder WAV output")
+    func stopRemovesUnusedRecorderWavOutput() async throws {
+        let transcriber = DelayedNemotronStreamingTranscriber()
+        let recorder = InspectableStreamingDictationRecorder()
+        let controller = StreamingDictationController(
+            transcriber: transcriber,
+            recorder: recorder
+        )
+        let wavURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("wav")
+        try Data([1, 2, 3]).write(to: wavURL)
+        recorder.stopURL = wavURL
+
+        #expect(controller.start() == true)
+        async let stoppedText = stop(controller)
+        await transcriber.releaseState()
+        _ = await stoppedText
+
+        #expect(!FileManager.default.fileExists(atPath: wavURL.path))
+    }
+
+    @available(macOS 15, *)
     @Test("chunk transcription failure cancels mic session and permits retry")
     func chunkTranscriptionFailureCancelsMicSessionAndPermitsRetry() async {
         let transcriber = ThrowingChunkNemotronStreamingTranscriber()
@@ -313,6 +336,7 @@ private final class InspectableStreamingDictationRecorder: StreamingDictationRec
     var cancelCalls = 0
     var preparedPreferredInputDeviceID: AudioObjectID?
     var startedPreferredInputDeviceID: AudioObjectID?
+    var stopURL: URL?
 
     func prepare() throws {
         prepareCalls += 1
@@ -330,7 +354,7 @@ private final class InspectableStreamingDictationRecorder: StreamingDictationRec
 
     func stop() -> URL? {
         stopCalls += 1
-        return nil
+        return stopURL
     }
 
     func cancel() {

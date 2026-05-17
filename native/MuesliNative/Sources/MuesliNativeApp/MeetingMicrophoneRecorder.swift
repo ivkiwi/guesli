@@ -29,7 +29,11 @@ final class MeetingMicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
 
     func start() throws {
         try prepare()
-        recorder?.record()
+        guard recorder?.record() == true else {
+            throw NSError(domain: "MeetingMicrophoneRecorder", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Could not start full-session meeting microphone recording",
+            ])
+        }
     }
 
     func stop() -> URL? {

@@ -2674,6 +2674,7 @@ final class MuesliController: NSObject {
     @discardableResult
     func startMeetingRecording(title: String = "Meeting", calendarEventID: String? = nil, openDocument: Bool = false, endDate: Date? = nil) -> Bool {
         guard !isMeetingRecording(), !isStartingMeetingRecording else { return false }
+        cancelDictationAudioSessionForMeetingRecordingIfNeeded()
         guard let meetingBackend = normalizeMeetingTranscriptionSelectionForAvailability() else {
             presentErrorAlert(
                 title: "Meeting failed to start",
@@ -4230,7 +4231,9 @@ final class MuesliController: NSObject {
             guard pendingReleaseSoundSessionID == eventSessionID else { break }
             pendingReleaseSoundSessionID = nil
             guard dictationAudioSessionManager.currentSessionID == nil else { break }
-            SoundController.playDictationInsert(enabled: true)
+            // Reuse the insert cue as the hotkey-release cue once ducked audio has
+            // been restored; waiting for transcription would make release feedback lag.
+            SoundController.playDictationInsert(enabled: shouldPlayDictationLifecycleSounds)
         case .cancelled:
             break
         case .failed(_, let error):

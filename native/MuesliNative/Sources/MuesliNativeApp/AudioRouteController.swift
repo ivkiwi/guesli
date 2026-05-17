@@ -128,7 +128,15 @@ final class DictationAudioRouteController: DictationAudioRouting {
     private var snapshot = RouteSnapshot()
     private var defaultOutputListener: AudioObjectPropertyListenerBlock?
     private var defaultInputListener: AudioObjectPropertyListenerBlock?
-    var onPreferredInputDeviceChanged: ((AudioObjectID?) -> Void)?
+    private var onPreferredInputDeviceChangedStorage: ((AudioObjectID?) -> Void)?
+    var onPreferredInputDeviceChanged: ((AudioObjectID?) -> Void)? {
+        get {
+            lock.withLock { onPreferredInputDeviceChangedStorage }
+        }
+        set {
+            lock.withLock { onPreferredInputDeviceChangedStorage = newValue }
+        }
+    }
 
     init(
         inspector: CoreAudioDeviceInspecting = CoreAudioDeviceInspector(),
@@ -189,7 +197,8 @@ final class DictationAudioRouteController: DictationAudioRouting {
             }
             let preferredInputDeviceID = Self.preferredInputDeviceID(for: next)
             if notifyEvenIfPreferredUnchanged || previousPreferredInputDeviceID != preferredInputDeviceID {
-                self.onPreferredInputDeviceChanged?(preferredInputDeviceID)
+                let handler = self.onPreferredInputDeviceChanged
+                handler?(preferredInputDeviceID)
             }
         }
     }

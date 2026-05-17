@@ -203,7 +203,9 @@ final class StreamingDictationController {
             stoppingSessionID = sessionID
         }
 
-        let _ = recorder.stop()
+        if let wavURL = recorder.stop() {
+            try? FileManager.default.removeItem(at: wavURL)
+        }
 
         // Collect remaining buffered samples
         let remaining: [Float] = bufferLock.withLock {
