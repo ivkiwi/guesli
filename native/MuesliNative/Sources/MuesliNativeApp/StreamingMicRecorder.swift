@@ -57,9 +57,6 @@ final class StreamingMicRecorder: StreamingDictationRecording {
         guard !isRunning else { return }
         try prepare()
 
-        let fileState = try createNewFile()
-        lock.withLock { $0 = fileState }
-
         let inputNode = engine.inputNode
         let hwFormat = inputNode.outputFormat(forBus: 0)
 
@@ -80,6 +77,9 @@ final class StreamingMicRecorder: StreamingDictationRecording {
         let converter: AVAudioConverter? = needsConversion
             ? AVAudioConverter(from: hwFormat, to: targetFormat)
             : nil
+
+        let fileState = try createNewFile()
+        lock.withLock { $0 = fileState }
 
         inputNode.installTap(onBus: 0, bufferSize: Self.bufferSize, format: nil) { [weak self] buffer, _ in
             guard let self else { return }
@@ -149,8 +149,22 @@ final class StreamingMicRecorder: StreamingDictationRecording {
             self.onAudioBuffer?(floats)
         }
 
-        try engine.start()
-        isRunning = true
+        do {
+            try engine.start()
+            isRunning = true
+        } catch {
+            inputNode.removeTap(onBus: 0)
+            engine.stop()
+            let state = lock.withLock { state -> FileState in
+                let old = state
+                state = FileState()
+                return old
+            }
+            if let url = state.fileURL {
+                try? FileManager.default.removeItem(at: url)
+            }
+            throw error
+        }
     }
 
     /// Rotate to a new file. Returns the completed WAV URL. No audio gap.
