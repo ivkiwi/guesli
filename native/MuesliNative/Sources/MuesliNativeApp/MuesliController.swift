@@ -4250,6 +4250,7 @@ final class MuesliController: NSObject {
         }
         capturedDictationContext = nil
         if hotkeyMonitor.isToggleRecording {
+            setState(.recording)
             indicator.setToggleDictation(true, config: config)
             indicator.setRecordingWaveformLevel(config: config)
         } else {

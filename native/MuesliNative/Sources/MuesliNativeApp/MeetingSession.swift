@@ -720,6 +720,7 @@ final class MeetingSession {
         if let vadManager {
             let controller = StreamingVadController(vadManager: vadManager)
             controller.onChunkBoundary = { [weak self] in
+                // Streaming VAD callbacks can arrive off-main; serialize chunk rotation explicitly.
                 self?.chunkRotationQueue.async { [weak self] in
                     self?.rotateChunkOnQueue()
                 }
@@ -729,6 +730,7 @@ final class MeetingSession {
 
             let systemController = StreamingVadController(vadManager: vadManager)
             systemController.onChunkBoundary = { [weak self] in
+                // Streaming VAD callbacks can arrive off-main; serialize chunk rotation explicitly.
                 self?.chunkRotationQueue.async { [weak self] in
                     self?.rotateSystemChunkOnQueue()
                 }
