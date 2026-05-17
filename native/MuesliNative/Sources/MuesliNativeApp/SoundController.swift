@@ -121,9 +121,11 @@ enum SoundController {
 private enum SystemSoundPlayer {
     private static let queue = DispatchQueue(label: "com.muesli.system-sound-player", qos: .userInitiated)
     private static var soundIDs: [String: SystemSoundID] = [:]
+    private static var cleanupRegistered = false
 
     static func prewarm(names: [String]) {
         queue.async {
+            registerCleanupIfNeeded()
             for name in names {
                 _ = loadSoundID(named: name)
             }
@@ -132,8 +134,26 @@ private enum SystemSoundPlayer {
 
     static func play(named name: String) {
         queue.async {
+            registerCleanupIfNeeded()
             guard let soundID = loadSoundID(named: name) else { return }
             AudioServicesPlaySystemSound(soundID)
+        }
+    }
+
+    private static func registerCleanupIfNeeded() {
+        guard !cleanupRegistered else { return }
+        cleanupRegistered = true
+        atexit {
+            SystemSoundPlayer.disposeCachedSounds()
+        }
+    }
+
+    private static func disposeCachedSounds() {
+        queue.sync {
+            for soundID in soundIDs.values {
+                AudioServicesDisposeSystemSoundID(soundID)
+            }
+            soundIDs.removeAll()
         }
     }
 

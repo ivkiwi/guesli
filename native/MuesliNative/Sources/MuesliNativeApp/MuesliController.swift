@@ -111,6 +111,56 @@ struct CompletedMeetingPersistenceResult {
     let recordingSaveError: MeetingLifecycleError?
 }
 
+private final class DictationLatencyLogWriter: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.muesli.dictation-latency-log")
+    private let url: URL
+    private var hasCreatedDirectory = false
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    func append(_ line: String) {
+        queue.async { [self] in
+            do {
+                if !hasCreatedDirectory {
+                    try FileManager.default.createDirectory(
+                        at: url.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+                    hasCreatedDirectory = true
+                }
+                try Self.trimIfNeeded(at: url)
+                let data = Data((line + "\n").utf8)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    let handle = try FileHandle(forWritingTo: url)
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: data)
+                    try handle.close()
+                } else {
+                    try data.write(to: url, options: .atomic)
+                }
+            } catch {
+                fputs("[dictation-latency] failed to append log: \(error)\n", stderr)
+            }
+        }
+    }
+
+    private static func trimIfNeeded(at url: URL) throws {
+        let maxBytes: UInt64 = 2 * 1024 * 1024
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        guard let fileSize = attributes?[.size] as? UInt64,
+              fileSize > maxBytes else { return }
+
+        let data = try Data(contentsOf: url)
+        let keepCount = min(data.count, Int(maxBytes / 2))
+        let tail = data.suffix(keepCount)
+        let newlineIndex = tail.firstIndex(of: UInt8(ascii: "\n"))
+        let trimmed = newlineIndex.map { tail[tail.index(after: $0)...] } ?? tail[...]
+        try Data(trimmed).write(to: url, options: .atomic)
+    }
+}
+
 @MainActor
 final class MuesliController: NSObject {
     private let runtime: RuntimePaths
@@ -129,8 +179,9 @@ final class MuesliController: NSObject {
         duckingController: audioDuckingController,
         routingController: dictationAudioRoutingController
     )
-    private let dictationLatencyLogQueue = DispatchQueue(label: "com.muesli.dictation-latency-log")
-    private let dictationLatencyLogURL = AppIdentity.supportDirectoryURL.appendingPathComponent("dictation-latency.log")
+    private let dictationLatencyLogWriter = DictationLatencyLogWriter(
+        url: AppIdentity.supportDirectoryURL.appendingPathComponent("dictation-latency.log")
+    )
     private let dictationLatencyTimestampFormatter = ISO8601DateFormatter()
     private let indicator: FloatingIndicatorController
     private let calendarMonitor = CalendarMonitor()
@@ -4039,8 +4090,8 @@ final class MuesliController: NSObject {
         if dictationLatencyTraceID == nil {
             beginDictationLatencyTrace(reason: "hotkey")
         }
-        setState(.preparing)
         if selectedBackend.backend != "nemotron" {
+            setState(.preparing)
             meetingMonitor.suppressWhileActive()
             meetingMonitor.refreshState()
             dictationAudioSessionManager.arm(
@@ -4122,41 +4173,7 @@ final class MuesliController: NSObject {
     }
 
     private func appendDictationLatencyLog(_ line: String) {
-        let url = dictationLatencyLogURL
-        dictationLatencyLogQueue.async {
-            do {
-                try FileManager.default.createDirectory(
-                    at: url.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                try Self.trimDictationLatencyLogIfNeeded(at: url)
-                let data = Data((line + "\n").utf8)
-                if FileManager.default.fileExists(atPath: url.path) {
-                    let handle = try FileHandle(forWritingTo: url)
-                    try handle.seekToEnd()
-                    try handle.write(contentsOf: data)
-                    try handle.close()
-                } else {
-                    try data.write(to: url, options: .atomic)
-                }
-            } catch {
-                fputs("[dictation-latency] failed to append log: \(error)\n", stderr)
-            }
-        }
-    }
-
-    private nonisolated static func trimDictationLatencyLogIfNeeded(at url: URL) throws {
-        let maxBytes: UInt64 = 2 * 1024 * 1024
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-        guard let fileSize = attributes?[.size] as? UInt64,
-              fileSize > maxBytes else { return }
-
-        let data = try Data(contentsOf: url)
-        let keepCount = min(data.count, Int(maxBytes / 2))
-        let tail = data.suffix(keepCount)
-        let newlineIndex = tail.firstIndex(of: UInt8(ascii: "\n"))
-        let trimmed = newlineIndex.map { tail[tail.index(after: $0)...] } ?? tail[...]
-        try Data(trimmed).write(to: url, options: .atomic)
+        dictationLatencyLogWriter.append(line)
     }
 
     private func finishDictationLatencyTrace(_ event: String) {

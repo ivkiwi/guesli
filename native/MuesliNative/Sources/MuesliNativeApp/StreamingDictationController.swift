@@ -192,6 +192,7 @@ final class StreamingDictationController {
 
     private func startDrainIfNeeded(sessionID: UUID) {
         guard isCurrentSession(sessionID) else { return }
+        guard streamState != nil else { return }
         let shouldStart = drainLock.withLock {
             if isDraining { return false }
             isDraining = true
@@ -205,11 +206,11 @@ final class StreamingDictationController {
     }
 
     private func markDrainFinished(sessionID: UUID) {
-        let hasQueuedChunks = queueLock.withLock { !chunkQueue.isEmpty }
+        let shouldContinue = streamState != nil && queueLock.withLock { !chunkQueue.isEmpty }
         drainLock.withLock {
             isDraining = false
         }
-        if hasQueuedChunks {
+        if shouldContinue {
             startDrainIfNeeded(sessionID: sessionID)
         }
     }
@@ -255,7 +256,6 @@ final class StreamingDictationController {
             guard let chunk else { return }
 
             guard var state = streamState else {
-                fputs("[streaming-dictation] no stream state, skipping chunk\n", stderr)
                 queueLock.withLock {
                     chunkQueue.insert(chunk, at: 0)
                 }

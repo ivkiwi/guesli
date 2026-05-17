@@ -50,6 +50,31 @@ struct DictationAudioSessionManagerTests {
         #expect(harness.recorder.preferredInputDeviceID == 82)
     }
 
+    @Test("arm refreshes preferred input instead of using stale route cache")
+    func armRefreshesPreferredInput() {
+        let harness = Harness(routeKind: .headphoneLike, preferredInputDeviceID: 82)
+        harness.route.cachedPreferredInputDeviceID = nil
+
+        harness.manager.arm(source: "hotkey", duckingEnabled: false)
+        harness.wait()
+
+        #expect(harness.route.preferredInputCalls == 1)
+        #expect(harness.recorder.lastWarmInputDeviceID == 82)
+    }
+
+    @Test("begin recording refreshes preferred input when there was no arm")
+    func beginRecordingRefreshesPreferredInput() {
+        let harness = Harness(routeKind: .headphoneLike, preferredInputDeviceID: 82)
+        harness.route.cachedPreferredInputDeviceID = nil
+
+        harness.manager.beginRecording(mode: "toggle", duckingEnabled: false)
+        harness.wait()
+
+        #expect(harness.route.preferredInputCalls == 1)
+        #expect(harness.recorder.preferredInputDeviceID == 82)
+        #expect(harness.recorder.startCalls == 1)
+    }
+
     @Test("stop restores ducking and emits wav URL")
     func stopRestoresDuckingAndEmitsWavURL() {
         let harness = Harness(routeKind: .speakerLike)
@@ -236,12 +261,15 @@ private final class FakeDictationRoute: DictationAudioRouting {
     var onPreferredInputDeviceChanged: ((AudioObjectID?) -> Void)?
     var routeKind: AudioOutputRouteKind
     var preferredInputDeviceID: AudioObjectID?
+    var cachedPreferredInputDeviceID: AudioObjectID?
     var refreshCalls = 0
     var restoreCalls = 0
+    var preferredInputCalls = 0
 
     init(routeKind: AudioOutputRouteKind, preferredInputDeviceID: AudioObjectID?) {
         self.routeKind = routeKind
         self.preferredInputDeviceID = preferredInputDeviceID
+        self.cachedPreferredInputDeviceID = preferredInputDeviceID
     }
 
     func refreshRouteCache() {
@@ -249,11 +277,13 @@ private final class FakeDictationRoute: DictationAudioRouting {
     }
 
     func preferredInputDeviceIDForDictation() -> AudioObjectID? {
-        preferredInputDeviceID
+        preferredInputCalls += 1
+        cachedPreferredInputDeviceID = preferredInputDeviceID
+        return preferredInputDeviceID
     }
 
     func cachedPreferredInputDeviceIDForDictation() -> AudioObjectID? {
-        preferredInputDeviceID
+        cachedPreferredInputDeviceID
     }
 
     func isDefaultOutputHeadphoneLike() -> Bool {

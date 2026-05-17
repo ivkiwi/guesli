@@ -314,7 +314,13 @@ final class MicrophoneRecorder: @unchecked Sendable {
                 return
             }
             var error: NSError?
+            var didProvideInput = false
             let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+                guard !didProvideInput else {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
+                didProvideInput = true
                 outStatus.pointee = .haveData
                 return buffer
             }
