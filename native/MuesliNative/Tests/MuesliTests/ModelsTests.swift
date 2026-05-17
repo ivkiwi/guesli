@@ -1095,6 +1095,25 @@ struct HotkeyMonitorTests {
         #expect(cancelCount == 1)
         #expect(monitor.targetKeyCode == 56)
     }
+
+    @Test("changing trigger threshold during pending double tap cancel preserves cleanup")
+    @MainActor
+    func configureTriggerThresholdDuringPendingDoubleTapCancelPreservesCleanup() async throws {
+        let monitor = HotkeyMonitor(doubleTapWindow: 0.05)
+        monitor.configureTriggerThreshold(milliseconds: 75)
+        var cancelCount = 0
+        monitor.onArm = {}
+        monitor.onCancel = {
+            cancelCount += 1
+        }
+
+        monitor.handleFlagsChanged(keyCode: 55, flags: .command)
+        monitor.handleFlagsChanged(keyCode: 55, flags: [])
+        monitor.configureTriggerThreshold(milliseconds: 125)
+        try await Task.sleep(for: .milliseconds(80))
+
+        #expect(cancelCount == 1)
+    }
 }
 
 @Suite("MeetingResummarizationPolicy")

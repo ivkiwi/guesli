@@ -224,6 +224,8 @@ final class MicrophoneRecorder: @unchecked Sendable {
         // callbacks that already reached the dispatch group.
         tapCallbackGroup.wait()
         waitForPendingWrites()
+        // Second drain is defensive if future write work ever enqueues another
+        // writerQueue block before the WAV header is finalized.
         waitForPendingWrites()
         if keepsAudioGraphWarm {
             lock.withLock { $0.latestPowerDB = -160 }

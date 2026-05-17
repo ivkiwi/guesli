@@ -64,6 +64,9 @@ enum AudioRouteClassifier {
             // If CoreAudio only exposes generic Bluetooth metadata, a high-rate
             // output with an input stream is more likely a speakerphone/soundbar
             // profile than a headset microphone profile.
+            // Known limitation: low-rate Bluetooth speakers with embedded mics
+            // can look headset-like when CoreAudio omits terminal/data-source
+            // metadata.
             if device.hasInputStreams,
                let sampleRate = device.nominalSampleRate,
                sampleRate > 24_000 {
