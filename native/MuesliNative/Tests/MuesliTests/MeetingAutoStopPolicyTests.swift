@@ -108,6 +108,29 @@ struct MeetingAutoStopPolicyTests {
         #expect(refined.hasObservedCandidate)
     }
 
+    @Test("refinement preserves existing suppression ID when candidate lacks one")
+    func refinementPreservesExistingSuppressionIDWhenCandidateLacksOne() throws {
+        let url = try #require(URL(string: "https://meet.google.com/aaa-bbbb-ccc"))
+        let source = try #require(MeetingAutoStopSource(meetingURL: url))
+        let partialCandidate = MeetingCandidate(
+            id: "browser:com.google.Chrome:unknown",
+            platform: .unknown,
+            appName: "Chrome",
+            url: nil,
+            evidence: [.audioInputProcess],
+            startedAt: Date(timeIntervalSince1970: 1_800_000_005),
+            meetingTitle: nil,
+            sourceBundleID: "com.google.Chrome",
+            sourcePID: 9876,
+            suppressionID: nil
+        )
+
+        let refined = source.refined(with: partialCandidate)
+
+        #expect(refined.suppressionID == "googleMeet:meet.google.com/aaa-bbbb-ccc")
+        #expect(refined.hasObservedCandidate)
+    }
+
     @Test("candidate source starts as observed")
     func candidateSourceStartsObserved() {
         let source = MeetingAutoStopSource(candidate: googleMeetCandidate())

@@ -41,9 +41,12 @@ struct MeetingAutoStopSource: Equatable {
     }
 
     func refined(with candidate: MeetingCandidate) -> MeetingAutoStopSource {
-        MeetingAutoStopSource(
+        let refinedSuppressionID = candidate.suppressionID == candidate.id
+            ? suppressionID ?? candidate.suppressionID
+            : candidate.suppressionID
+        return MeetingAutoStopSource(
             candidateID: candidateID ?? candidate.id,
-            suppressionID: candidate.suppressionID,
+            suppressionID: refinedSuppressionID,
             normalizedURL: normalizedURL ?? candidate.url,
             sourceBundleID: sourceBundleID ?? candidate.sourceBundleID,
             hasObservedCandidate: true

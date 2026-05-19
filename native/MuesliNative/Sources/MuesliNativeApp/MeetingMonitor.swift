@@ -324,6 +324,8 @@ enum MeetingMediaSignalFilter {
             !isSelfBundleID($0, selfBundleID: selfBundleID)
         }
 
+        // When Muesli is the only mic/camera attribution, treat the signal as self-owned.
+        // External attribution can lag, so this intentionally favors avoiding self-triggered detections.
         return MeetingMediaSignals(
             micActive: hasExternalMicAttribution || (deviceMicActive && !selfMicAttributed),
             cameraActive: hasExternalCameraAttribution || (cameraActive && !selfCameraAttributed),
@@ -593,11 +595,11 @@ private actor MeetingDetectionService {
             candidate: resolvedActivityCandidate,
             snapshot: snapshot
         )
-        emitActivityUpdate(activityCandidate)
         let unmutedActivityCandidate = isMuted(
             activityCandidate,
             mutedBundleIDs: context.mutedBundleIDs
         ) ? nil : activityCandidate
+        emitActivityUpdate(unmutedActivityCandidate)
         let candidate = isGloballySuppressed(now: now) ? nil : unmutedActivityCandidate
         logCandidateIfChanged(candidate)
         updateRefreshState(
