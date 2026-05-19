@@ -35,7 +35,8 @@ enum MeetingSummaryClient {
     private static let ollamaTitleTimeout: TimeInterval = 120
 
     private static let titleInstructions = """
-    Generate a short, descriptive meeting title (3-7 words) from this transcript. \
+    Generate a short, descriptive meeting title (3-7 words) from these transcript excerpts. \
+    Prefer the main topic and outcome across the whole meeting over opening small talk or setup. \
     Return ONLY the title text, nothing else. No quotes, no prefix, no explanation. \
     Examples: "Q3 Sprint Planning", "Customer Onboarding Review", "Security Audit Discussion"
     """
@@ -637,11 +638,10 @@ enum MeetingSummaryClient {
     static func generateTitle(transcript: String, config: AppConfig) async -> String? {
         let backend = (config.meetingSummaryBackend.isEmpty ? MeetingSummaryBackendOption.chatGPT.backend : config.meetingSummaryBackend).lowercased()
 
-        // Use a short prefix of the transcript for title generation (save tokens)
-        let truncated = String(transcript.prefix(1500))
+        let excerpt = titleTranscriptExcerpt(from: transcript)
 
         if backend == MeetingSummaryBackendOption.chatGPT.backend {
-            return await generateTitleWithChatGPT(transcript: truncated, config: config)
+            return await generateTitleWithChatGPT(transcript: excerpt, config: config)
         }
 
         if backend == MeetingSummaryBackendOption.openRouter.backend {
@@ -654,14 +654,14 @@ enum MeetingSummaryClient {
                 apiKey: apiKey,
                 model: model,
                 systemPrompt: titleInstructions,
-                userPrompt: truncated,
+                userPrompt: excerpt,
                 maxTokens: nil,
                 extraHeaders: ["X-OpenRouter-Title": AppIdentity.displayName]
             )
         }
 
         if backend == MeetingSummaryBackendOption.ollama.backend {
-            return await generateTitleWithOllama(transcript: truncated, config: config)
+            return await generateTitleWithOllama(transcript: excerpt, config: config)
         }
 
         let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? config.openAIAPIKey
@@ -672,10 +672,36 @@ enum MeetingSummaryClient {
             apiKey: apiKey,
             model: model,
             systemPrompt: titleInstructions,
-            userPrompt: truncated,
+            userPrompt: excerpt,
             maxTokens: nil,
             extraHeaders: [:]
         )
+    }
+
+    static func titleTranscriptExcerpt(from transcript: String, segmentLength: Int = 900) -> String {
+        let normalized = transcript
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, segmentLength > 0 else { return normalized }
+        guard normalized.count > segmentLength * 3 else { return normalized }
+
+        let start = String(normalized.prefix(segmentLength)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let middleStartOffset = max(0, (normalized.count / 2) - (segmentLength / 2))
+        let middleStart = normalized.index(normalized.startIndex, offsetBy: middleStartOffset)
+        let middleEnd = normalized.index(middleStart, offsetBy: segmentLength, limitedBy: normalized.endIndex) ?? normalized.endIndex
+        let middle = String(normalized[middleStart..<middleEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let end = String(normalized.suffix(segmentLength)).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return """
+        Opening excerpt:
+        \(start)
+
+        Middle excerpt:
+        \(middle)
+
+        Closing excerpt:
+        \(end)
+        """
     }
 
     private static func callChatCompletions(

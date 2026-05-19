@@ -260,6 +260,33 @@ struct MeetingSummaryClientTests {
         #expect(title == nil)
     }
 
+    @Test("title excerpt samples opening middle and closing transcript")
+    func titleExcerptSamplesMeetingBreadth() {
+        let transcript = [
+            String(repeating: "opening setup ", count: 80),
+            String(repeating: "middle product strategy ", count: 80),
+            String(repeating: "closing storage roadmap ", count: 80),
+        ].joined(separator: "\n\n")
+
+        let excerpt = MeetingSummaryClient.titleTranscriptExcerpt(from: transcript, segmentLength: 120)
+
+        #expect(excerpt.contains("Opening excerpt:"))
+        #expect(excerpt.contains("Middle excerpt:"))
+        #expect(excerpt.contains("Closing excerpt:"))
+        #expect(excerpt.contains("opening setup"))
+        #expect(excerpt.contains("middle product strategy"))
+        #expect(excerpt.contains("closing storage roadmap"))
+    }
+
+    @Test("short title excerpt keeps full transcript")
+    func shortTitleExcerptKeepsFullTranscript() {
+        let transcript = "Short discussion about customer onboarding"
+
+        let excerpt = MeetingSummaryClient.titleTranscriptExcerpt(from: transcript, segmentLength: 120)
+
+        #expect(excerpt == transcript)
+    }
+
     @Test("generateTitle returns nil for OpenRouter without key")
     func titleOpenRouterWithoutKey() async {
         var config = AppConfig()

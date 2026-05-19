@@ -275,7 +275,7 @@ struct MeetingDetailView: View {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
                 contentToolbar(for: meeting)
 
-                ZStack {
+                ZStack(alignment: .topLeading) {
                     MeetingNotesView(markdown: Self.notesContent(for: meeting))
                         .opacity(documentMode == .notes ? 1 : 0)
                         .allowsHitTesting(documentMode == .notes)
@@ -286,7 +286,9 @@ struct MeetingDetailView: View {
                         .allowsHitTesting(documentMode == .transcript)
                         .accessibilityHidden(documentMode != .transcript)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            .frame(maxWidth: 1080, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, 40)
             .padding(.top, 12)
             .padding(.bottom, 24)
@@ -316,6 +318,12 @@ struct MeetingDetailView: View {
 
     private func canEditManualNotes(for meeting: MeetingRecord) -> Bool {
         meeting.status == .recording || meeting.status == .noteOnly || meeting.status == .failed
+    }
+
+    private func isPreparingThisMeeting(_ meeting: MeetingRecord) -> Bool {
+        meeting.status == .recording
+            && appState.isMeetingStarting
+            && !appState.isMeetingRecording
     }
 
     @ViewBuilder
@@ -601,9 +609,10 @@ struct MeetingDetailView: View {
 
     @ViewBuilder
     private func statusChip(for meeting: MeetingRecord) -> some View {
+        let isPreparing = isPreparingThisMeeting(meeting)
         let isPaused = meeting.status == .recording && appState.isMeetingRecordingPaused
-        let label = isPaused ? "Paused" : meeting.status.displayLabel
-        let color = isPaused ? MuesliTheme.transcribing : meeting.status.displayColor
+        let label = isPreparing ? "Preparing" : isPaused ? "Paused" : meeting.status.displayLabel
+        let color = isPreparing || isPaused ? MuesliTheme.transcribing : meeting.status.displayColor
         HStack(spacing: 6) {
             Circle()
                 .fill(color)
@@ -625,23 +634,27 @@ struct MeetingDetailView: View {
     @ViewBuilder
     private func recordingControlGroup(for meeting: MeetingRecord) -> some View {
         if meeting.status == .recording {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: MuesliTheme.spacing8) {
-                    statusChip(for: meeting)
-                    pauseResumeRecordingButton
-                    stopRecordingButton
-                    discardRecordingButton
-                }
-                .recordingControlsBackground()
-
-                VStack(alignment: .trailing, spacing: MuesliTheme.spacing8) {
-                    statusChip(for: meeting)
+            if isPreparingThisMeeting(meeting) {
+                meetingPreparationControlGroup(for: meeting)
+            } else {
+                ViewThatFits(in: .horizontal) {
                     HStack(spacing: MuesliTheme.spacing8) {
+                        statusChip(for: meeting)
                         pauseResumeRecordingButton
                         stopRecordingButton
                         discardRecordingButton
                     }
                     .recordingControlsBackground()
+
+                    VStack(alignment: .trailing, spacing: MuesliTheme.spacing8) {
+                        statusChip(for: meeting)
+                        HStack(spacing: MuesliTheme.spacing8) {
+                            pauseResumeRecordingButton
+                            stopRecordingButton
+                            discardRecordingButton
+                        }
+                        .recordingControlsBackground()
+                    }
                 }
             }
         } else if controller.canDeleteMeeting(meeting), meeting.status == .noteOnly || meeting.status == .failed {
@@ -651,6 +664,27 @@ struct MeetingDetailView: View {
             }
         } else {
             statusChip(for: meeting)
+        }
+    }
+
+    @ViewBuilder
+    private func meetingPreparationControlGroup(for meeting: MeetingRecord) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: MuesliTheme.spacing8) {
+                statusChip(for: meeting)
+                meetingPreparationStatus
+                cancelMeetingPreparationButton
+            }
+            .recordingControlsBackground()
+
+            VStack(alignment: .trailing, spacing: MuesliTheme.spacing8) {
+                statusChip(for: meeting)
+                HStack(spacing: MuesliTheme.spacing8) {
+                    meetingPreparationStatus
+                    cancelMeetingPreparationButton
+                }
+                .recordingControlsBackground()
+            }
         }
     }
 
@@ -745,6 +779,34 @@ struct MeetingDetailView: View {
         iconButton("trash", label: "Delete") {
             showDeleteConfirmation = true
         }
+    }
+
+    private var meetingPreparationStatus: some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 14, height: 14)
+                .accessibilityLabel("Preparing transcription")
+            Text(appState.meetingStartStatus ?? "Meeting transcription will start shortly.")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(MuesliTheme.textSecondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, MuesliTheme.spacing12)
+        .padding(.vertical, 7)
+        .background(MuesliTheme.surfacePrimary)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+        )
+    }
+
+    private var cancelMeetingPreparationButton: some View {
+        iconButton("xmark", label: "Cancel") {
+            controller.cancelMeetingPreparation()
+        }
+        .help("Cancel meeting preparation")
     }
 
     private var pauseResumeRecordingButton: some View {
@@ -1235,7 +1297,7 @@ private struct MarqueeTitleTextField: View {
     }
 
     private var shouldShowMarquee: Bool {
-        isHovering && !isTitleFocused && overflowDistance > 8
+        containerWidth > 0 && isHovering && !isTitleFocused && overflowDistance > 24
     }
 
     private func restartMarqueeIfNeeded() {
@@ -1264,7 +1326,7 @@ private struct TitleContainerWidthPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+        value = max(value, nextValue())
     }
 }
 
