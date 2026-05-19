@@ -2776,6 +2776,94 @@ final class MuesliController: NSObject {
         startForegroundMeetingRecording(title: "Meeting")
     }
 
+    // MARK: - Audio File Import
+
+    /// Presents a file picker and imports an audio file for offline transcription.
+    func importAudioFile() {
+        guard !isMeetingRecording(), !isStartingMeetingRecording else { return }
+        guard normalizeMeetingTranscriptionSelectionForAvailability() != nil else {
+            presentErrorAlert(
+                title: "Import Failed",
+                message: "Download a transcription model before importing audio files."
+            )
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let sourceURL = await AudioFileImportController.selectFile() else { return }
+            await self.importAudioFile(from: sourceURL)
+        }
+    }
+
+    /// Imports an audio file from a URL (drag-and-drop or file picker).
+    func importAudioFileFromURL(_ url: URL) {
+        guard !isMeetingRecording(), !isStartingMeetingRecording else { return }
+        guard normalizeMeetingTranscriptionSelectionForAvailability() != nil else {
+            presentErrorAlert(
+                title: "Import Failed",
+                message: "Download a transcription model before importing audio files."
+            )
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.importAudioFile(from: url)
+        }
+    }
+
+    private func importAudioFile(from sourceURL: URL) async {
+        let filename = sourceURL.deletingPathExtension().lastPathComponent
+        let title = filename.isEmpty ? "Imported Recording" : filename
+
+        self.isStartingMeetingRecording = true
+        self.updateMeetingStartStatus("Importing audio file...")
+        self.beginMeetingActivity(reason: "Importing audio file for transcription")
+        self.statusBarController?.setStatus("Importing audio...")
+        self.statusBarController?.refresh()
+
+        do {
+            let result = try await AudioFileImportController.importAudioFile(
+                sourceURL: sourceURL,
+                title: title,
+                controller: self,
+                progress: { [weak self] status in
+                    Task { @MainActor in
+                        self?.updateMeetingStartStatus(status)
+                        self?.statusBarController?.setStatus(status)
+                        self?.statusBarController?.refresh()
+                    }
+                }
+            )
+
+            await MainActor.run {
+                self.isStartingMeetingRecording = false
+                self.updateMeetingStartStatus(nil)
+                self.endMeetingActivity()
+                self.statusBarController?.setStatus("Idle")
+                self.statusBarController?.refresh()
+                self.syncAppState()
+                self.historyWindowController?.reload()
+                self.showMeetingDocument(id: result.meetingID)
+                TelemetryDeck.signal("meeting.imported")
+            }
+        } catch {
+            await MainActor.run {
+                self.isStartingMeetingRecording = false
+                self.updateMeetingStartStatus(nil)
+                self.endMeetingActivity()
+                self.statusBarController?.setStatus("Idle")
+                self.statusBarController?.refresh()
+                self.syncAppState()
+                self.presentErrorAlert(
+                    title: "Import Failed",
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
     func cancelMeetingPreparation() {
         guard isStartingMeetingRecording,
               activeMeetingSession == nil,
