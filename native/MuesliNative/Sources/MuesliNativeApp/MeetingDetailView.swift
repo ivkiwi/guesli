@@ -1279,10 +1279,12 @@ private struct MarqueeTitleTextField: View {
                 )
         )
         .onPreferenceChange(TitleContainerWidthPreferenceKey.self) { width in
+            guard abs(containerWidth - width) > 0.5 else { return }
             containerWidth = width
             restartMarqueeIfNeeded()
         }
         .onPreferenceChange(TitleContentWidthPreferenceKey.self) { width in
+            guard abs(contentWidth - width) > 0.5 else { return }
             contentWidth = width
             restartMarqueeIfNeeded()
         }
@@ -1301,14 +1303,19 @@ private struct MarqueeTitleTextField: View {
     }
 
     private func restartMarqueeIfNeeded() {
-        let runID = UUID()
-        marqueeRunID = runID
         guard shouldShowMarquee else {
-            withAnimation(.easeOut(duration: 0.18)) {
-                marqueeOffset = 0
+            if marqueeOffset != 0 {
+                let runID = UUID()
+                marqueeRunID = runID
+                withAnimation(.easeOut(duration: 0.18)) {
+                    marqueeOffset = 0
+                }
             }
             return
         }
+
+        let runID = UUID()
+        marqueeRunID = runID
 
         marqueeOffset = 0
         let distance = overflowDistance + 28
