@@ -3617,7 +3617,9 @@ final class MuesliController: NSObject {
                     self.setState(.idle)
                     self.statusBarController?.refresh()
                 }
-                if self.backgroundMeetingProcessingCount == 0 {
+                if self.backgroundMeetingProcessingCount == 0,
+                   !self.isMeetingRecording(),
+                   !self.isStartingMeetingRecording {
                     self.endMeetingActivity()
                 }
                 self.historyWindowController?.reload()
