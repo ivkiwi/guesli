@@ -51,6 +51,17 @@ protocol DictationAudioRecording: AnyObject {
 extension MicrophoneRecorder: DictationAudioRecording {}
 
 final class DictationAudioSessionManager: @unchecked Sendable {
+    private enum StartupError: LocalizedError {
+        case noAudioBuffer
+
+        var errorDescription: String? {
+            switch self {
+            case .noAudioBuffer:
+                return "Microphone capture did not deliver audio."
+            }
+        }
+    }
+
     private struct RouteSnapshot {
         let routeKind: AudioOutputRouteKind
         let preferredInputDeviceID: AudioObjectID?
@@ -144,6 +155,11 @@ final class DictationAudioSessionManager: @unchecked Sendable {
             self.routeSnapshot = self.makeRouteSnapshot(refreshInput: true)
             self.emitLatency("route_snapshot \(self.routeSnapshot.debugDescription)")
             self.recorder.keepsAudioGraphWarm = true
+            guard self.routeSnapshot.routeKind != .headphoneLike else {
+                self.emitLatency("activation_deferred:\(source)")
+                fputs("[dictation-session] armed without warm activation source=\(source) \(self.routeSnapshot.debugDescription)\n", stderr)
+                return
+            }
             do {
                 self.emitLatency("activation_begin:\(source)")
                 try self.recorder.activateWarmEngine(preferredInputDeviceID: self.routeSnapshot.preferredInputDeviceID)
@@ -429,6 +445,15 @@ final class DictationAudioSessionManager: @unchecked Sendable {
         queue.async { [self] in
             guard let sessionID = self.stateStorage.sessionID else { return }
             self.emitLatency("no_audio_timeout", at: at)
+            switch self.stateStorage {
+            case .armed(sessionID), .acquiringAudio(sessionID):
+                self.recorder.keepsAudioGraphWarm = false
+                self.recorder.cancel()
+                self.failCurrentSession(error: StartupError.noAudioBuffer)
+                return
+            default:
+                break
+            }
             self.emit(.noAudioTimeout(sessionID, at: at))
         }
     }
