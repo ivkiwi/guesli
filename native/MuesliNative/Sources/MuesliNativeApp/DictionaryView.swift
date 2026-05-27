@@ -321,7 +321,7 @@ private struct ThresholdEditor: View {
                 }
             }
 
-            Slider(
+            ThresholdSlider(
                 value: Binding(
                     get: { Self.clamp(value) },
                     set: { newValue in
@@ -329,11 +329,9 @@ private struct ThresholdEditor: View {
                         draftPercent = Self.percentString(for: value)
                     }
                 ),
-                in: Self.bounds,
-                step: 0.01
+                bounds: Self.bounds,
+                tint: Self.sliderTint
             )
-            .tint(Self.sliderTint)
-            .accentColor(Self.sliderTint)
 
             HStack {
                 Text("70%")
@@ -362,6 +360,76 @@ private struct ThresholdEditor: View {
         }
         value = Self.clamp(percent / 100)
         draftPercent = Self.percentString(for: value)
+    }
+}
+
+private struct ThresholdSlider: View {
+    @Binding var value: Double
+
+    let bounds: ClosedRange<Double>
+    let tint: Color
+
+    private let trackHeight: CGFloat = 6
+    private let thumbSize: CGFloat = 18
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            let progress = progress(for: value)
+            let thumbX = progress * width
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(MuesliTheme.surfacePrimary)
+                    .frame(height: trackHeight)
+
+                Capsule()
+                    .fill(tint)
+                    .frame(width: max(thumbX, thumbSize / 2), height: trackHeight)
+
+                Circle()
+                    .fill(tint)
+                    .frame(width: thumbSize, height: thumbSize)
+                    .offset(x: min(max(thumbX - thumbSize / 2, 0), width - thumbSize))
+                    .shadow(color: .black.opacity(0.18), radius: 2, x: 0, y: 1)
+            }
+            .frame(height: thumbSize)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        updateValue(locationX: gesture.location.x, width: width)
+                    }
+            )
+        }
+        .frame(height: thumbSize)
+        .accessibilityElement()
+        .accessibilityLabel("Matching threshold")
+        .accessibilityValue("\(Int(round(value * 100)))%")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment:
+                value = clamped(value + 0.01)
+            case .decrement:
+                value = clamped(value - 0.01)
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    private func progress(for value: Double) -> CGFloat {
+        CGFloat((clamped(value) - bounds.lowerBound) / (bounds.upperBound - bounds.lowerBound))
+    }
+
+    private func updateValue(locationX: CGFloat, width: CGFloat) {
+        let progress = min(max(Double(locationX / width), 0), 1)
+        let rawValue = bounds.lowerBound + progress * (bounds.upperBound - bounds.lowerBound)
+        value = clamped((rawValue * 100).rounded() / 100)
+    }
+
+    private func clamped(_ value: Double) -> Double {
+        min(max(value, bounds.lowerBound), bounds.upperBound)
     }
 }
 
