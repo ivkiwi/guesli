@@ -7,10 +7,10 @@ struct MeetingChatView: View {
     let transcript: String
     let config: AppConfig
 
-    @State private var history: [ChatTurn] = []
-    @State private var inputText: String = ""
-    @State private var isThinking: Bool = false
-    @State private var errorMessage: String? = nil
+    @Binding var history: [ChatTurn]
+    @Binding var inputText: String
+    @Binding var isThinking: Bool
+    @Binding var errorMessage: String?
     @FocusState private var inputFocused: Bool
 
     struct ChatTurn: Identifiable {
