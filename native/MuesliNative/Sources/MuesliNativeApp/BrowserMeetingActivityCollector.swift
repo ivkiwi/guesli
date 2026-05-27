@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import ScriptingBridge
 
 struct RunningAppSnapshot: Sendable {
     let bundleID: String
@@ -20,7 +21,7 @@ final class BrowserMeetingActivityCollector {
     init(
         cachedMeetingTTL: TimeInterval = 30,
         focusedDocumentURLProvider: ((RunningAppSnapshot) -> String?)? = nil,
-        activeTabURLProvider: ((RunningAppSnapshot) -> String?)? = nil
+        activeTabURLProvider: ((RunningAppSnapshot) -> String?)? = BrowserMeetingActivityCollector.activeTabURLViaScriptingBridge
     ) {
         self.cachedMeetingTTL = cachedMeetingTTL
         self.focusedDocumentURLProvider = focusedDocumentURLProvider
@@ -166,6 +167,45 @@ final class BrowserMeetingActivityCollector {
 
         return rawURL
     }
+
+    private static func activeTabURLViaScriptingBridge(for app: RunningAppSnapshot) -> String? {
+        // Target the existing process by PID. Bundle-id targets can relaunch a
+        // browser after the user quits it, which passive detection must avoid.
+        guard browserSupportsScriptingBridgeActiveTab(app.bundleID),
+              let browser = SBApplication(processIdentifier: app.processIdentifier),
+              browser.isRunning else {
+            return nil
+        }
+
+        let errorDelegate = BrowserScriptingBridgeErrorDelegate()
+        browser.delegate = errorDelegate
+        browser.timeout = 2
+
+        guard let windows = browser.value(forKey: "windows") as? SBElementArray,
+              let frontWindow = windows.firstObject as? NSObject else {
+            return nil
+        }
+
+        let tabKey = app.bundleID == "com.apple.Safari" ? "currentTab" : "activeTab"
+        guard let activeTab = frontWindow.value(forKey: tabKey) as? NSObject else {
+            return nil
+        }
+
+        return activeTab.value(forKey: "URL") as? String
+    }
+
+    private static func browserSupportsScriptingBridgeActiveTab(_ bundleID: String) -> Bool {
+        switch bundleID {
+        case "com.apple.Safari",
+             "com.google.Chrome",
+             "com.brave.Browser",
+             "company.thebrowser.Browser",
+             "com.microsoft.edgemac":
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 private enum BrowserMeetingURLProbeResult {
@@ -177,4 +217,10 @@ private enum BrowserMeetingURLProbeResult {
 private struct CachedBrowserMeeting {
     let context: BrowserMeetingContext
     let observedAt: Date
+}
+
+private final class BrowserScriptingBridgeErrorDelegate: NSObject, SBApplicationDelegate {
+    func eventDidFail(_ event: UnsafePointer<AppleEvent>, withError error: Error) -> Any? {
+        nil
+    }
 }
