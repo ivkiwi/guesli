@@ -15,6 +15,15 @@ struct BrowserMeetingActivityCollectorTests {
         )
     }
 
+    private func brave(isActive: Bool) -> RunningAppSnapshot {
+        RunningAppSnapshot(
+            bundleID: "com.brave.Browser",
+            appName: "Brave Browser",
+            processIdentifier: 4321,
+            isActive: isActive
+        )
+    }
+
     @Test("refresh probes inactive uncached browsers")
     func refreshProbesInactiveUncachedBrowsers() async {
         let collector = BrowserMeetingActivityCollector(
@@ -71,7 +80,8 @@ struct BrowserMeetingActivityCollectorTests {
     func refreshPreservesCacheWhenAppleScriptProbeIsThrottled() async {
         var activeTabURL: String? = "https://meet.google.com/pwm-txwq-txy"
         let collector = BrowserMeetingActivityCollector(
-            activeBrowserURLProvider: { _ in activeTabURL }
+            activeBrowserURLProvider: { _ in activeTabURL },
+            isBrowserProcessRunningProvider: { _ in true }
         )
 
         let first = await collector.collect(
@@ -104,7 +114,8 @@ struct BrowserMeetingActivityCollectorTests {
     func refreshClearsCacheWhenAppleScriptProbeFindsNoMeetingURL() async {
         var activeTabURL: String? = "https://meet.google.com/pwm-txwq-txy"
         let collector = BrowserMeetingActivityCollector(
-            activeBrowserURLProvider: { _ in activeTabURL }
+            activeBrowserURLProvider: { _ in activeTabURL },
+            isBrowserProcessRunningProvider: { _ in true }
         )
 
         let first = await collector.collect(
@@ -131,6 +142,50 @@ struct BrowserMeetingActivityCollectorTests {
         #expect(first.count == 1)
         #expect(second.isEmpty)
         #expect(cachedAfterFailedRefresh.isEmpty)
+    }
+
+    @Test("refresh skips AppleScript when browser process from snapshot has exited")
+    func refreshSkipsAppleScriptWhenBrowserProcessHasExited() async {
+        var didAttemptAppleScriptProbe = false
+        let collector = BrowserMeetingActivityCollector(
+            activeBrowserURLProvider: { _ in
+                didAttemptAppleScriptProbe = true
+                return "https://meet.google.com/pwm-txwq-txy"
+            },
+            isBrowserProcessRunningProvider: { _ in false }
+        )
+
+        let meetings = await collector.collect(
+            runningApps: [brave(isActive: false)],
+            refresh: true,
+            now: now,
+            shouldAttemptAppleScript: { _ in true }
+        )
+
+        #expect(meetings.isEmpty)
+        #expect(didAttemptAppleScriptProbe == false)
+    }
+
+    @Test("refresh checks exact browser process before AppleScript")
+    func refreshChecksExactBrowserProcessBeforeAppleScript() async {
+        var probedPID: pid_t?
+        let collector = BrowserMeetingActivityCollector(
+            activeBrowserURLProvider: { app in
+                probedPID = app.processIdentifier
+                return "https://meet.google.com/pwm-txwq-txy"
+            },
+            isBrowserProcessRunningProvider: { app in app.processIdentifier == 1234 }
+        )
+
+        let meetings = await collector.collect(
+            runningApps: [chrome(isActive: false)],
+            refresh: true,
+            now: now,
+            shouldAttemptAppleScript: { _ in true }
+        )
+
+        #expect(meetings.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
+        #expect(probedPID == 1234)
     }
 
     @Test("non-refresh pass can reuse recent cached browser room")

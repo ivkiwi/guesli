@@ -14,17 +14,20 @@ final class BrowserMeetingActivityCollector {
     private let browserBundleIDs = Set(MeetingCandidateResolver.browserApps.keys)
     private let cachedMeetingTTL: TimeInterval
     private let focusedDocumentURLProvider: ((RunningAppSnapshot) -> String?)?
-    private let activeBrowserURLProvider: ((String) -> String?)?
+    private let activeBrowserURLProvider: ((RunningAppSnapshot) -> String?)?
+    private let isBrowserProcessRunningProvider: (RunningAppSnapshot) -> Bool
     private var cachedMeetings: [String: CachedBrowserMeeting] = [:]
 
     init(
         cachedMeetingTTL: TimeInterval = 30,
         focusedDocumentURLProvider: ((RunningAppSnapshot) -> String?)? = nil,
-        activeBrowserURLProvider: ((String) -> String?)? = nil
+        activeBrowserURLProvider: ((RunningAppSnapshot) -> String?)? = nil,
+        isBrowserProcessRunningProvider: @escaping (RunningAppSnapshot) -> Bool = BrowserMeetingActivityCollector.browserProcessIsRunning
     ) {
         self.cachedMeetingTTL = cachedMeetingTTL
         self.focusedDocumentURLProvider = focusedDocumentURLProvider
         self.activeBrowserURLProvider = activeBrowserURLProvider
+        self.isBrowserProcessRunningProvider = isBrowserProcessRunningProvider
     }
 
     func collect(
@@ -94,7 +97,7 @@ final class BrowserMeetingActivityCollector {
         guard shouldAttemptAppleScript(app.bundleID) else {
             return .skipped
         }
-        guard let url = await activeBrowserURLViaAppleScript(bundleID: app.bundleID) else {
+        guard let url = await activeBrowserURLViaAppleScript(for: app) else {
             return .noMeeting
         }
         return MeetingURLNormalizer.normalize(url).map(BrowserMeetingURLProbeResult.meeting) ?? .noMeeting
@@ -147,12 +150,18 @@ final class BrowserMeetingActivityCollector {
         return rawURL
     }
 
-    private func activeBrowserURLViaAppleScript(bundleID: String) async -> String? {
-        if let activeBrowserURLProvider {
-            return activeBrowserURLProvider(bundleID)
+    private func activeBrowserURLViaAppleScript(for app: RunningAppSnapshot) async -> String? {
+        // Bundle-id Apple Events can launch a closed browser. Re-check the
+        // exact process from the snapshot immediately before sending them.
+        guard isBrowserProcessRunningProvider(app) else {
+            return nil
         }
 
-        guard let source = activeBrowserURLAppleScriptSource(bundleID: bundleID) else {
+        if let activeBrowserURLProvider {
+            return activeBrowserURLProvider(app)
+        }
+
+        guard let source = activeBrowserURLAppleScriptSource(bundleID: app.bundleID) else {
             return nil
         }
 
@@ -164,6 +173,12 @@ final class BrowserMeetingActivityCollector {
             }
             return output
         }.value
+    }
+
+    private static func browserProcessIsRunning(_ app: RunningAppSnapshot) -> Bool {
+        NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == app.bundleID && $0.processIdentifier == app.processIdentifier
+        }
     }
 
     private func activeBrowserURLAppleScriptSource(bundleID: String) -> String? {
