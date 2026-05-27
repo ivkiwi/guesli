@@ -129,7 +129,9 @@ struct BrowserMeetingActivityCollectorTests {
     @Test("refresh returns cached room when active-tab fallback times out")
     func refreshReturnsCachedRoomWhenActiveTabFallbackTimesOut() async {
         var activeTabResult: BrowserActiveTabProbeResult = .url("https://meet.google.com/pwm-txwq-txy")
+        var documentURLProbe: BrowserDocumentURLProbeResult = .noDocumentURL
         let collector = BrowserMeetingActivityCollector(
+            documentURLProbeProvider: { _ in documentURLProbe },
             activeTabProbeResultProvider: { _ in activeTabResult }
         )
 
@@ -160,19 +162,26 @@ struct BrowserMeetingActivityCollectorTests {
             shouldAttemptActiveTabFallback: { _ in false }
         )
 
-        activeTabResult = .noURL
-        let clearedByFreshResult = await collector.collect(
+        documentURLProbe = .nonMeetingDocument
+        let clearedByNonMeetingDocument = await collector.collect(
             runningApps: [chrome(isActive: true)],
             refresh: true,
             now: now.addingTimeInterval(4),
-            shouldAttemptActiveTabFallback: { _ in true }
+            shouldAttemptActiveTabFallback: { _ in false }
+        )
+        let cachedAfterNonMeetingDocument = await collector.collect(
+            runningApps: [chrome(isActive: true)],
+            refresh: false,
+            now: now.addingTimeInterval(5),
+            shouldAttemptActiveTabFallback: { _ in false }
         )
 
         #expect(first.count == 1)
         #expect(second.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
         #expect(cachedAfterTimeout.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
         #expect(throttledAfterTimeout.map(\.normalizedID) == ["googleMeet:meet.google.com/pwm-txwq-txy"])
-        #expect(clearedByFreshResult.isEmpty)
+        #expect(clearedByNonMeetingDocument.isEmpty)
+        #expect(cachedAfterNonMeetingDocument.isEmpty)
     }
 
     @Test("refresh clears cache when active-tab fallback probe runs and finds no meeting URL")
