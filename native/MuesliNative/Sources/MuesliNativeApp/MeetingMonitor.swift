@@ -560,8 +560,8 @@ private actor MeetingDetectionService {
         if refreshDecision.refreshBrowserMeetings {
             signalRefreshState.lastBrowserRefreshAt = now
         }
-        for bundleID in collectedSignals.appleScriptAttemptedBundleIDs {
-            signalRefreshState.lastAppleScriptAttemptAtByBundleID[bundleID] = now
+        for bundleID in collectedSignals.activeTabFallbackAttemptedBundleIDs {
+            signalRefreshState.lastActiveTabFallbackAttemptAtByBundleID[bundleID] = now
         }
 
         let rawAudioInputProcesses = mergedAudioInputProcesses(
@@ -833,7 +833,7 @@ private struct MeetingCollectedSignals {
     let browserMeetings: [BrowserMeetingContext]
     let foregroundBundleID: String?
     let runningProcessIDsByBundleID: [String: pid_t]
-    let appleScriptAttemptedBundleIDs: Set<String>
+    let activeTabFallbackAttemptedBundleIDs: Set<String>
     let timings: MeetingCollectionTimings
 }
 
@@ -885,17 +885,17 @@ private actor MeetingSignalCollector {
         refreshState: MeetingSignalRefreshState,
         now: Date
     ) async -> MeetingCollectedSignals {
-        var appleScriptAttemptedBundleIDs = Set<String>()
+        var activeTabFallbackAttemptedBundleIDs = Set<String>()
         let browserStart = Date()
         let browserMeetings = await browserCollector.collect(
             runningApps: runningApps,
             refresh: refreshBrowserMeetings,
             now: now
         ) { bundleID in
-            guard refreshPolicy.allowsAppleScript(for: bundleID, state: refreshState, now: now) else {
+            guard refreshPolicy.allowsActiveTabFallbackProbe(for: bundleID, state: refreshState, now: now) else {
                 return false
             }
-            appleScriptAttemptedBundleIDs.insert(bundleID)
+            activeTabFallbackAttemptedBundleIDs.insert(bundleID)
             return true
         }
         let browserDuration = Date().timeIntervalSince(browserStart)
@@ -908,7 +908,7 @@ private actor MeetingSignalCollector {
             browserMeetings: browserMeetings,
             foregroundBundleID: foregroundBundleID,
             runningProcessIDsByBundleID: runningProcessIDsByBundleID(from: runningApps),
-            appleScriptAttemptedBundleIDs: appleScriptAttemptedBundleIDs,
+            activeTabFallbackAttemptedBundleIDs: activeTabFallbackAttemptedBundleIDs,
             timings: MeetingCollectionTimings(
                 browserDuration: browserDuration,
                 audioAttributionDuration: 0
