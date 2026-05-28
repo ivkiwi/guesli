@@ -26,7 +26,7 @@
             <sparkle:shortVersionString>0.6.9</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>10.13</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/pHequals7/muesli/releases/download/v0.6.9/Muesli-0.6.9.dmg" length="73446621" type="application/octet-stream" sparkle:edSignature="uK+zNpzCPytfT9O+1HvkhoHeh3VkhGF/GxLxu495eoAxwPMrxRrs83t5V7DozGoEry/9K6k7aLiZKLEg8/IQAA=="/>
+            <enclosure url="https://github.com/Muesli-HQ/muesli/releases/download/v0.6.9/Muesli-0.6.9.dmg" length="73446621" type="application/octet-stream" sparkle:edSignature="uK+zNpzCPytfT9O+1HvkhoHeh3VkhGF/GxLxu495eoAxwPMrxRrs83t5V7DozGoEry/9K6k7aLiZKLEg8/IQAA=="/>
             <sparkle:deltas>
             </sparkle:deltas>
         </item>
@@ -37,7 +37,7 @@
             <sparkle:shortVersionString>0.6.8</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>10.13</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/pHequals7/muesli/releases/download/v0.6.8/Muesli-0.6.8.dmg" length="73414000" type="application/octet-stream" sparkle:edSignature="cHC0J/iCNuFKxGQLWhT85JIQDEGcM5bodINux+x5XxGCJ90Nb7lXkT0/mW0t42SXx7S9tZ+5o2A6D5OITQ0DDA=="/>
+            <enclosure url="https://github.com/Muesli-HQ/muesli/releases/download/v0.6.8/Muesli-0.6.8.dmg" length="73414000" type="application/octet-stream" sparkle:edSignature="cHC0J/iCNuFKxGQLWhT85JIQDEGcM5bodINux+x5XxGCJ90Nb7lXkT0/mW0t42SXx7S9tZ+5o2A6D5OITQ0DDA=="/>
             <sparkle:deltas/>
         </item>
         <item>
@@ -47,7 +47,7 @@
             <sparkle:shortVersionString>0.6.7</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>10.13</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/pHequals7/muesli/releases/download/v0.6.7/Muesli-0.6.7.dmg" length="63371647" type="application/octet-stream" sparkle:edSignature="9MsAH/ykgy/odyEO11DpO0r1dyZTLIyCzouo7VKm4Zctr1ffMnc2le1JsnV2GIp+qMwUU9VWxYxvxzj0DC5XBA=="/>
+            <enclosure url="https://github.com/Muesli-HQ/muesli/releases/download/v0.6.7/Muesli-0.6.7.dmg" length="63371647" type="application/octet-stream" sparkle:edSignature="9MsAH/ykgy/odyEO11DpO0r1dyZTLIyCzouo7VKm4Zctr1ffMnc2le1JsnV2GIp+qMwUU9VWxYxvxzj0DC5XBA=="/>
         </item>
     </channel>
 </rss>

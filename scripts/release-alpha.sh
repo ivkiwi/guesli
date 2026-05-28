@@ -106,7 +106,7 @@ Installs as **MuesliCanary** alongside your existing Muesli install.
 - Sparkle is disabled; use MuesliPreprod for updater-flow testing
 
 ### Not linked from the main site
-Download from [GitHub Releases](https://github.com/pHequals7/muesli/releases).
+Download from [GitHub Releases](https://github.com/Muesli-HQ/muesli/releases).
 EOF
 )"
 

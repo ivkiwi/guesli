@@ -4,7 +4,7 @@ import MuesliCore
 struct AboutView: View {
     let appState: AppState
 
-    private let githubURL = "https://github.com/pHequals7/muesli"
+    private let githubURL = "https://github.com/Muesli-HQ/muesli"
     private let donateURL = "https://buymeacoffee.com/phequals7"
 
     private var version: String {

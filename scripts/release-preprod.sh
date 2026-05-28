@@ -11,7 +11,7 @@ set -euo pipefail
 #   - App name: MuesliPreprod
 #   - Bundle ID: com.muesli.preprod
 #   - Support dir: ~/Library/Application Support/MuesliPreprod
-#   - Sparkle feed: https://pHequals7.github.io/muesli/appcast-preprod.xml
+#   - Sparkle feed: https://muesli-hq.github.io/muesli/appcast-preprod.xml
 #
 # Usage: ./scripts/release-preprod.sh [version]
 #   e.g. ./scripts/release-preprod.sh 0.6.3-preprod.1
@@ -27,7 +27,7 @@ SIGN_IDENTITY="${MUESLI_SIGN_IDENTITY:-Developer ID Application: Pranav Hari Gur
 APP_NAME="MuesliPreprod"
 BUNDLE_ID="com.muesli.preprod"
 SUPPORT_DIR_NAME="MuesliPreprod"
-PREPROD_FEED_URL="https://pHequals7.github.io/muesli/appcast-preprod.xml"
+PREPROD_FEED_URL="https://muesli-hq.github.io/muesli/appcast-preprod.xml"
 OUTPUT_DIR="$ROOT/dist-preprod"
 INSTALL_DIR="$OUTPUT_DIR/install-root"
 APP_DIR="$INSTALL_DIR/${APP_NAME}.app"
@@ -316,7 +316,7 @@ echo "  Hosted asset verified and prerelease published."
 echo "[11/11] Updating preprod appcast..."
 "$GENERATE_APPCAST" "$OUTPUT_DIR" -o "$APPCAST_PATH"
 
-perl -0pi -e 's{https://pHequals7\.github\.io/muesli/(MuesliPreprod-([0-9][0-9A-Za-z\.\-]*)\.dmg)}{"https://github.com/pHequals7/muesli/releases/download/v$2/$1"}ge' "$APPCAST_PATH"
+perl -0pi -e 's{https://muesli-hq\.github\.io/muesli/(MuesliPreprod-([0-9][0-9A-Za-z\.\-]*)\.dmg)}{"https://github.com/Muesli-HQ/muesli/releases/download/v$2/$1"}ge' "$APPCAST_PATH"
 perl -0pi -e 's{^\h*<enclosure\b[^>]*\bsparkle:deltaFrom="[^"]*"[^>]*/>\n}{}mg' "$APPCAST_PATH"
 perl -0pi -e 's{^\h*<sparkle:deltas>\s*</sparkle:deltas>\n}{}mg' "$APPCAST_PATH"
 python3 - "$APPCAST_PATH" "$SPARKLE_BUILD_VERSION" "$VERSION" <<'PY'
