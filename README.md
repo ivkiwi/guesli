@@ -217,7 +217,7 @@ Important meeting fields:
 | **Parakeet v3** (recommended) | FluidAudio | CoreML / Neural Engine | ~450 MB | 25 languages | ~0.13s |
 | Parakeet v2 | FluidAudio | CoreML / Neural Engine | ~450 MB | English only | ~0.13s |
 | **Cohere Transcribe 2B** | CoreML | FP16 encoder + INT8 decoder | ~3.8 GB | English | ~1s |
-| SenseVoice Small | FluidAudio | CoreML / Neural Engine | ~900 MB | 50+ languages | ~1s |
+| SenseVoice Small | FluidAudio | CoreML / Neural Engine | ~1.6 GB | 50+ languages | ~1s |
 | Qwen3 ASR | FluidAudio | CoreML / Neural Engine | ~1.3 GB | 52 languages | ~2-3s |
 | Whisper Small | WhisperKit | CoreML / Neural Engine | ~190 MB | English only | ~1-2s |
 | Whisper Medium | WhisperKit | CoreML / Neural Engine | ~1.5 GB | English only | ~2-3s |
