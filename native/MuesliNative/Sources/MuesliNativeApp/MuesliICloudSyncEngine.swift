@@ -50,6 +50,7 @@ final class MuesliICloudSyncEngine {
     private enum Schema {
         static let containerIdentifier = "iCloud.com.mueslihq.muesli"
         static let textRecordType = "MuesliTextRecord"
+        static let textSubscriptionID = "muesli-text-records-private-v1"
     }
 
     private let container: CKContainer
@@ -85,6 +86,32 @@ final class MuesliICloudSyncEngine {
         }
 
         return ICloudSyncResult(uploaded: uploaded, downloaded: downloaded, syncedAt: Date())
+    }
+
+    func ensureTextRecordSubscription() async throws {
+        try await verifyAccountAvailable()
+        do {
+            _ = try await fetchSubscription(id: Schema.textSubscriptionID)
+            return
+        } catch let error as CKError where error.code == .unknownItem {
+            let subscription = CKQuerySubscription(
+                recordType: Schema.textRecordType,
+                predicate: NSPredicate(value: true),
+                subscriptionID: Schema.textSubscriptionID,
+                options: [.firesOnRecordCreation, .firesOnRecordUpdate, .firesOnRecordDeletion]
+            )
+            let notificationInfo = CKSubscription.NotificationInfo()
+            notificationInfo.shouldSendContentAvailable = true
+            subscription.notificationInfo = notificationInfo
+            _ = try await save(subscription: subscription)
+        }
+    }
+
+    static func isTextRecordSubscriptionNotification(_ userInfo: [AnyHashable: Any]) -> Bool {
+        guard let notification = CKNotification(fromRemoteNotificationDictionary: userInfo) else {
+            return false
+        }
+        return notification.subscriptionID == Schema.textSubscriptionID
     }
 
     private func verifyAccountAvailable() async throws {
@@ -147,6 +174,20 @@ final class MuesliICloudSyncEngine {
         }
     }
 
+    private func fetchSubscription(id: String) async throws -> CKSubscription {
+        try await withCheckedThrowingContinuation { continuation in
+            database.fetch(withSubscriptionID: id) { subscription, error in
+                if let subscription {
+                    continuation.resume(returning: subscription)
+                } else if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(throwing: CKError(.unknownItem))
+                }
+            }
+        }
+    }
+
     private func collect(
         operation: CKQueryOperation,
         continuation: CheckedContinuation<(records: [CKRecord], cursor: CKQueryOperation.Cursor?), Error>
@@ -199,6 +240,20 @@ final class MuesliICloudSyncEngine {
                 }
             }
             database.add(operation)
+        }
+    }
+
+    private func save(subscription: CKSubscription) async throws -> CKSubscription {
+        try await withCheckedThrowingContinuation { continuation in
+            database.save(subscription) { savedSubscription, error in
+                if let savedSubscription {
+                    continuation.resume(returning: savedSubscription)
+                } else if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(throwing: CKError(.internalError))
+                }
+            }
         }
     }
 
