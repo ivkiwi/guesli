@@ -212,7 +212,11 @@ struct DictationsView: View {
 
     private var iPhoneBridgeCard: some View {
         HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-            Image(systemName: bridgeIcon)
+            BridgeSyncIcon(
+                systemName: bridgeIcon,
+                isAnimating: bridgeSyncIconIsAnimating,
+                font: .system(size: 18, weight: .semibold)
+            )
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(bridgeIconColor)
                 .frame(width: 28)
@@ -234,9 +238,11 @@ struct DictationsView: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(bridgeButtonTitle)
-                    Image(systemName: bridgeButtonIcon)
-                        .font(.system(size: 12, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
+                    BridgeSyncIcon(
+                        systemName: bridgeButtonIcon,
+                        isAnimating: bridgeButtonIconIsAnimating,
+                        font: .system(size: 12, weight: .semibold)
+                    )
                 }
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
@@ -274,6 +280,18 @@ struct DictationsView: View {
             bridgePromptSeen = true
             TelemetryDeck.signal("bridge_prompt_seen", parameters: ["platform": "macos"])
         }
+    }
+
+    private var bridgeSyncIconIsAnimating: Bool {
+        isBridgeSyncWorking && bridgeIcon == "arrow.triangle.2.circlepath"
+    }
+
+    private var bridgeButtonIconIsAnimating: Bool {
+        isBridgeSyncWorking && bridgeButtonIcon == "arrow.triangle.2.circlepath"
+    }
+
+    private var isBridgeSyncWorking: Bool {
+        bridgeState == .checkingICloud || bridgeState == .syncing
     }
 
     private var bridgeIcon: String {
@@ -539,6 +557,44 @@ struct DictationsView: View {
             return clean.count > 5 ? String(clean.suffix(8).prefix(5)) : clean
         }
         return Self.timeFormatter.string(from: date)
+    }
+}
+
+private struct BridgeSyncIcon: View {
+    let systemName: String
+    let isAnimating: Bool
+    let font: Font
+    @State private var rotationDegrees = 0.0
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(font)
+            .symbolRenderingMode(.hierarchical)
+            .rotationEffect(.degrees(rotationDegrees))
+            .onAppear {
+                updateRotation(animated: false)
+            }
+            .onChange(of: isAnimating) { _, _ in
+                updateRotation(animated: true)
+            }
+    }
+
+    private func updateRotation(animated: Bool) {
+        guard isAnimating else {
+            if animated {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    rotationDegrees = 0
+                }
+            } else {
+                rotationDegrees = 0
+            }
+            return
+        }
+
+        rotationDegrees = 0
+        withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
+            rotationDegrees = 360
+        }
     }
 }
 
