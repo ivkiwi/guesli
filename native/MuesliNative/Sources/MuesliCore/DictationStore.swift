@@ -1516,11 +1516,12 @@ public final class DictationStore {
         let startedAt = parseOptionalISODate(statement, index: 4)
         let endedAt = parseOptionalISODate(statement, index: 5)
         let updatedAt = dateFromUnixColumn(statement, index: 9) ?? endedAt ?? createdAt
+        let source = cloudSyncSource(from: statement, index: 8)
         return SyncTextRecord(
             id: recordName,
             kind: .dictation,
             text: stringColumn(statement, index: 1),
-            source: "macos",
+            source: source,
             createdAt: createdAt,
             updatedAt: updatedAt,
             startedAt: startedAt,
@@ -1538,6 +1539,7 @@ public final class DictationStore {
         let createdAt = parseISODate(startTime) ?? Date()
         let duration = sqlite3_column_double(statement, 6)
         let updatedAt = dateFromUnixColumn(statement, index: 9) ?? createdAt
+        let source = cloudSyncSource(from: statement, index: 8)
         return SyncTextRecord(
             id: recordName,
             kind: .meeting,
@@ -1545,7 +1547,7 @@ public final class DictationStore {
             text: stringColumn(statement, index: 2),
             summaryText: optionalStringColumn(statement, index: 3),
             manualNotes: optionalStringColumn(statement, index: 4),
-            source: "macos",
+            source: source,
             createdAt: createdAt,
             updatedAt: updatedAt,
             startedAt: createdAt,
@@ -1555,6 +1557,21 @@ public final class DictationStore {
             isDeleted: sqlite3_column_type(statement, 10) != SQLITE_NULL,
             cloudChangeTag: optionalStringColumn(statement, index: 11)
         )
+    }
+
+    private func cloudSyncSource(from statement: OpaquePointer?, index: Int32) -> String {
+        let source = optionalStringColumn(statement, index: index)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        switch source {
+        case "ios", "iphone":
+            return "ios"
+        case "macos", "mac":
+            return "macos"
+        default:
+            return "macos"
+        }
     }
 
     private func upsertSyncedDictation(_ record: SyncTextRecord, db: OpaquePointer?) throws {
