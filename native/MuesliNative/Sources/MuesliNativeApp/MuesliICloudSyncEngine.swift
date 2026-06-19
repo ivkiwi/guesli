@@ -216,16 +216,14 @@ final class MuesliICloudSyncEngine {
     }
 
     private func fetchChangedTextRecords() async throws -> [CKRecord] {
-        do {
-            return try await fetchChangedTextRecordsUsingStoredToken()
-        } catch let error as CKError where error.code == .changeTokenExpired {
-            changeTokenStore.clearToken()
-            return try await fetchChangedTextRecordsUsingStoredToken()
-        } catch {
-            guard Self.isDefaultZoneChangeFetchUnsupported(error) else { throw error }
-            changeTokenStore.clearToken()
-            return try await fetchAllTextRecords()
-        }
+        // CloudKit's app default zone rejects CKFetchRecordZoneChangesOperation
+        // with "AppDefaultZone does not support getChanges call". Earlier builds
+        // tried it first and fell back to a full query, but that can leave the
+        // sync task stuck if the rejected operation never calls its completion.
+        // Keep the token-based implementation below for a future custom zone,
+        // but use the reliable query path for the current default-zone schema.
+        changeTokenStore.clearToken()
+        return try await fetchAllTextRecords()
     }
 
     private func fetchChangedTextRecordsUsingStoredToken() async throws -> [CKRecord] {
