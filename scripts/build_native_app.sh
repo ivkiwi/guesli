@@ -235,29 +235,52 @@ if [[ "$SKIP_SIGN" != "1" ]]; then
   CODESIGN_ENTITLEMENTS="$ENTITLEMENTS"
   TEMP_ENTITLEMENTS=""
   APS_ENVIRONMENT="${MUESLI_APS_ENVIRONMENT:-}"
-  if [[ -z "$APS_ENVIRONMENT" && -n "$PROVISIONING_PROFILE" ]]; then
+  PROFILE_PLIST=""
+  if [[ -n "$PROVISIONING_PROFILE" ]]; then
     PROFILE_PLIST="$(mktemp "${TMPDIR:-/tmp}/muesli-profile.XXXXXX.plist")"
     if security cms -D -i "$PROVISIONING_PROFILE" > "$PROFILE_PLIST" 2>/dev/null; then
-      APS_ENVIRONMENT="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.aps-environment' "$PROFILE_PLIST" 2>/dev/null || true)"
       if [[ -z "$APS_ENVIRONMENT" ]]; then
-        APS_ENVIRONMENT="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:aps-environment' "$PROFILE_PLIST" 2>/dev/null || true)"
+        APS_ENVIRONMENT="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.aps-environment' "$PROFILE_PLIST" 2>/dev/null || true)"
+        if [[ -z "$APS_ENVIRONMENT" ]]; then
+          APS_ENVIRONMENT="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:aps-environment' "$PROFILE_PLIST" 2>/dev/null || true)"
+        fi
       fi
     fi
-    rm -f "$PROFILE_PLIST"
   fi
-  if [[ -n "$APS_ENVIRONMENT" ]]; then
+
+  if [[ -n "$APS_ENVIRONMENT" || -n "$PROFILE_PLIST" ]]; then
     TEMP_ENTITLEMENTS="$(mktemp "${TMPDIR:-/tmp}/muesli-entitlements.XXXXXX.plist")"
     cp "$ENTITLEMENTS" "$TEMP_ENTITLEMENTS"
-    if ! /usr/libexec/PlistBuddy -c "Set :com.apple.developer.aps-environment $APS_ENVIRONMENT" "$TEMP_ENTITLEMENTS" 2>/dev/null; then
-      /usr/libexec/PlistBuddy -c "Add :com.apple.developer.aps-environment string $APS_ENVIRONMENT" "$TEMP_ENTITLEMENTS"
+    copy_profile_string_entitlement() {
+      local key="$1"
+      local value
+      [[ -n "$PROFILE_PLIST" ]] || return 0
+      value="$(/usr/libexec/PlistBuddy -c "Print :Entitlements:$key" "$PROFILE_PLIST" 2>/dev/null || true)"
+      [[ -n "$value" ]] || return 0
+      if ! /usr/libexec/PlistBuddy -c "Set :$key $value" "$TEMP_ENTITLEMENTS" 2>/dev/null; then
+        /usr/libexec/PlistBuddy -c "Add :$key string $value" "$TEMP_ENTITLEMENTS"
+      fi
+    }
+    copy_profile_string_entitlement "com.apple.application-identifier"
+    copy_profile_string_entitlement "application-identifier"
+    copy_profile_string_entitlement "com.apple.developer.team-identifier"
+    if [[ -n "$APS_ENVIRONMENT" ]]; then
+      if ! /usr/libexec/PlistBuddy -c "Set :com.apple.developer.aps-environment $APS_ENVIRONMENT" "$TEMP_ENTITLEMENTS" 2>/dev/null; then
+        /usr/libexec/PlistBuddy -c "Add :com.apple.developer.aps-environment string $APS_ENVIRONMENT" "$TEMP_ENTITLEMENTS"
+      fi
     fi
     CODESIGN_ENTITLEMENTS="$TEMP_ENTITLEMENTS"
-    echo "Using APNs entitlement: com.apple.developer.aps-environment=$APS_ENVIRONMENT"
+    if [[ -n "$APS_ENVIRONMENT" ]]; then
+      echo "Using APNs entitlement: com.apple.developer.aps-environment=$APS_ENVIRONMENT"
+    fi
   fi
   codesign --force --options runtime "$CODESIGN_TIMESTAMP" \
     --entitlements "$CODESIGN_ENTITLEMENTS" \
     --sign "$SIGN_IDENTITY" \
     "$APP_DIR"
+  if [[ -n "$PROFILE_PLIST" ]]; then
+    rm -f "$PROFILE_PLIST"
+  fi
   if [[ -n "$TEMP_ENTITLEMENTS" ]]; then
     rm -f "$TEMP_ENTITLEMENTS"
   fi
