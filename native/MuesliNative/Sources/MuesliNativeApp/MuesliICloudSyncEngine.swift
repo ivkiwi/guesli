@@ -696,29 +696,34 @@ final class MuesliICloudSyncEngine {
     }
 
     private static func isMissingLegacyDefaultZoneRecords(_ error: Error) -> Bool {
-        isCloudKitUnknownItem(error)
-    }
-
-    private static func isCloudKitUnknownItem(_ error: Error) -> Bool {
         if let ckError = error as? CKError {
-            if ckError.code == .unknownItem {
+            if isIgnorableLegacyDefaultZoneCode(ckError.code) {
                 return true
             }
             if ckError.code == .partialFailure,
-               ckError.partialErrorsByItemID?.values.contains(where: isCloudKitUnknownItem) == true {
+               ckError.partialErrorsByItemID?.values.contains(where: isMissingLegacyDefaultZoneRecords) == true {
                 return true
             }
         }
 
         let nsError = error as NSError
         if nsError.domain == CKError.errorDomain,
-           nsError.code == CKError.Code.unknownItem.rawValue {
+           isIgnorableLegacyDefaultZoneCode(CKError.Code(rawValue: nsError.code)) {
             return true
         }
         if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
-            return isCloudKitUnknownItem(underlyingError)
+            return isMissingLegacyDefaultZoneRecords(underlyingError)
         }
         return false
+    }
+
+    private static func isIgnorableLegacyDefaultZoneCode(_ code: CKError.Code?) -> Bool {
+        switch code {
+        case .unknownItem, .serverRejectedRequest, .invalidArguments, .zoneNotFound:
+            return true
+        default:
+            return false
+        }
     }
 
     private static var desiredTextRecordKeys: [CKRecord.FieldKey] {
