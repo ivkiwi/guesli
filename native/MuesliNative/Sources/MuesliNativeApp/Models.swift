@@ -91,6 +91,15 @@ struct BackendOption: Equatable {
         recommended: false
     )
 
+    static let senseVoiceSmall = BackendOption(
+        backend: "sensevoice",
+        model: "FluidInference/sensevoice-small-coreml",
+        label: "SenseVoice Small",
+        sizeLabel: SenseVoiceTranscriber.downloadedModelSizeLabel,
+        description: "FunASR SenseVoiceSmall via FluidAudio. INT8 CoreML/ANE on macOS 14+, 50+ languages. Non-autoregressive with built-in punctuation.",
+        recommended: false
+    )
+
     // Default alias
     static let whisper = parakeetMultilingual
 
@@ -112,7 +121,7 @@ struct BackendOption: Equatable {
     )
 
     static let experimental: [BackendOption] = [
-        .qwen3Asr, .canaryQwen, .nemotronStreaming,
+        .senseVoiceSmall, .qwen3Asr, .canaryQwen, .nemotronStreaming,
     ]
 
     /// Models available for download and use.
@@ -178,6 +187,8 @@ struct BackendOption: Equatable {
             return CanaryQwenModelStore.isAvailableLocally()
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
+        case "sensevoice":
+            return SenseVoiceTranscriber.isModelDownloaded()
         default:
             return false
         }

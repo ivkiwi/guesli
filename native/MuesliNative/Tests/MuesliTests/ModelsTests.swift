@@ -24,7 +24,7 @@ struct BackendOptionTests {
 
     @Test("backend field is one of the known backends")
     func knownBackends() {
-        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron", "canary", "cohere"]
+        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron", "canary", "cohere", "sensevoice"]
         for option in BackendOption.all {
             #expect(known.contains(option.backend), "Unknown backend: \(option.backend)")
         }
@@ -64,6 +64,7 @@ struct BackendOptionTests {
         #expect(BackendOption.all.contains(.qwen3Asr))
         #expect(BackendOption.all.contains(.canaryQwen))
         #expect(BackendOption.all.contains(.cohereTranscribe))
+        #expect(BackendOption.all.contains(.senseVoiceSmall))
         #expect(BackendOption.all.contains(.nemotronStreaming))
     }
 
@@ -71,6 +72,13 @@ struct BackendOptionTests {
     func cohereBackend() {
         #expect(BackendOption.cohereTranscribe.backend == "cohere")
         #expect(BackendOption.cohereTranscribe.model.contains("cohere"))
+    }
+
+    @Test("SenseVoice uses native FluidAudio CoreML model")
+    func senseVoiceBackend() {
+        #expect(BackendOption.senseVoiceSmall.backend == "sensevoice")
+        #expect(BackendOption.senseVoiceSmall.model == "FluidInference/sensevoice-small-coreml")
+        #expect(BackendOption.senseVoiceSmall.description.contains("FluidAudio"))
     }
 
     @Test("Cohere is not in experimental list")
