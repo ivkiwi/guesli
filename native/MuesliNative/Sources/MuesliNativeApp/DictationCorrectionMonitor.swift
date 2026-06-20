@@ -330,51 +330,38 @@ struct DictionaryCorrectionDetector {
             return hasSpecialDictionarySignal || replacement.contains(where: \.isUppercase)
         }
 
-        guard !isPlainSingleCharacterEdit(observed: normalizedObserved, replacement: normalizedReplacement) else {
+        guard !isCommonWordTruncation(observed: normalizedObserved, replacement: normalizedReplacement) else {
             return false
         }
 
         return similarity >= minimumCorrectionSimilarity || hasSpecialDictionarySignal
     }
 
-    private static func isPlainSingleCharacterEdit(observed: String, replacement: String) -> Bool {
+    private static func isCommonWordTruncation(observed: String, replacement: String) -> Bool {
         guard observed.split(whereSeparator: \.isWhitespace).count == 1,
               replacement.split(whereSeparator: \.isWhitespace).count == 1,
-              observed.allSatisfy({ $0.isLowercase || $0.isNumber }),
-              replacement.allSatisfy({ $0.isLowercase || $0.isNumber })
+              observed.allSatisfy(\.isLowercase),
+              replacement.allSatisfy(\.isLowercase),
+              observed != replacement,
+              (observed.hasPrefix(replacement) || replacement.hasPrefix(observed)),
+              isRecognizedEnglishWord(observed),
+              isRecognizedEnglishWord(replacement)
         else { return false }
-
-        return boundedEditDistance(observed, replacement, limit: 1) <= 1
+        return true
     }
 
-    private static func boundedEditDistance(_ lhs: String, _ rhs: String, limit: Int) -> Int {
-        let lhsChars = Array(lhs)
-        let rhsChars = Array(rhs)
-        guard abs(lhsChars.count - rhsChars.count) <= limit else {
-            return limit + 1
-        }
-        guard !lhsChars.isEmpty else { return rhsChars.count }
-        guard !rhsChars.isEmpty else { return lhsChars.count }
-
-        var previous = Array(0...rhsChars.count)
-        for row in 1...lhsChars.count {
-            var current = [row] + Array(repeating: 0, count: rhsChars.count)
-            var rowMinimum = current[0]
-            for column in 1...rhsChars.count {
-                let substitutionCost = lhsChars[row - 1] == rhsChars[column - 1] ? 0 : 1
-                current[column] = min(
-                    previous[column] + 1,
-                    current[column - 1] + 1,
-                    previous[column - 1] + substitutionCost
-                )
-                rowMinimum = min(rowMinimum, current[column])
-            }
-            if rowMinimum > limit {
-                return limit + 1
-            }
-            previous = current
-        }
-        return previous[rhsChars.count]
+    private static func isRecognizedEnglishWord(_ value: String) -> Bool {
+        spellCheckerLock.lock()
+        defer { spellCheckerLock.unlock() }
+        let range = NSSpellChecker.shared.checkSpelling(
+            of: value,
+            startingAt: 0,
+            language: "en",
+            wrap: false,
+            inSpellDocumentWithTag: 0,
+            wordCount: nil
+        )
+        return range.location == NSNotFound
     }
 
     private static func hasInternalCapital(_ value: String) -> Bool {
@@ -398,6 +385,30 @@ struct DictionaryCorrectionDetector {
         "them", "then", "there", "they", "this", "to", "up", "us", "was", "we", "were",
         "what", "when", "where", "which", "who", "will", "with", "would", "you", "your",
     ]
+
+    private static let spellCheckerLock = NSLock()
+}
+
+struct DictationCorrectionSnapshotStabilizer {
+    private var currentSnapshot: String?
+    private var currentSnapshotChangedAt: Date?
+    private var lastEvaluatedSnapshot: String?
+
+    mutating func observe(snapshot: String?, now: Date, quietWindow: TimeInterval) -> String? {
+        guard let snapshot else { return nil }
+        guard currentSnapshot == snapshot else {
+            currentSnapshot = snapshot
+            currentSnapshotChangedAt = now
+            return nil
+        }
+        guard lastEvaluatedSnapshot != snapshot,
+              let currentSnapshotChangedAt,
+              now.timeIntervalSince(currentSnapshotChangedAt) >= quietWindow
+        else { return nil }
+
+        lastEvaluatedSnapshot = snapshot
+        return snapshot
+    }
 }
 
 @MainActor
@@ -407,6 +418,7 @@ final class DictationCorrectionMonitor {
     private static let steadyPollIntervalNanoseconds: UInt64 = 1_000_000_000
     private static let fastPollingWindowSeconds: TimeInterval = 10
     private static let monitoringWindowSeconds: TimeInterval = 45
+    private static let snapshotQuietWindowSeconds: TimeInterval = 1.5
     nonisolated private static let maxAccessibilityNodes = 140
     nonisolated private static let maxCandidateCharacters = 2_000
 
@@ -424,21 +436,36 @@ final class DictationCorrectionMonitor {
         task = Task {
             let fastPollingDeadline = Date().addingTimeInterval(Self.fastPollingWindowSeconds)
             let deadline = Date().addingTimeInterval(Self.monitoringWindowSeconds)
+            var stabilizer = DictationCorrectionSnapshotStabilizer()
             try? await Task.sleep(nanoseconds: Self.initialPollDelayNanoseconds)
             while !Task.isCancelled, Date() < deadline {
-                let suggestion = await Task.detached(priority: .utility) {
-                    Self.detectSuggestion(
+                let snapshot = await Task.detached(priority: .utility) {
+                    Self.detectEditedSnapshot(
                         originalText: originalText,
-                        appContext: appContext,
                         targetApp: targetApp
                     )
                 }.value
                 if Task.isCancelled { return }
-                if let suggestion {
-                    await MainActor.run {
-                        onSuggestion(suggestion)
+                if let stableSnapshot = stabilizer.observe(
+                    snapshot: snapshot,
+                    now: Date(),
+                    quietWindow: Self.snapshotQuietWindowSeconds
+                ) {
+                    let suggestion = await Task.detached(priority: .utility) {
+                        Self.suggestion(
+                            originalText: originalText,
+                            editedSnapshot: stableSnapshot,
+                            appContext: appContext,
+                            targetApp: targetApp
+                        )
+                    }.value
+                    if Task.isCancelled { return }
+                    if let suggestion {
+                        await MainActor.run {
+                            onSuggestion(suggestion)
+                        }
+                        return
                     }
-                    return
                 }
                 let interval = Date() < fastPollingDeadline
                     ? Self.fastPollIntervalNanoseconds
@@ -453,36 +480,48 @@ final class DictationCorrectionMonitor {
         task = nil
     }
 
-    nonisolated private static func detectSuggestion(
+    nonisolated private static func suggestion(
         originalText: String,
+        editedSnapshot: String,
         appContext: String,
         targetApp: DictationCorrectionTargetApp?
     ) -> DictionarySuggestion? {
         let resolvedAppContext = appContext.isEmpty ? (targetApp?.appContext ?? "") : appContext
+        return DictionaryCorrectionDetector.suggestion(
+            originalText: originalText,
+            editedText: editedSnapshot,
+            appContext: resolvedAppContext
+        )
+    }
+
+    nonisolated private static func detectEditedSnapshot(
+        originalText: String,
+        targetApp: DictationCorrectionTargetApp?
+    ) -> String? {
         var seen = Set<String>()
 
-        func suggestion(from value: String?) -> DictionarySuggestion? {
+        func snapshot(from value: String?) -> String? {
             guard let snapshot = normalizedSnapshot(value, originalText: originalText),
-                  !seen.contains(snapshot)
+                  !seen.contains(snapshot),
+                  DictionaryCorrectionDetector.hasSufficientSharedContext(
+                      originalText: originalText,
+                      editedText: snapshot
+                  )
             else { return nil }
             seen.insert(snapshot)
-            return DictionaryCorrectionDetector.suggestion(
-                originalText: originalText,
-                editedText: snapshot,
-                appContext: resolvedAppContext
-            )
+            return snapshot
         }
 
         var focusedProcessID: pid_t?
-        if let focusedSuggestion = systemFocusedTextSnapshot(
+        if let focusedSnapshot = systemFocusedTextSnapshot(
             maxCharacters: maxCandidateCharacters,
             processID: &focusedProcessID
-        ).flatMap(suggestion(from:)) {
-            return focusedSuggestion
+        ).flatMap(snapshot(from:)) {
+            return focusedSnapshot
         }
 
         if let targetApp, targetApp.processID != focusedProcessID {
-            return collectTextSnapshots(fromProcessID: targetApp.processID, evaluate: suggestion(from:))
+            return collectTextSnapshots(fromProcessID: targetApp.processID, evaluate: snapshot(from:))
         }
         return nil
     }
@@ -506,8 +545,8 @@ final class DictationCorrectionMonitor {
 
     nonisolated private static func collectTextSnapshots(
         fromProcessID processID: pid_t,
-        evaluate: (String?) -> DictionarySuggestion?
-    ) -> DictionarySuggestion? {
+        evaluate: (String?) -> String?
+    ) -> String? {
         let axApp = AXUIElementCreateApplication(processID)
         var roots: [AXUIElement] = []
 
@@ -544,8 +583,8 @@ final class DictationCorrectionMonitor {
         depth: Int,
         remainingNodes: inout Int,
         visited: inout Set<String>,
-        evaluate: (String?) -> DictionarySuggestion?
-    ) -> DictionarySuggestion? {
+        evaluate: (String?) -> String?
+    ) -> String? {
         guard depth <= 8, remainingNodes > 0 else { return nil }
         let visitKey = elementVisitKey(element)
         guard !visited.contains(visitKey) else { return nil }

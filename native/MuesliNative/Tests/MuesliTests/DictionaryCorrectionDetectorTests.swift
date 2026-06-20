@@ -146,12 +146,12 @@ struct DictionaryCorrectionDetectorTests {
         #expect(suggestion == nil)
     }
 
-    @Test("does not suggest plain one character lowercase edits")
-    func skipsPlainOneCharacterLowercaseEdits() {
+    @Test("does not suggest common word truncations")
+    func skipsCommonWordTruncations() {
         let suggestion = DictionaryCorrectionDetector.suggestion(
             originalText: "I usually use this prompt",
             baselineText: "I usually use this prompt",
-            currentText: "I usualy use this prompt"
+            currentText: "I usual use this prompt"
         )
 
         #expect(suggestion == nil)
@@ -176,6 +176,42 @@ struct DictionaryCorrectionDetectorTests {
         )
 
         #expect(suggestion == nil)
+    }
+}
+
+@Suite("Dictionary correction snapshot stabilizer")
+struct DictionaryCorrectionSnapshotStabilizerTests {
+    @Test("waits for a quiet window before evaluating a changed snapshot")
+    func waitsForQuietWindow() {
+        var stabilizer = DictationCorrectionSnapshotStabilizer()
+        let start = Date(timeIntervalSince1970: 1_000)
+        let snapshot = "I usually use this prompt"
+
+        #expect(stabilizer.observe(snapshot: snapshot, now: start, quietWindow: 1.5) == nil)
+        #expect(stabilizer.observe(snapshot: snapshot, now: start.addingTimeInterval(1.0), quietWindow: 1.5) == nil)
+        #expect(stabilizer.observe(snapshot: snapshot, now: start.addingTimeInterval(1.6), quietWindow: 1.5) == snapshot)
+    }
+
+    @Test("resets the quiet window when the snapshot changes")
+    func resetsQuietWindowOnChange() {
+        var stabilizer = DictationCorrectionSnapshotStabilizer()
+        let start = Date(timeIntervalSince1970: 2_000)
+
+        #expect(stabilizer.observe(snapshot: "I usually", now: start, quietWindow: 1.5) == nil)
+        #expect(stabilizer.observe(snapshot: "I usual", now: start.addingTimeInterval(1.0), quietWindow: 1.5) == nil)
+        #expect(stabilizer.observe(snapshot: "I usual", now: start.addingTimeInterval(2.4), quietWindow: 1.5) == nil)
+        #expect(stabilizer.observe(snapshot: "I usual", now: start.addingTimeInterval(2.6), quietWindow: 1.5) == "I usual")
+    }
+
+    @Test("does not evaluate the same stable snapshot repeatedly")
+    func evaluatesStableSnapshotOnce() {
+        var stabilizer = DictationCorrectionSnapshotStabilizer()
+        let start = Date(timeIntervalSince1970: 3_000)
+        let snapshot = "muwsly"
+
+        #expect(stabilizer.observe(snapshot: snapshot, now: start, quietWindow: 1.5) == nil)
+        #expect(stabilizer.observe(snapshot: snapshot, now: start.addingTimeInterval(2.0), quietWindow: 1.5) == snapshot)
+        #expect(stabilizer.observe(snapshot: snapshot, now: start.addingTimeInterval(3.0), quietWindow: 1.5) == nil)
     }
 }
 
