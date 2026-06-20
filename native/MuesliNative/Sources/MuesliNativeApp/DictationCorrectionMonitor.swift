@@ -292,12 +292,8 @@ struct DictionaryCorrectionDetector {
 
         let normalizedReplacement = replacement.lowercased()
         let normalizedObserved = observed.lowercased()
-        let hasSpecialDictionarySignal = hasInternalCapital(replacement)
-            || replacement.contains(where: \.isNumber)
+        let hasFormattingDictionarySignal = hasStrongDictionarySignal(replacement)
             || replacement.contains("-")
-            || replacement.contains("_")
-            || replacement.contains("/")
-            || isAcronymLike(replacement)
 
         let similarity = CustomWordMatcher.jaroWinklerSimilarity(
             normalizedObserved,
@@ -312,29 +308,87 @@ struct DictionaryCorrectionDetector {
                 compactObserved,
                 compactReplacement
             )
-            return compactSimilarity >= 0.82
+            return compactSimilarity >= 0.82 || isLikelyStrongDictionaryCorrection(
+                observed: observed,
+                replacement: replacement,
+                observedTokens: observedTokens,
+                similarity: compactSimilarity
+            )
         }
 
         if commonWords.contains(normalizedObserved) {
             if observed.lowercased() == replacement.lowercased() {
-                return hasSpecialDictionarySignal || replacement.contains(where: \.isUppercase)
+                return hasFormattingDictionarySignal || replacement.contains(where: \.isUppercase)
             }
-            return similarity >= 0.82 && hasSpecialDictionarySignal
+            return similarity >= 0.82 && hasFormattingDictionarySignal
         }
 
-        if commonWords.contains(normalizedReplacement), !hasSpecialDictionarySignal {
+        if commonWords.contains(normalizedReplacement), !hasFormattingDictionarySignal {
             return false
         }
 
         if observed.lowercased() == replacement.lowercased() {
-            return hasSpecialDictionarySignal || replacement.contains(where: \.isUppercase)
+            return hasFormattingDictionarySignal || replacement.contains(where: \.isUppercase)
         }
 
         guard !isCommonWordTruncation(observed: normalizedObserved, replacement: normalizedReplacement) else {
             return false
         }
 
-        return similarity >= minimumCorrectionSimilarity
+        return similarity >= minimumCorrectionSimilarity || isLikelyStrongDictionaryCorrection(
+            observed: observed,
+            replacement: replacement,
+            observedTokens: observedTokens,
+            similarity: similarity
+        )
+    }
+
+    private static func hasStrongDictionarySignal(_ value: String) -> Bool {
+        hasInternalCapital(value)
+            || value.contains(where: \.isNumber)
+            || value.contains("_")
+            || value.contains("/")
+            || isAcronymLike(value)
+    }
+
+    private static func isLikelyStrongDictionaryCorrection(
+        observed: String,
+        replacement: String,
+        observedTokens: [String],
+        similarity: Double
+    ) -> Bool {
+        guard hasStrongDictionarySignal(replacement) else { return false }
+        if isNumericShorthand(observed: observed, replacement: replacement) {
+            return true
+        }
+        if isAcronymLike(replacement), isAcronymCorrection(observedTokens: observedTokens, replacement: replacement) {
+            return true
+        }
+        if replacement.contains("_") || replacement.contains("/") || hasInternalCapital(replacement) {
+            return similarity >= 0.55
+        }
+        return false
+    }
+
+    private static func isNumericShorthand(observed: String, replacement: String) -> Bool {
+        let observedLetters = observed.lowercased().filter(\.isLetter)
+        let replacementCharacters = Array(replacement.lowercased())
+        guard observedLetters.count >= 4,
+              replacementCharacters.contains(where: \.isNumber),
+              let firstObserved = observedLetters.first,
+              let lastObserved = observedLetters.last,
+              replacementCharacters.first == firstObserved,
+              replacementCharacters.last == lastObserved
+        else { return false }
+        return true
+    }
+
+    private static func isAcronymCorrection(observedTokens: [String], replacement: String) -> Bool {
+        guard observedTokens.count > 1 else { return false }
+        let initials = observedTokens.compactMap { $0.first?.lowercased() }.joined()
+        let replacementLetters = replacement.lowercased().filter(\.isLetter)
+        guard !initials.isEmpty, !replacementLetters.isEmpty else { return false }
+        return replacementLetters.hasPrefix(initials)
     }
 
     private static func isCommonWordTruncation(observed: String, replacement: String) -> Bool {

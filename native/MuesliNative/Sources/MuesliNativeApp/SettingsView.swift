@@ -270,9 +270,9 @@ struct SettingsView: View {
 
     private var screenContextDescription: String {
         if screenRecordingGranted {
-            return "Adds nearby app text and meeting OCR context. Processed on-device."
+            return "Adds nearby app text, meeting OCR, and post-dictation edit detection. Processed on-device."
         }
-        return "Requires Screen Recording. Adds nearby app text and meeting OCR context."
+        return "Requires Screen Recording for nearby app text, meeting OCR, and post-dictation edit detection."
     }
 
     @ViewBuilder

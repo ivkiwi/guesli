@@ -52,6 +52,28 @@ struct DictionaryCorrectionDetectorTests {
         #expect(suggestion?.replacement == "sc-domain")
     }
 
+    @Test("detects acronym replacement corrections")
+    func detectsAcronymReplacementCorrection() {
+        let suggestion = DictionaryCorrectionDetector.suggestion(
+            originalText: "I moved to New York last year and I like it",
+            editedText: "I moved to NYC last year and I like it"
+        )
+
+        #expect(suggestion?.observed == "New York")
+        #expect(suggestion?.replacement == "NYC")
+    }
+
+    @Test("detects numeric shorthand corrections")
+    func detectsNumericShorthandCorrection() {
+        let suggestion = DictionaryCorrectionDetector.suggestion(
+            originalText: "we run kubernetes in production for backend services today",
+            editedText: "we run k8s in production for backend services today"
+        )
+
+        #expect(suggestion?.observed == "kubernetes")
+        #expect(suggestion?.replacement == "k8s")
+    }
+
     @Test("detects muesli corrections from latest failure shape")
     func detectsMuesliCorrectionFromLatestFailureShape() {
         let original = "No, typically I think the word muzzle is the worst toughest one for it to transcribe because it usually transcribes to the one starting with the w letter N instead of just muzzli."
@@ -183,6 +205,16 @@ struct DictionaryCorrectionDetectorTests {
         let suggestion = DictionaryCorrectionDetector.suggestion(
             originalText: "Please review the Vitruvian design note",
             editedText: "Please review the follow-up design note"
+        )
+
+        #expect(suggestion == nil)
+    }
+
+    @Test("does not let numeric shorthand signal alone replace unrelated words")
+    func skipsUnrelatedNumericShorthandReplacement() {
+        let suggestion = DictionaryCorrectionDetector.suggestion(
+            originalText: "Please review the Vitruvian design note",
+            editedText: "Please review the k8s design note"
         )
 
         #expect(suggestion == nil)
