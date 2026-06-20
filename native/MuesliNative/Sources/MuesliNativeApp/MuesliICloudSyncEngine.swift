@@ -353,13 +353,14 @@ final class MuesliICloudSyncEngine {
                 return (uploaded, false)
             }
 
-            var dirtyRecordsByName: [String: SyncTextRecord] = [:]
-            for dirtyRecord in dirtyRecords {
-                dirtyRecordsByName[dirtyRecord.id] = dirtyRecord
-            }
-
             let uploadRecords = try await cloudRecordsForDirtyUpload(dirtyRecords, store: store)
-            let savedRecords = try await saveInBatches(records: uploadRecords)
+            let uploadResult = try await saveDirtyUploadRecords(
+                uploadRecords,
+                originalDirtyRecords: dirtyRecords,
+                store: store
+            )
+            let savedRecords = uploadResult.savedRecords
+            let dirtyRecordsByName = uploadResult.dirtyRecordsByName
             guard !savedRecords.isEmpty else {
                 return (uploaded, try store.hasTextRecordsNeedingSync())
             }
@@ -386,6 +387,38 @@ final class MuesliICloudSyncEngine {
         }
 
         return (uploaded, try store.hasTextRecordsNeedingSync())
+    }
+
+    private func saveDirtyUploadRecords(
+        _ uploadRecords: [CKRecord],
+        originalDirtyRecords: [SyncTextRecord],
+        store: DictationStore
+    ) async throws -> (savedRecords: [CKRecord], dirtyRecordsByName: [String: SyncTextRecord]) {
+        do {
+            return (
+                try await saveInBatches(records: uploadRecords),
+                Self.recordsByName(originalDirtyRecords)
+            )
+        } catch {
+            guard Self.isServerRecordChangedError(error) else { throw error }
+        }
+
+        let originalRecordIDs = Set(originalDirtyRecords.map(\.id))
+        let retryDirtyRecords = try store.textRecordsNeedingSync(limit: Self.dirtyUploadBatchSize)
+            .filter { originalRecordIDs.contains($0.id) }
+        guard !retryDirtyRecords.isEmpty else {
+            return ([], [:])
+        }
+
+        let retryUploadRecords = try await cloudRecordsForDirtyUpload(retryDirtyRecords, store: store)
+        guard !retryUploadRecords.isEmpty else {
+            return ([], Self.recordsByName(retryDirtyRecords))
+        }
+
+        return (
+            try await saveInBatches(records: retryUploadRecords),
+            Self.recordsByName(retryDirtyRecords)
+        )
     }
 
     private func cloudRecordsForDirtyUpload(_ dirtyRecords: [SyncTextRecord], store: DictationStore) async throws -> [CKRecord] {
@@ -784,6 +817,22 @@ final class MuesliICloudSyncEngine {
            let partialErrors = ckError.partialErrorsByItemID,
            !partialErrors.isEmpty {
             return partialErrors.values.allSatisfy(isUnknownItemError)
+        }
+        return false
+    }
+
+    private static func recordsByName(_ records: [SyncTextRecord]) -> [String: SyncTextRecord] {
+        Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+    }
+
+    static func isServerRecordChangedError(_ error: Error) -> Bool {
+        guard let ckError = error as? CKError else { return false }
+        if ckError.code == .serverRecordChanged {
+            return true
+        }
+        if ckError.code == .partialFailure,
+           ckError.partialErrorsByItemID?.values.contains(where: isServerRecordChangedError) == true {
+            return true
         }
         return false
     }

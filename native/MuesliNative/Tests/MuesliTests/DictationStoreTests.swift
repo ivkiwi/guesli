@@ -941,6 +941,23 @@ struct DictationStoreTests {
         #expect(!MuesliICloudSyncEngine.isChangeTokenExpired(CKError(.networkUnavailable)))
     }
 
+    @Test("CloudKit server record changed errors are detected")
+    func cloudKitServerRecordChangedErrorsAreDetected() {
+        let recordID = CKRecord.ID(
+            recordName: "dictation-conflict",
+            zoneID: CKRecordZone.ID(zoneName: "MuesliSyncZone", ownerName: CKCurrentUserDefaultName)
+        )
+        let partialFailure = CKError(.partialFailure, userInfo: [
+            CKPartialErrorsByItemIDKey: [
+                recordID: CKError(.serverRecordChanged),
+            ],
+        ])
+
+        #expect(MuesliICloudSyncEngine.isServerRecordChangedError(CKError(.serverRecordChanged)))
+        #expect(MuesliICloudSyncEngine.isServerRecordChangedError(partialFailure))
+        #expect(!MuesliICloudSyncEngine.isServerRecordChangedError(CKError(.networkUnavailable)))
+    }
+
     @Test("unknown meeting source falls back to meeting")
     func unknownMeetingSourceFallsBackToMeeting() throws {
         let store = try makeStore()
