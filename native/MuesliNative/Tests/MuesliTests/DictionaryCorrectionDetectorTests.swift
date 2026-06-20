@@ -187,9 +187,9 @@ struct DictionaryCorrectionSnapshotStabilizerTests {
         let start = Date(timeIntervalSince1970: 1_000)
         let snapshot = "I usually use this prompt"
 
-        #expect(stabilizer.observe(snapshot: snapshot, now: start, quietWindow: 1.5) == nil)
-        #expect(stabilizer.observe(snapshot: snapshot, now: start.addingTimeInterval(1.0), quietWindow: 1.5) == nil)
-        #expect(stabilizer.observe(snapshot: snapshot, now: start.addingTimeInterval(1.6), quietWindow: 1.5) == snapshot)
+        #expect(stabilizer.observe(snapshots: [snapshot], now: start, quietWindow: 1.5).isEmpty)
+        #expect(stabilizer.observe(snapshots: [snapshot], now: start.addingTimeInterval(1.0), quietWindow: 1.5).isEmpty)
+        #expect(stabilizer.observe(snapshots: [snapshot], now: start.addingTimeInterval(1.6), quietWindow: 1.5) == [snapshot])
     }
 
     @Test("resets the quiet window when the snapshot changes")
@@ -197,10 +197,10 @@ struct DictionaryCorrectionSnapshotStabilizerTests {
         var stabilizer = DictationCorrectionSnapshotStabilizer()
         let start = Date(timeIntervalSince1970: 2_000)
 
-        #expect(stabilizer.observe(snapshot: "I usually", now: start, quietWindow: 1.5) == nil)
-        #expect(stabilizer.observe(snapshot: "I usual", now: start.addingTimeInterval(1.0), quietWindow: 1.5) == nil)
-        #expect(stabilizer.observe(snapshot: "I usual", now: start.addingTimeInterval(2.4), quietWindow: 1.5) == nil)
-        #expect(stabilizer.observe(snapshot: "I usual", now: start.addingTimeInterval(2.6), quietWindow: 1.5) == "I usual")
+        #expect(stabilizer.observe(snapshots: ["I usually"], now: start, quietWindow: 1.5).isEmpty)
+        #expect(stabilizer.observe(snapshots: ["I usual"], now: start.addingTimeInterval(1.0), quietWindow: 1.5).isEmpty)
+        #expect(stabilizer.observe(snapshots: ["I usual"], now: start.addingTimeInterval(2.4), quietWindow: 1.5).isEmpty)
+        #expect(stabilizer.observe(snapshots: ["I usual"], now: start.addingTimeInterval(2.6), quietWindow: 1.5) == ["I usual"])
     }
 
     @Test("does not evaluate the same stable snapshot repeatedly")
@@ -209,9 +209,22 @@ struct DictionaryCorrectionSnapshotStabilizerTests {
         let start = Date(timeIntervalSince1970: 3_000)
         let snapshot = "muwsly"
 
-        #expect(stabilizer.observe(snapshot: snapshot, now: start, quietWindow: 1.5) == nil)
-        #expect(stabilizer.observe(snapshot: snapshot, now: start.addingTimeInterval(2.0), quietWindow: 1.5) == snapshot)
-        #expect(stabilizer.observe(snapshot: snapshot, now: start.addingTimeInterval(3.0), quietWindow: 1.5) == nil)
+        #expect(stabilizer.observe(snapshots: [snapshot], now: start, quietWindow: 1.5).isEmpty)
+        #expect(stabilizer.observe(snapshots: [snapshot], now: start.addingTimeInterval(2.0), quietWindow: 1.5) == [snapshot])
+        #expect(stabilizer.observe(snapshots: [snapshot], now: start.addingTimeInterval(3.0), quietWindow: 1.5).isEmpty)
+    }
+
+    @Test("evaluates later stable snapshots after an earlier snapshot was already evaluated")
+    func evaluatesLaterStableSnapshotAfterEarlierCandidate() {
+        var stabilizer = DictationCorrectionSnapshotStabilizer()
+        let start = Date(timeIntervalSince1970: 4_000)
+        let earlier = "I changed punctuation only."
+        let later = "I changed museli to muesli."
+
+        #expect(stabilizer.observe(snapshots: [earlier], now: start, quietWindow: 1.5).isEmpty)
+        #expect(stabilizer.observe(snapshots: [earlier], now: start.addingTimeInterval(1.6), quietWindow: 1.5) == [earlier])
+        #expect(stabilizer.observe(snapshots: [earlier, later], now: start.addingTimeInterval(1.7), quietWindow: 1.5).isEmpty)
+        #expect(stabilizer.observe(snapshots: [earlier, later], now: start.addingTimeInterval(3.3), quietWindow: 1.5) == [later])
     }
 }
 

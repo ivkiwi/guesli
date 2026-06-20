@@ -229,8 +229,11 @@ struct SettingsView: View {
         ) {
             Button("Cancel", role: .cancel) {}
             Button("Enable") {
-                controller.setDictionaryCorrectionPromptsEnabled(true)
-                handleScreenContextToggle(true)
+                if handleScreenContextToggle(true) {
+                    controller.setDictionaryCorrectionPromptsEnabled(true)
+                } else {
+                    controller.setDictionaryCorrectionPromptsEnabled(false)
+                }
             }
         } message: {
             Text("Dictionary suggestions need Screen Context to detect text edits after dictation.")
@@ -1372,11 +1375,12 @@ struct SettingsView: View {
         }
     }
 
-    private func handleScreenContextToggle(_ enabled: Bool) {
+    @discardableResult
+    private func handleScreenContextToggle(_ enabled: Bool) -> Bool {
         guard enabled else {
             clearPendingScreenContextEnable()
             controller.updateConfig { $0.enableScreenContext = false }
-            return
+            return false
         }
 
         guard CGPreflightScreenCaptureAccess() else {
@@ -1387,12 +1391,12 @@ struct SettingsView: View {
             if granted || screenRecordingGranted {
                 clearPendingScreenContextEnable()
             }
-            return
+            return granted || screenRecordingGranted
         }
 
         screenRecordingGranted = true
         clearPendingScreenContextEnable()
-        controller.requestScreenContextEnable()
+        return controller.requestScreenContextEnable()
     }
 
     private func handleDictionaryCorrectionPromptsToggle(_ enabled: Bool) {

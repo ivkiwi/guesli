@@ -34,8 +34,8 @@ struct DictionaryView: View {
         .alert("Enable Screen Context?", isPresented: $isShowingScreenContextPrompt) {
             Button("Cancel", role: .cancel) {}
             Button("Enable") {
-                controller.setDictionaryCorrectionPromptsEnabled(true)
-                controller.requestScreenContextEnable()
+                let granted = controller.requestScreenContextEnable()
+                controller.setDictionaryCorrectionPromptsEnabled(granted)
             }
         } message: {
             Text("Dictionary suggestions need Screen Context to detect text edits after dictation.")

@@ -533,7 +533,7 @@ struct CustomWord: Codable, Equatable, Identifiable {
 }
 
 struct DictionarySuggestion: Codable, Equatable, Identifiable, Sendable {
-    var id = UUID()
+    let id: UUID
     var observed: String
     var replacement: String
     var appContext: String

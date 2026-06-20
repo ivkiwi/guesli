@@ -390,24 +390,27 @@ struct DictionaryCorrectionDetector {
 }
 
 struct DictationCorrectionSnapshotStabilizer {
-    private var currentSnapshot: String?
-    private var currentSnapshotChangedAt: Date?
-    private var lastEvaluatedSnapshot: String?
+    private var snapshotChangedAt: [String: Date] = [:]
+    private var evaluatedSnapshots = Set<String>()
 
-    mutating func observe(snapshot: String?, now: Date, quietWindow: TimeInterval) -> String? {
-        guard let snapshot else { return nil }
-        guard currentSnapshot == snapshot else {
-            currentSnapshot = snapshot
-            currentSnapshotChangedAt = now
-            return nil
+    mutating func observe(snapshots: [String], now: Date, quietWindow: TimeInterval) -> [String] {
+        let currentSnapshots = Set(snapshots)
+        snapshotChangedAt = snapshotChangedAt.filter { currentSnapshots.contains($0.key) }
+
+        for snapshot in snapshots where snapshotChangedAt[snapshot] == nil {
+            snapshotChangedAt[snapshot] = now
         }
-        guard lastEvaluatedSnapshot != snapshot,
-              let currentSnapshotChangedAt,
-              now.timeIntervalSince(currentSnapshotChangedAt) >= quietWindow
-        else { return nil }
 
-        lastEvaluatedSnapshot = snapshot
-        return snapshot
+        var stableSnapshots: [String] = []
+        for snapshot in snapshots {
+            guard !evaluatedSnapshots.contains(snapshot),
+                  let changedAt = snapshotChangedAt[snapshot],
+                  now.timeIntervalSince(changedAt) >= quietWindow
+            else { continue }
+            evaluatedSnapshots.insert(snapshot)
+            stableSnapshots.append(snapshot)
+        }
+        return stableSnapshots
     }
 }
 
@@ -439,18 +442,19 @@ final class DictationCorrectionMonitor {
             var stabilizer = DictationCorrectionSnapshotStabilizer()
             try? await Task.sleep(nanoseconds: Self.initialPollDelayNanoseconds)
             while !Task.isCancelled, Date() < deadline {
-                let snapshot = await Task.detached(priority: .utility) {
-                    Self.detectEditedSnapshot(
+                let snapshots = await Task.detached(priority: .utility) {
+                    Self.detectEditedSnapshots(
                         originalText: originalText,
                         targetApp: targetApp
                     )
                 }.value
                 if Task.isCancelled { return }
-                if let stableSnapshot = stabilizer.observe(
-                    snapshot: snapshot,
+                let stableSnapshots = stabilizer.observe(
+                    snapshots: snapshots,
                     now: Date(),
                     quietWindow: Self.snapshotQuietWindowSeconds
-                ) {
+                )
+                for stableSnapshot in stableSnapshots {
                     let suggestion = await Task.detached(priority: .utility) {
                         Self.suggestion(
                             originalText: originalText,
@@ -494,36 +498,35 @@ final class DictationCorrectionMonitor {
         )
     }
 
-    nonisolated private static func detectEditedSnapshot(
+    nonisolated private static func detectEditedSnapshots(
         originalText: String,
         targetApp: DictationCorrectionTargetApp?
-    ) -> String? {
+    ) -> [String] {
         var seen = Set<String>()
+        var snapshots: [String] = []
 
-        func snapshot(from value: String?) -> String? {
+        func addSnapshot(from value: String?) {
             guard let snapshot = normalizedSnapshot(value, originalText: originalText),
                   !seen.contains(snapshot),
                   DictionaryCorrectionDetector.hasSufficientSharedContext(
                       originalText: originalText,
                       editedText: snapshot
                   )
-            else { return nil }
+            else { return }
             seen.insert(snapshot)
-            return snapshot
+            snapshots.append(snapshot)
         }
 
         var focusedProcessID: pid_t?
-        if let focusedSnapshot = systemFocusedTextSnapshot(
+        addSnapshot(from: systemFocusedTextSnapshot(
             maxCharacters: maxCandidateCharacters,
             processID: &focusedProcessID
-        ).flatMap(snapshot(from:)) {
-            return focusedSnapshot
-        }
+        ))
 
-        if let targetApp, targetApp.processID != focusedProcessID {
-            return collectTextSnapshots(fromProcessID: targetApp.processID, evaluate: snapshot(from:))
+        if let targetApp {
+            collectTextSnapshots(fromProcessID: targetApp.processID, add: addSnapshot(from:))
         }
-        return nil
+        return snapshots
     }
 
     nonisolated private static func normalizedSnapshot(_ value: String?, originalText: String) -> String? {
@@ -545,8 +548,8 @@ final class DictationCorrectionMonitor {
 
     nonisolated private static func collectTextSnapshots(
         fromProcessID processID: pid_t,
-        evaluate: (String?) -> String?
-    ) -> String? {
+        add: (String?) -> Void
+    ) {
         let axApp = AXUIElementCreateApplication(processID)
         var roots: [AXUIElement] = []
 
@@ -564,18 +567,15 @@ final class DictationCorrectionMonitor {
         var remainingNodes = maxAccessibilityNodes
         var visited = Set<String>()
         for root in roots {
-            if let suggestion = collectTextSnapshots(
+            collectTextSnapshots(
                 from: root,
                 depth: 0,
                 remainingNodes: &remainingNodes,
                 visited: &visited,
-                evaluate: evaluate
-            ) {
-                return suggestion
-            }
-            if remainingNodes <= 0 { return nil }
+                add: add
+            )
+            if remainingNodes <= 0 { return }
         }
-        return nil
     }
 
     nonisolated private static func collectTextSnapshots(
@@ -583,18 +583,17 @@ final class DictationCorrectionMonitor {
         depth: Int,
         remainingNodes: inout Int,
         visited: inout Set<String>,
-        evaluate: (String?) -> String?
-    ) -> String? {
-        guard depth <= 8, remainingNodes > 0 else { return nil }
+        add: (String?) -> Void
+    ) {
+        guard depth <= 8, remainingNodes > 0 else { return }
         let visitKey = elementVisitKey(element)
-        guard !visited.contains(visitKey) else { return nil }
+        guard !visited.contains(visitKey) else { return }
         visited.insert(visitKey)
         remainingNodes -= 1
 
         var valueRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef) == .success,
-           let suggestion = evaluate(valueRef as? String) {
-            return suggestion
+        if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef) == .success {
+            add(valueRef as? String)
         }
 
         for childAttribute in [
@@ -603,19 +602,16 @@ final class DictationCorrectionMonitor {
             kAXContentsAttribute,
         ] {
             for child in axElementArrayAttribute(childAttribute, from: element) {
-                if let suggestion = collectTextSnapshots(
+                collectTextSnapshots(
                     from: child,
                     depth: depth + 1,
                     remainingNodes: &remainingNodes,
                     visited: &visited,
-                    evaluate: evaluate
-                ) {
-                    return suggestion
-                }
-                if remainingNodes <= 0 { return nil }
+                    add: add
+                )
+                if remainingNodes <= 0 { return }
             }
         }
-        return nil
     }
 
     nonisolated private static func systemFocusedTextSnapshot(
