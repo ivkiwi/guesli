@@ -830,6 +830,74 @@ struct DictationStoreTests {
         #expect(cloud["updatedAt"] as? Date == updatedAt)
     }
 
+    @Test("dirty upload resolution applies newer fetched remote")
+    func dirtyUploadResolutionAppliesNewerFetchedRemote() throws {
+        let localUpdatedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        let remoteUpdatedAt = localUpdatedAt.addingTimeInterval(30)
+        let local = SyncTextRecord(
+            id: "dictation-upload-conflict",
+            kind: .dictation,
+            text: "Local stale text",
+            source: "macos",
+            createdAt: localUpdatedAt,
+            updatedAt: localUpdatedAt,
+            durationSeconds: 2,
+            wordCount: 3,
+            cloudChangeTag: "tag-old"
+        )
+        let remote = SyncTextRecord(
+            id: "dictation-upload-conflict",
+            kind: .dictation,
+            text: "Remote newer text",
+            source: "ios",
+            createdAt: localUpdatedAt,
+            updatedAt: remoteUpdatedAt,
+            durationSeconds: 2,
+            wordCount: 3,
+            cloudChangeTag: "tag-new"
+        )
+
+        #expect(MuesliICloudSyncEngine.shouldApplyFetchedRemoteBeforeDirtyUpload(
+            local: local,
+            remote: remote,
+            fetchedChangeTag: "tag-new"
+        ))
+    }
+
+    @Test("dirty upload resolution keeps newer local edit")
+    func dirtyUploadResolutionKeepsNewerLocalEdit() throws {
+        let remoteUpdatedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        let localUpdatedAt = remoteUpdatedAt.addingTimeInterval(30)
+        let local = SyncTextRecord(
+            id: "dictation-upload-local-wins",
+            kind: .dictation,
+            text: "Local newer text",
+            source: "macos",
+            createdAt: remoteUpdatedAt,
+            updatedAt: localUpdatedAt,
+            durationSeconds: 2,
+            wordCount: 3,
+            cloudChangeTag: "tag-old"
+        )
+        let remote = SyncTextRecord(
+            id: "dictation-upload-local-wins",
+            kind: .dictation,
+            text: "Remote older text",
+            source: "ios",
+            createdAt: remoteUpdatedAt,
+            updatedAt: remoteUpdatedAt,
+            durationSeconds: 2,
+            wordCount: 3,
+            cloudChangeTag: "tag-new"
+        )
+
+        #expect(!MuesliICloudSyncEngine.shouldApplyFetchedRemoteBeforeDirtyUpload(
+            local: local,
+            remote: remote,
+            fetchedChangeTag: "tag-new"
+        ))
+    }
+
     @Test("synced iOS meeting preserves source and excludes audio")
     func syncedIOSMeetingPreservesSourceAndExcludesAudio() throws {
         let store = try makeStore()

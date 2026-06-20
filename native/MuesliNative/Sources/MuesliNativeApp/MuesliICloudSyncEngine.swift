@@ -354,7 +354,7 @@ final class MuesliICloudSyncEngine {
                 dirtyRecordsByName[dirtyRecord.id] = dirtyRecord
             }
 
-            let uploadRecords = try await cloudRecordsForDirtyUpload(dirtyRecords)
+            let uploadRecords = try await cloudRecordsForDirtyUpload(dirtyRecords, store: store)
             let savedRecords = try await saveInBatches(records: uploadRecords)
             guard !savedRecords.isEmpty else {
                 return (uploaded, try store.hasTextRecordsNeedingSync())
@@ -384,13 +384,30 @@ final class MuesliICloudSyncEngine {
         return (uploaded, try store.hasTextRecordsNeedingSync())
     }
 
-    private func cloudRecordsForDirtyUpload(_ dirtyRecords: [SyncTextRecord]) async throws -> [CKRecord] {
+    private func cloudRecordsForDirtyUpload(_ dirtyRecords: [SyncTextRecord], store: DictationStore) async throws -> [CKRecord] {
         let recordIDs = dirtyRecords.map { CKRecord.ID(recordName: $0.id, zoneID: Schema.syncZoneID) }
         let existingRecords = try await fetchExistingRecords(recordIDs: recordIDs)
-        return dirtyRecords.map { dirtyRecord in
+        var uploadRecords: [CKRecord] = []
+        for dirtyRecord in dirtyRecords {
             let recordID = CKRecord.ID(recordName: dirtyRecord.id, zoneID: Schema.syncZoneID)
-            return Self.syncZoneCloudRecord(from: dirtyRecord, baseRecord: existingRecords[recordID])
+            guard let existingRecord = existingRecords[recordID] else {
+                uploadRecords.append(Self.syncZoneCloudRecord(from: dirtyRecord))
+                continue
+            }
+
+            if let remoteRecord = Self.syncTextRecord(from: existingRecord),
+               Self.shouldApplyFetchedRemoteBeforeDirtyUpload(
+                   local: dirtyRecord,
+                   remote: remoteRecord,
+                   fetchedChangeTag: existingRecord.recordChangeTag
+               ) {
+                _ = try store.upsertSyncedTextRecord(remoteRecord)
+                continue
+            }
+
+            uploadRecords.append(Self.syncZoneCloudRecord(from: dirtyRecord, baseRecord: existingRecord))
         }
+        return uploadRecords
     }
 
     private func fetchTextRecordsPage(cursor: CKQueryOperation.Cursor?) async throws -> ICloudQueryPage {
@@ -674,6 +691,14 @@ final class MuesliICloudSyncEngine {
         cloud["summaryText"] = record.summaryText as NSString?
         cloud["manualNotes"] = record.manualNotes as NSString?
         return cloud
+    }
+
+    static func shouldApplyFetchedRemoteBeforeDirtyUpload(
+        local: SyncTextRecord,
+        remote: SyncTextRecord,
+        fetchedChangeTag: String?
+    ) -> Bool {
+        fetchedChangeTag != local.cloudChangeTag && remote.updatedAt > local.updatedAt
     }
 
     private static func syncTextRecord(from record: CKRecord) -> SyncTextRecord? {
