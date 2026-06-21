@@ -99,8 +99,10 @@ enum MuesliBridgeDeviceIdentity {
     private static let remoteDevicePlatformKey = "muesli.sync.bridge.remoteDevicePlatform.v1"
     private static let remoteDeviceLastSeenAtKey = "muesli.sync.bridge.remoteDeviceLastSeenAt.v1"
     private static let lastRefreshKey = "muesli.sync.bridge.lastRefreshed.v1"
+    private static let lastRefreshFailureKey = "muesli.sync.bridge.lastRefreshFailure.v1"
     private static let linkedRefreshInterval: TimeInterval = 60 * 60
     private static let unlinkedRefreshInterval: TimeInterval = 60
+    private static let failureRetryInterval: TimeInterval = 15
 
     static func local(defaults: UserDefaults = .standard) -> MuesliBridgeDeviceSnapshot {
         let deviceID: String
@@ -142,6 +144,12 @@ enum MuesliBridgeDeviceIdentity {
         if forceRefresh {
             return true
         }
+        if let lastFailure = defaults.object(forKey: lastRefreshFailureKey) as? Date {
+            let lastSuccess = defaults.object(forKey: lastRefreshKey) as? Date
+            if lastSuccess.map({ lastFailure > $0 }) ?? true {
+                return now.timeIntervalSince(lastFailure) >= failureRetryInterval
+            }
+        }
         guard let lastRefresh = defaults.object(forKey: lastRefreshKey) as? Date else {
             return true
         }
@@ -151,6 +159,11 @@ enum MuesliBridgeDeviceIdentity {
 
     static func markRefreshed(defaults: UserDefaults = .standard, at date: Date = Date()) {
         defaults.set(date, forKey: lastRefreshKey)
+        defaults.removeObject(forKey: lastRefreshFailureKey)
+    }
+
+    static func markRefreshFailed(defaults: UserDefaults = .standard, at date: Date = Date()) {
+        defaults.set(date, forKey: lastRefreshFailureKey)
     }
 
     static func updateRemoteDevices(from records: [CKRecord], defaults: UserDefaults = .standard) {
@@ -368,7 +381,7 @@ final class MuesliICloudSyncEngine {
             MuesliBridgeDeviceIdentity.markRefreshed(defaults: defaults)
         } catch {
             fputs("Failed to refresh iCloud bridge device identity: \(error)\n", stderr)
-            MuesliBridgeDeviceIdentity.markRefreshed(defaults: defaults)
+            MuesliBridgeDeviceIdentity.markRefreshFailed(defaults: defaults)
         }
     }
 

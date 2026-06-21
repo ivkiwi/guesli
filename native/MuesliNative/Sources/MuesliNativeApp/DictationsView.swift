@@ -283,7 +283,7 @@ struct DictationsView: View {
         guard appState.config.iCloudSyncEnabled else { return false }
         switch bridgeState {
         case .needsICloud, .error:
-            return true
+            return false
         case .active:
             return appState.iCloudBridgeRemoteDeviceName == nil
         case .notConfigured, .checkingICloud, .syncing:

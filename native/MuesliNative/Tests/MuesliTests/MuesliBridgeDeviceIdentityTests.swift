@@ -90,6 +90,26 @@ struct MuesliBridgeDeviceIdentityTests {
         ))
     }
 
+    @Test("failed refresh uses short retry backoff instead of success throttle")
+    func failedRefreshUsesShortRetryBackoffInsteadOfSuccessThrottle() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let now = Date(timeIntervalSince1970: 1_770_000_000)
+
+        defaults.set("remote-iphone", forKey: DefaultsKey.remoteDeviceID)
+        MuesliBridgeDeviceIdentity.markRefreshed(defaults: defaults, at: now.addingTimeInterval(-10))
+        MuesliBridgeDeviceIdentity.markRefreshFailed(defaults: defaults, at: now)
+
+        #expect(!MuesliBridgeDeviceIdentity.shouldRefresh(
+            defaults: defaults,
+            now: now.addingTimeInterval(14)
+        ))
+        #expect(MuesliBridgeDeviceIdentity.shouldRefresh(
+            defaults: defaults,
+            now: now.addingTimeInterval(15)
+        ))
+    }
+
     @Test("shouldRefresh returns false within one hour and true after one hour once linked")
     func shouldRefreshUsesOneHourIntervalOnceLinked() throws {
         let (defaults, suiteName) = try makeDefaults()
