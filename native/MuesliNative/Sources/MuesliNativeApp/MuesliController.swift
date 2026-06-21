@@ -894,9 +894,13 @@ final class MuesliController: NSObject {
         let previousComputerUseHotkeyTriggerThresholdMS = config.computerUseHotkeyTriggerThresholdMS
         let previousMeetingRecordingHotkeyTriggerThresholdMS = config.meetingRecordingHotkeyTriggerThresholdMS
         let previousEnableScreenContext = config.enableScreenContext
+        let previousEnablePostProcessor = config.enablePostProcessor
         let previousEnableDictionaryCorrectionPrompts = config.enableDictionaryCorrectionPrompts
         mutate(&config)
         if previousEnableScreenContext, !config.enableScreenContext {
+            dictationCorrectionMonitor.cancel()
+        }
+        if previousEnablePostProcessor, !config.enablePostProcessor {
             dictationCorrectionMonitor.cancel()
         }
         if previousEnableDictionaryCorrectionPrompts, !config.enableDictionaryCorrectionPrompts {
