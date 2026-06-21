@@ -2030,7 +2030,8 @@ final class MuesliController: NSObject {
         guard !AXIsProcessTrusted() else { return true }
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
-        return AXIsProcessTrusted()
+        // macOS may require an app restart before AX trust is visible here.
+        return true
     }
 
     @discardableResult

@@ -234,8 +234,6 @@ struct SettingsView: View {
             Button("Enable") {
                 if controller.requestDictionaryCorrectionAccessibilityEnable() {
                     controller.setDictionaryCorrectionPromptsEnabled(true)
-                } else {
-                    controller.setDictionaryCorrectionPromptsEnabled(false)
                 }
             }
         } message: {

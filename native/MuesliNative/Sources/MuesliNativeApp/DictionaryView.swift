@@ -37,8 +37,9 @@ struct DictionaryView: View {
         .alert("Enable Accessibility?", isPresented: $isShowingAccessibilityPrompt) {
             Button("Cancel", role: .cancel) {}
             Button("Enable") {
-                let granted = controller.requestDictionaryCorrectionAccessibilityEnable()
-                controller.setDictionaryCorrectionPromptsEnabled(granted)
+                if controller.requestDictionaryCorrectionAccessibilityEnable() {
+                    controller.setDictionaryCorrectionPromptsEnabled(true)
+                }
             }
         } message: {
             Text("Dictionary suggestions need Accessibility to detect text edits after dictation.")
