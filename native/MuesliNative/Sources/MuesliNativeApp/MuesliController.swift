@@ -300,6 +300,8 @@ final class MuesliController: NSObject {
     private var isTerminatingAfterMeetingConfirmation = false
     private var backgroundMeetingProcessingCount = 0
     private var pendingMeetingCompletionNotification: PendingMeetingCompletionNotification?
+    private var contributionMilestonePromptDismissedThisLaunch = false
+    private var contributionMilestonePromptSeenIDsThisLaunch: Set<String> = []
     private var meetingStartTask: Task<Void, Never>?
     private var meetingStartMeetingID: Int64?
     private var importTask: Task<Void, Never>?
@@ -752,6 +754,10 @@ final class MuesliController: NSObject {
         }
         appState.dictationStats = dictationStats()
         appState.meetingStats = meetingStats()
+        refreshContributionMilestonePrompt(
+            totalWords: appState.dictationStats.totalWords,
+            totalMeetings: appState.meetingStats.totalMeetings
+        )
         appState.selectedBackend = selectedBackend
         appState.selectedMeetingTranscriptionBackend = selectedMeetingTranscriptionBackend
         appState.selectedMeetingSummaryBackend = selectedMeetingSummaryBackend
@@ -947,6 +953,109 @@ final class MuesliController: NSObject {
         } else if wasICloudSyncEnabled && !config.iCloudSyncEnabled {
             disableICloudSyncRuntimeState()
         }
+    }
+
+    private func refreshContributionMilestonePrompt(totalWords: Int, totalMeetings: Int) {
+        let resolvedNextWordMilestone = ContributionMilestonePolicy.resolvedNextMilestone(
+            storedNextMilestone: config.contributionPromptNextWordCount,
+            total: totalWords,
+            intervalKind: .dictationWords,
+            githubStarClicked: config.contributionGitHubStarClicked,
+            buyMeCoffeeClicked: config.contributionBuyMeCoffeeClicked
+        )
+        let resolvedNextMeetingMilestone = ContributionMilestonePolicy.resolvedNextMilestone(
+            storedNextMilestone: config.contributionPromptNextMeetingCount,
+            total: totalMeetings,
+            intervalKind: .meetings,
+            githubStarClicked: config.contributionGitHubStarClicked,
+            buyMeCoffeeClicked: config.contributionBuyMeCoffeeClicked
+        )
+
+        if config.contributionPromptNextWordCount != resolvedNextWordMilestone ||
+            config.contributionPromptNextMeetingCount != resolvedNextMeetingMilestone {
+            config.contributionPromptNextWordCount = resolvedNextWordMilestone
+            config.contributionPromptNextMeetingCount = resolvedNextMeetingMilestone
+            configStore.save(config)
+        }
+
+        appState.config = config
+        appState.contributionMilestonePrompt = ContributionMilestonePolicy.prompt(
+            kind: .dictationWords,
+            total: totalWords,
+            nextMilestone: resolvedNextWordMilestone,
+            githubStarClicked: config.contributionGitHubStarClicked,
+            buyMeCoffeeClicked: config.contributionBuyMeCoffeeClicked,
+            dismissedThisLaunch: contributionMilestonePromptDismissedThisLaunch
+        ) ?? ContributionMilestonePolicy.prompt(
+            kind: .meetings,
+            total: totalMeetings,
+            nextMilestone: resolvedNextMeetingMilestone,
+            githubStarClicked: config.contributionGitHubStarClicked,
+            buyMeCoffeeClicked: config.contributionBuyMeCoffeeClicked,
+            dismissedThisLaunch: contributionMilestonePromptDismissedThisLaunch
+        )
+    }
+
+    func recordContributionMilestonePromptSeen() {
+        guard let prompt = appState.contributionMilestonePrompt,
+              contributionMilestonePromptSeenIDsThisLaunch.insert(prompt.id).inserted else { return }
+        TelemetryDeck.signal("contribution_prompt_seen", parameters: [
+            "kind": prompt.kind.rawValue,
+            "count": "\(prompt.count)",
+            "github_star_clicked": "\(config.contributionGitHubStarClicked)",
+            "buy_me_coffee_clicked": "\(config.contributionBuyMeCoffeeClicked)",
+        ])
+    }
+
+    func dismissContributionMilestonePrompt() {
+        guard let prompt = appState.contributionMilestonePrompt else { return }
+        contributionMilestonePromptDismissedThisLaunch = true
+        appState.contributionMilestonePrompt = nil
+        let nextMilestone = ContributionMilestonePolicy.nextMilestone(
+            after: prompt.kind == .dictationWords ? appState.dictationStats.totalWords : appState.meetingStats.totalMeetings,
+            kind: prompt.kind
+        )
+        switch prompt.kind {
+        case .dictationWords:
+            config.contributionPromptNextWordCount = nextMilestone
+        case .meetings:
+            config.contributionPromptNextMeetingCount = nextMilestone
+        }
+        configStore.save(config)
+        appState.config = config
+        TelemetryDeck.signal("contribution_prompt_dismissed", parameters: [
+            "kind": prompt.kind.rawValue,
+            "count": "\(prompt.count)",
+        ])
+    }
+
+    func openContributionMilestoneAction(_ action: ContributionMilestoneAction) {
+        guard let prompt = appState.contributionMilestonePrompt else { return }
+        NSWorkspace.shared.open(action.url)
+        // CTA clicks intentionally dismiss for this launch; any remaining CTA can reappear next launch.
+        contributionMilestonePromptDismissedThisLaunch = true
+        TelemetryDeck.signal("contribution_prompt_action_clicked", parameters: [
+            "action": action.rawValue,
+            "kind": prompt.kind.rawValue,
+            "count": "\(prompt.count)",
+        ])
+
+        updateConfig { config in
+            switch action {
+            case .githubStar:
+                config.contributionGitHubStarClicked = true
+            case .buyMeCoffee:
+                config.contributionBuyMeCoffeeClicked = true
+            }
+            if config.contributionGitHubStarClicked && config.contributionBuyMeCoffeeClicked {
+                config.contributionPromptNextWordCount = nil
+                config.contributionPromptNextMeetingCount = nil
+            }
+        }
+        refreshContributionMilestonePrompt(
+            totalWords: appState.dictationStats.totalWords,
+            totalMeetings: appState.meetingStats.totalMeetings
+        )
     }
 
     func performICloudSync() {

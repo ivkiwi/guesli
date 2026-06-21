@@ -788,6 +788,10 @@ struct AppConfig: Codable {
     var meetingHookTimeoutSeconds: Int = 30
     var iCloudSyncEnabled: Bool = false
     var showIOSCompanionPrompt: Bool = true
+    var contributionPromptNextWordCount: Int?
+    var contributionPromptNextMeetingCount: Int?
+    var contributionGitHubStarClicked: Bool = false
+    var contributionBuyMeCoffeeClicked: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case dictationHotkey = "dictation_hotkey"
@@ -868,6 +872,10 @@ struct AppConfig: Codable {
         case meetingHookTimeoutSeconds = "meeting_hook_timeout_seconds"
         case iCloudSyncEnabled = "icloud_sync_enabled"
         case showIOSCompanionPrompt = "show_ios_companion_prompt"
+        case contributionPromptNextWordCount = "contribution_prompt_next_word_count"
+        case contributionPromptNextMeetingCount = "contribution_prompt_next_meeting_count"
+        case contributionGitHubStarClicked = "contribution_github_star_clicked"
+        case contributionBuyMeCoffeeClicked = "contribution_buy_me_coffee_clicked"
     }
 
     init() {}
@@ -980,6 +988,10 @@ struct AppConfig: Codable {
         meetingHookEnabled = (try? c.decode(Bool.self, forKey: .meetingHookEnabled)) ?? defaults.meetingHookEnabled
         meetingHookPath = (try? c.decode(String.self, forKey: .meetingHookPath)) ?? defaults.meetingHookPath
         meetingHookTimeoutSeconds = (try? c.decode(Int.self, forKey: .meetingHookTimeoutSeconds)) ?? defaults.meetingHookTimeoutSeconds
+        contributionPromptNextWordCount = try? c.decode(Int.self, forKey: .contributionPromptNextWordCount)
+        contributionPromptNextMeetingCount = try? c.decode(Int.self, forKey: .contributionPromptNextMeetingCount)
+        contributionGitHubStarClicked = (try? c.decode(Bool.self, forKey: .contributionGitHubStarClicked)) ?? defaults.contributionGitHubStarClicked
+        contributionBuyMeCoffeeClicked = (try? c.decode(Bool.self, forKey: .contributionBuyMeCoffeeClicked)) ?? defaults.contributionBuyMeCoffeeClicked
     }
 
     var resolvedCohereLanguage: CohereTranscribeLanguage {
