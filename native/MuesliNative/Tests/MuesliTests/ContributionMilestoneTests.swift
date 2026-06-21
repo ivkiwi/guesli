@@ -10,10 +10,12 @@ struct ContributionMilestoneTests {
         #expect(ContributionMilestonePolicy.nextMilestone(after: 999) == 1_000)
         #expect(ContributionMilestonePolicy.nextMilestone(after: 1_000) == 2_000)
         #expect(ContributionMilestonePolicy.nextMilestone(after: 30_500) == 31_000)
+        #expect(ContributionMilestonePolicy.nextMilestone(after: 30_500, kind: .dictationWords) == 31_000)
         #expect(ContributionMilestonePolicy.nextMeetingMilestone(after: 0) == 25)
         #expect(ContributionMilestonePolicy.nextMeetingMilestone(after: 24) == 25)
         #expect(ContributionMilestonePolicy.nextMeetingMilestone(after: 25) == 50)
         #expect(ContributionMilestonePolicy.nextMeetingMilestone(after: 63) == 75)
+        #expect(ContributionMilestonePolicy.nextMilestone(after: 63, kind: .meetings) == 75)
     }
 
     @Test("stored milestone is initialized from current total")
@@ -31,7 +33,7 @@ struct ContributionMilestoneTests {
             intervalKind: .dictationWords,
             githubStarClicked: false,
             buyMeCoffeeClicked: false
-        ) == 30_000)
+        ) == 31_000)
         #expect(ContributionMilestonePolicy.resolvedNextMilestone(
             storedNextMilestone: nil,
             total: 63,
@@ -48,7 +50,7 @@ struct ContributionMilestoneTests {
         ) == nil)
     }
 
-    @Test("stale stored milestones advance to the latest crossed boundary")
+    @Test("stale stored milestones advance past current total")
     func staleStoredMilestonesAdvance() {
         #expect(ContributionMilestonePolicy.resolvedNextMilestone(
             storedNextMilestone: 31_000,
@@ -63,14 +65,14 @@ struct ContributionMilestoneTests {
             intervalKind: .dictationWords,
             githubStarClicked: false,
             buyMeCoffeeClicked: false
-        ) == 33_000)
+        ) == 34_000)
         #expect(ContributionMilestonePolicy.resolvedNextMilestone(
             storedNextMilestone: 25,
             total: 63,
             intervalKind: .meetings,
             githubStarClicked: false,
             buyMeCoffeeClicked: false
-        ) == 50)
+        ) == 75)
     }
 
     @Test("prompt is eligible only after crossing stored milestone")
@@ -122,7 +124,7 @@ struct ContributionMilestoneTests {
         #expect(prompt?.title == "You captured 25 meetings!")
     }
 
-    @Test("dismissal suppresses prompt only for current launch input")
+    @Test("dismissal suppresses current launch and advances next prompt")
     func dismissalSuppression() {
         #expect(ContributionMilestonePolicy.prompt(
             kind: .dictationWords,
@@ -140,6 +142,17 @@ struct ContributionMilestoneTests {
             buyMeCoffeeClicked: false,
             dismissedThisLaunch: false
         ) != nil)
+
+        let nextAfterDismissal = ContributionMilestonePolicy.nextMilestone(after: 31_500, kind: .dictationWords)
+        #expect(nextAfterDismissal == 32_000)
+        #expect(ContributionMilestonePolicy.prompt(
+            kind: .dictationWords,
+            total: 31_500,
+            nextMilestone: nextAfterDismissal,
+            githubStarClicked: false,
+            buyMeCoffeeClicked: false,
+            dismissedThisLaunch: false
+        ) == nil)
     }
 
     @Test("completed actions control remaining prompt actions")

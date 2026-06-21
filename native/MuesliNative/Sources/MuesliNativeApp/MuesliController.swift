@@ -998,6 +998,18 @@ final class MuesliController: NSObject {
         guard let prompt = appState.contributionMilestonePrompt else { return }
         contributionMilestonePromptDismissedThisLaunch = true
         appState.contributionMilestonePrompt = nil
+        let nextMilestone = ContributionMilestonePolicy.nextMilestone(
+            after: prompt.kind == .dictationWords ? appState.dictationStats.totalWords : appState.meetingStats.totalMeetings,
+            kind: prompt.kind
+        )
+        switch prompt.kind {
+        case .dictationWords:
+            config.contributionPromptNextWordCount = nextMilestone
+        case .meetings:
+            config.contributionPromptNextMeetingCount = nextMilestone
+        }
+        configStore.save(config)
+        appState.config = config
         TelemetryDeck.signal("contribution_prompt_dismissed", parameters: [
             "kind": prompt.kind.rawValue,
             "count": "\(prompt.count)",
