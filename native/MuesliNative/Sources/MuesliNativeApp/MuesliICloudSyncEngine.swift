@@ -165,6 +165,10 @@ enum MuesliBridgeDeviceIdentity {
         defaults.set(latestRemote.lastSeenAt, forKey: remoteDeviceLastSeenAtKey)
     }
 
+    static func hasRemoteDevice(defaults: UserDefaults = .standard) -> Bool {
+        defaults.string(forKey: remoteDeviceIDKey) != nil
+    }
+
     static func snapshot(from record: CKRecord) -> MuesliBridgeDeviceSnapshot? {
         guard let deviceID = record["deviceID"] as? String,
               let platform = record["platform"] as? String,
@@ -346,7 +350,9 @@ final class MuesliICloudSyncEngine {
             try await upsertLocalBridgeDeviceRecord()
             let records = try await fetchBridgeDeviceRecords()
             MuesliBridgeDeviceIdentity.updateRemoteDevices(from: records, defaults: defaults)
-            MuesliBridgeDeviceIdentity.markRefreshed(defaults: defaults)
+            if MuesliBridgeDeviceIdentity.hasRemoteDevice(defaults: defaults) {
+                MuesliBridgeDeviceIdentity.markRefreshed(defaults: defaults)
+            }
         } catch {
             fputs("Failed to refresh iCloud bridge device identity: \(error)\n", stderr)
         }

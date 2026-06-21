@@ -180,6 +180,12 @@ struct DictationsView: View {
                 }
             }
         }
+        .sheet(isPresented: $isBridgeQRCodePresented) {
+            IPhoneBridgeQRCodeSheet(
+                deepLinkURL: IPhoneBridgeLinks.iOSSyncDeepLinkURL,
+                installURL: IPhoneBridgeLinks.installURL
+            )
+        }
     }
 
     private var bridgeState: ICloudBridgeState {
@@ -271,12 +277,6 @@ struct DictationsView: View {
             guard !bridgePromptSeen else { return }
             bridgePromptSeen = true
             TelemetryDeck.signal("bridge_prompt_seen", parameters: ["platform": "macos"])
-        }
-        .sheet(isPresented: $isBridgeQRCodePresented) {
-            IPhoneBridgeQRCodeSheet(
-                deepLinkURL: IPhoneBridgeLinks.iOSSyncDeepLinkURL,
-                installURL: IPhoneBridgeLinks.installURL
-            )
         }
     }
 
