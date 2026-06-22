@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage.CIFilterBuiltins
 import SwiftUI
 import TelemetryDeck
 import MuesliCore
@@ -23,6 +24,7 @@ struct DictationsView: View {
     let controller: MuesliController
     @State private var selectedFilter: DictationFilter = .all
     @State private var bridgePromptSeen = false
+    @State private var isBridgeQRCodePresented = false
 
     private var groupedDictations: [(header: String, records: [DictationRecord])] {
         let calendar = Calendar.current
@@ -178,6 +180,12 @@ struct DictationsView: View {
                 }
             }
         }
+        .sheet(isPresented: $isBridgeQRCodePresented) {
+            IPhoneBridgeQRCodeSheet(
+                deepLinkURL: IPhoneBridgeLinks.iOSSyncDeepLinkURL,
+                installURL: IPhoneBridgeLinks.installURL
+            )
+        }
     }
 
     private var bridgeState: ICloudBridgeState {
@@ -191,7 +199,6 @@ struct DictationsView: View {
                 isAnimating: bridgeSyncIconIsAnimating,
                 font: .system(size: 18, weight: .semibold)
             )
-                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(bridgeIconColor)
                 .frame(width: 28)
 
@@ -206,6 +213,22 @@ struct DictationsView: View {
             }
 
             Spacer(minLength: MuesliTheme.spacing12)
+
+            if shouldShowBridgeHandoffButton {
+                Button {
+                    isBridgeQRCodePresented = true
+                    TelemetryDeck.signal("bridge_qr_shown", parameters: ["platform": "macos"])
+                } label: {
+                    Image(systemName: "qrcode")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                        .frame(width: 28, height: 28)
+                        .background(MuesliTheme.surfacePrimary)
+                        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                }
+                .buttonStyle(.plain)
+                .help("Show iPhone setup QR")
+            }
 
             Button {
                 bridgePrimaryAction()
@@ -256,6 +279,18 @@ struct DictationsView: View {
         }
     }
 
+    private var shouldShowBridgeHandoffButton: Bool {
+        guard appState.config.iCloudSyncEnabled else { return false }
+        switch bridgeState {
+        case .needsICloud, .error:
+            return false
+        case .active:
+            return appState.iCloudBridgeCompanionDeviceName == nil
+        case .notConfigured, .checkingICloud, .syncing:
+            return false
+        }
+    }
+
     private var bridgeSyncIconIsAnimating: Bool {
         isBridgeSyncWorking && bridgeIcon == "arrow.triangle.2.circlepath"
     }
@@ -295,7 +330,16 @@ struct DictationsView: View {
     private var bridgeTitle: String {
         switch bridgeState {
         case .active:
-            return "Synced with iPhone"
+            guard let deviceName = appState.iCloudBridgeCompanionDeviceName else {
+                if let lastSyncedAt = appState.iCloudLastSyncedAt {
+                    return "iCloud sync active · \(relativeSyncTime(lastSyncedAt))"
+                }
+                return "iCloud sync active"
+            }
+            if let lastSyncedAt = appState.iCloudLastSyncedAt {
+                return "Synced with \(deviceName) · \(relativeSyncTime(lastSyncedAt))"
+            }
+            return "Synced with \(deviceName)"
         case .checkingICloud, .syncing:
             return "Setting up private iCloud sync"
         case .needsICloud:
@@ -310,10 +354,10 @@ struct DictationsView: View {
     private var bridgeSubtitle: String {
         switch bridgeState {
         case .active:
-            if let lastSyncedAt = appState.iCloudLastSyncedAt {
-                return "Private text sync is on · \(relativeSyncTime(lastSyncedAt))"
+            if let deviceName = appState.iCloudBridgeCompanionDeviceName {
+                return "Private iCloud text sync is on with \(deviceName). Audio stays local."
             }
-            return "Private iCloud text sync is on. Audio stays local."
+            return "Scan the QR code to connect your iPhone. Audio stays local."
         case .checkingICloud:
             return "Checking this Mac's iCloud account..."
         case .syncing:
@@ -569,6 +613,121 @@ private struct BridgeSyncIcon: View {
         withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
             rotationDegrees = 360
         }
+    }
+}
+
+private struct IPhoneBridgeQRCodeSheet: View {
+    let deepLinkURL: URL
+    let installURL: URL
+    @Environment(\.dismiss) private var dismiss
+    @State private var didCopySetupLink = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
+                    Text("Open Muesli on iPhone")
+                        .font(MuesliTheme.title3())
+                        .foregroundStyle(MuesliTheme.textPrimary)
+                    Text("Scan this after installing the iPhone app. The QR only opens setup; private iCloud does the actual sync.")
+                        .font(MuesliTheme.caption())
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                        .frame(width: 28, height: 28)
+                        .background(MuesliTheme.surfacePrimary)
+                        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(alignment: .center, spacing: MuesliTheme.spacing16) {
+                QRCodeImage(payload: deepLinkURL.absoluteString)
+                    .frame(width: 148, height: 148)
+                    .padding(MuesliTheme.spacing8)
+                    .background(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing8) {
+                    Label("Same iCloud account", systemImage: "icloud")
+                    Label("Text sync only", systemImage: "text.badge.checkmark")
+                    Label("Audio stays local", systemImage: "lock")
+                }
+                .font(MuesliTheme.caption())
+                .foregroundStyle(MuesliTheme.textSecondary)
+            }
+
+            HStack(spacing: MuesliTheme.spacing8) {
+                Button("Open iPhone app page") {
+                    NSWorkspace.shared.open(installURL)
+                }
+                .buttonStyle(.bordered)
+
+                Button(didCopySetupLink ? "Copied!" : "Copy setup link") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(deepLinkURL.absoluteString, forType: .string)
+                    didCopySetupLink = true
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(1500))
+                        didCopySetupLink = false
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(MuesliTheme.spacing20)
+        .frame(width: 430)
+        .background(MuesliTheme.backgroundBase)
+    }
+}
+
+private struct QRCodeImage: View {
+    let payload: String
+    @State private var cachedImage: NSImage?
+
+    var body: some View {
+        Group {
+            if let image = cachedImage {
+                Image(nsImage: image)
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "qrcode")
+                    .font(.system(size: 96, weight: .regular))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+            }
+        }
+        .accessibilityLabel("iPhone sync setup QR code")
+        .onAppear {
+            if cachedImage == nil {
+                cachedImage = makeQRCodeImage(payload: payload)
+            }
+        }
+    }
+
+    private func makeQRCodeImage(payload: String) -> NSImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(payload.utf8)
+        filter.correctionLevel = "M"
+
+        guard let outputImage = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)) else {
+            return nil
+        }
+
+        let representation = NSCIImageRep(ciImage: outputImage)
+        let image = NSImage(size: representation.size)
+        image.addRepresentation(representation)
+        return image
     }
 }
 

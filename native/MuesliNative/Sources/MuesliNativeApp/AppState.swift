@@ -104,6 +104,21 @@ final class AppState {
     var isICloudBridgeActivationPending: Bool = false
     var iCloudBridgeState: ICloudBridgeState = .notConfigured
     var iCloudBridgeMessage: String?
+    var iCloudBridgeRemoteDeviceName: String?
+    var iCloudBridgeRemoteDevicePlatform: String?
+    var iCloudBridgeCompanionDeviceName: String? {
+        guard isICloudBridgeCompanionPlatform else { return nil }
+        return iCloudBridgeRemoteDeviceName
+    }
+    var isICloudBridgeCompanionPlatform: Bool {
+        guard let platform = iCloudBridgeRemoteDevicePlatform else { return false }
+        switch platform.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "ios", "ipados":
+            return true
+        default:
+            return false
+        }
+    }
     var iCloudLastSyncSummary: String?
     var iCloudLastSyncedAt: Date?
     var contributionMilestonePrompt: ContributionMilestonePrompt?
