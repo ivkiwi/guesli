@@ -24,6 +24,11 @@ struct DictionaryCorrectionDetector {
     private static let minimumCorrectionSimilarity = 0.64
     private static let maxObservedTokensPerDictionaryWord = 2
 
+    private struct CorrectionCandidate {
+        let observed: String
+        let replacement: String
+    }
+
     static func suggestion(
         originalText: String,
         editedText: String,
@@ -75,48 +80,89 @@ struct DictionaryCorrectionDetector {
         appContext: String = "",
         maxSuggestions: Int = Int.max
     ) -> [DictionarySuggestion] {
-        guard maxSuggestions > 0 else { return [] }
-        guard !originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
-        guard baselineText != currentText else { return [] }
-        guard hasSufficientSharedContext(originalText: originalText, editedText: currentText) else { return [] }
+        guard isDetectionRequestValid(
+            originalText: originalText,
+            baselineText: baselineText,
+            currentText: currentText,
+            maxSuggestions: maxSuggestions
+        ) else { return [] }
 
         var results: [DictionarySuggestion] = []
         var seenKeys = Set<String>()
 
-        func append(_ suggestion: DictionarySuggestion?) {
-            guard results.count < maxSuggestions, let suggestion else { return }
+        func append(_ candidate: CorrectionCandidate) {
+            guard results.count < maxSuggestions else { return }
+            let suggestion = DictionarySuggestion(
+                observed: candidate.observed,
+                replacement: candidate.replacement,
+                appContext: appContext
+            )
             guard !seenKeys.contains(suggestion.key) else { return }
             seenKeys.insert(suggestion.key)
             results.append(suggestion)
         }
 
-        append(fragmentSuggestion(
+        for candidate in extractCandidateCorrections(
             originalText: originalText,
             baselineText: baselineText,
             currentText: currentText,
-            appContext: appContext
-        ))
-
-        if results.count < maxSuggestions {
-            for suggestion in tokenAlignedSuggestions(
-                originalText: originalText,
-                editedText: currentText,
-                appContext: appContext,
-                maxSuggestions: maxSuggestions - results.count
-            ) {
-                append(suggestion)
-            }
+            maxCandidates: maxSuggestions
+        ) {
+            append(candidate)
         }
 
         return results
     }
 
-    private static func fragmentSuggestion(
+    private static func isDetectionRequestValid(
         originalText: String,
         baselineText: String,
         currentText: String,
-        appContext: String
-    ) -> DictionarySuggestion? {
+        maxSuggestions: Int
+    ) -> Bool {
+        guard maxSuggestions > 0 else { return false }
+        guard !originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard baselineText != currentText else { return false }
+        return hasSufficientSharedContext(originalText: originalText, editedText: currentText)
+    }
+
+    private static func extractCandidateCorrections(
+        originalText: String,
+        baselineText: String,
+        currentText: String,
+        maxCandidates: Int
+    ) -> [CorrectionCandidate] {
+        var candidates: [CorrectionCandidate] = []
+
+        func append(_ candidate: CorrectionCandidate?) {
+            guard candidates.count < maxCandidates, let candidate else { return }
+            candidates.append(candidate)
+        }
+
+        append(fragmentCandidate(
+            originalText: originalText,
+            baselineText: baselineText,
+            currentText: currentText
+        ))
+
+        if candidates.count < maxCandidates {
+            for candidate in tokenAlignedCandidates(
+                originalText: originalText,
+                editedText: currentText,
+                maxCandidates: maxCandidates - candidates.count
+            ) {
+                append(candidate)
+            }
+        }
+
+        return candidates
+    }
+
+    private static func fragmentCandidate(
+        originalText: String,
+        baselineText: String,
+        currentText: String
+    ) -> CorrectionCandidate? {
         let diff = changedFragments(from: baselineText, to: currentText)
         guard let observed = normalizedCandidate(diff.removed),
               let replacement = normalizedCandidate(diff.inserted)
@@ -130,10 +176,9 @@ struct DictionaryCorrectionDetector {
         }
         guard isLikelyDictionaryCorrection(observed: observed, replacement: replacement) else { return nil }
 
-        return DictionarySuggestion(
+        return CorrectionCandidate(
             observed: observed,
-            replacement: replacement,
-            appContext: appContext
+            replacement: replacement
         )
     }
 
@@ -142,41 +187,40 @@ struct DictionaryCorrectionDetector {
         let normalized: String
     }
 
-    private static func tokenAlignedSuggestions(
+    private static func tokenAlignedCandidates(
         originalText: String,
         editedText: String,
-        appContext: String,
-        maxSuggestions: Int
-    ) -> [DictionarySuggestion] {
-        guard maxSuggestions > 0 else { return [] }
+        maxCandidates: Int
+    ) -> [CorrectionCandidate] {
+        guard maxCandidates > 0 else { return [] }
         let originalTokens = wordTokens(in: originalText)
         let editedTokens = wordTokens(in: editedText)
         guard !originalTokens.isEmpty, !editedTokens.isEmpty else { return [] }
         guard originalTokens.count <= 160, editedTokens.count <= 220 else { return [] }
 
         let operations = alignmentOperations(from: originalTokens, to: editedTokens)
-        var suggestions: [DictionarySuggestion] = []
+        var candidates: [CorrectionCandidate] = []
         var seenKeys = Set<String>()
 
-        func append(_ suggestion: DictionarySuggestion) {
-            guard suggestions.count < maxSuggestions else { return }
-            guard !seenKeys.contains(suggestion.key) else { return }
-            seenKeys.insert(suggestion.key)
-            suggestions.append(suggestion)
+        func append(_ candidate: CorrectionCandidate) {
+            guard candidates.count < maxCandidates else { return }
+            let key = DictionarySuggestion.key(observed: candidate.observed, replacement: candidate.replacement)
+            guard !seenKeys.contains(key) else { return }
+            seenKeys.insert(key)
+            candidates.append(candidate)
         }
 
         for run in tokenChangeRuns(in: operations) {
-            for suggestion in suggestionsFromTokenRun(
+            for candidate in candidatesFromTokenRun(
                 fromTokenRun: run,
                 originalText: originalText,
-                appContext: appContext,
-                maxSuggestions: maxSuggestions - suggestions.count
+                maxCandidates: maxCandidates - candidates.count
             ) {
-                append(suggestion)
+                append(candidate)
             }
-            if suggestions.count >= maxSuggestions { break }
+            if candidates.count >= maxCandidates { break }
         }
-        return suggestions
+        return candidates
     }
 
     private struct TokenChangeRun {
@@ -217,23 +261,22 @@ struct DictionaryCorrectionDetector {
         return runs
     }
 
-    private static func suggestionsFromTokenRun(
+    private static func candidatesFromTokenRun(
         fromTokenRun run: TokenChangeRun,
         originalText: String,
-        appContext: String,
-        maxSuggestions: Int
-    ) -> [DictionarySuggestion] {
-        guard maxSuggestions > 0 else { return [] }
+        maxCandidates: Int
+    ) -> [CorrectionCandidate] {
+        guard maxCandidates > 0 else { return [] }
         guard run.observedTokens.count <= run.replacementTokens.count * maxObservedTokensPerDictionaryWord else {
             return []
         }
-        var results: [DictionarySuggestion] = []
+        var results: [CorrectionCandidate] = []
         var observedIndex = 0
 
         for replacementToken in run.replacementTokens {
-            guard results.count < maxSuggestions, observedIndex < run.observedTokens.count else { break }
+            guard results.count < maxCandidates, observedIndex < run.observedTokens.count else { break }
 
-            var bestSuggestion: DictionarySuggestion?
+            var bestCandidate: CorrectionCandidate?
             var bestObservedLength = 0
             var bestSimilarity = 0.0
             let maxObservedLength = min(maxObservedTokensPerDictionaryWord, run.observedTokens.count - observedIndex)
@@ -254,18 +297,17 @@ struct DictionaryCorrectionDetector {
                     replacementCandidate.lowercased()
                 )
                 if similarity > bestSimilarity {
-                    bestSuggestion = DictionarySuggestion(
+                    bestCandidate = CorrectionCandidate(
                         observed: observedCandidate,
-                        replacement: replacementCandidate,
-                        appContext: appContext
+                        replacement: replacementCandidate
                     )
                     bestObservedLength = observedLength
                     bestSimilarity = similarity
                 }
             }
 
-            if let bestSuggestion {
-                results.append(bestSuggestion)
+            if let bestCandidate {
+                results.append(bestCandidate)
                 observedIndex += bestObservedLength
             } else {
                 observedIndex += 1

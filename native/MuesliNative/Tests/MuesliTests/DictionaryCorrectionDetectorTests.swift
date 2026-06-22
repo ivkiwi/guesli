@@ -4,6 +4,38 @@ import Testing
 
 @Suite("Dictionary correction detector")
 struct DictionaryCorrectionDetectorTests {
+    @Test("contract surfaces one-word and two-token-to-one-word corrections only")
+    func contractSurfacesSupportedCorrectionShapesOnly() {
+        let singleWordSuggestion = DictionaryCorrectionDetector.suggestion(
+            originalText: "for the dictionary test please write musley in this sentence today",
+            editedText: "for the dictionary test please write muesli in this sentence today"
+        )
+        #expect(singleWordSuggestion?.observed == "musley")
+        #expect(singleWordSuggestion?.replacement == "muesli")
+
+        let splitWordSuggestion = DictionaryCorrectionDetector.suggestion(
+            originalText: "for the dictionary test please write Thoray Pakam in this sentence today",
+            editedText: "for the dictionary test please write Thoraipakkam in this sentence today"
+        )
+        #expect(splitWordSuggestion?.observed == "Thoray Pakam")
+        #expect(splitWordSuggestion?.replacement == "Thoraipakkam")
+
+        let adjacentWordSuggestions = DictionaryCorrectionDetector.suggestions(
+            originalText: "for the dictionary test please write Mandavali Dirvaniur in this sentence today",
+            editedText: "for the dictionary test please write Mandaiveli Thiruvanmiyur in this sentence today",
+            maxSuggestions: 3
+        )
+        #expect(adjacentWordSuggestions.map(\.observed) == ["Mandavali", "Dirvaniur"])
+        #expect(adjacentWordSuggestions.map(\.replacement) == ["Mandaiveli", "Thiruvanmiyur"])
+        #expect(adjacentWordSuggestions.allSatisfy { !$0.observed.contains(" ") && !$0.replacement.contains(" ") })
+
+        let threeTokenSuggestion = DictionaryCorrectionDetector.suggestion(
+            originalText: "for the dictionary test please write Thoray I Pakam in this sentence today",
+            editedText: "for the dictionary test please write Thoraipakkam in this sentence today"
+        )
+        #expect(threeTokenSuggestion == nil)
+    }
+
     @Test("detects a corrected misspelling inside pasted text")
     func detectsCorrectedMisspelling() {
         let suggestion = DictionaryCorrectionDetector.suggestion(
