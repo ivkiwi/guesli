@@ -17,6 +17,10 @@ final class DictionarySuggestionPromptController: NSObject {
         super.init()
     }
 
+    var isShowing: Bool {
+        panel != nil
+    }
+
     func show(
         suggestion: DictionarySuggestion,
         anchorFrame: NSRect?,
@@ -119,8 +123,10 @@ final class DictionarySuggestionPromptController: NSObject {
         progressLayer?.timeOffset = 0
         progressLayer?.beginTime = 0
         progressLayer = nil
-        panel?.orderOut(nil)
+        let previousPanel = panel
         panel = nil
+        previousPanel?.orderOut(nil)
+        previousPanel?.close()
         if notify {
             dismissHandler?()
         }

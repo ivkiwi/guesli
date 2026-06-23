@@ -202,6 +202,7 @@ final class MuesliController: NSObject {
     private var activeDictionarySuggestionPromptKey: String?
     private var queuedDictionarySuggestionPromptKeys: [String] = []
     private var promptedDictionarySuggestionPromptKeys = Set<String>()
+    private var dictionarySuggestionPromptAdvanceTask: Task<Void, Never>?
     private let audioDuckingController: AudioDuckingManaging
     private let dictationAudioRoutingController: DictationAudioRouting
     private lazy var dictationAudioSessionManager = DictationAudioSessionManager(
@@ -904,6 +905,8 @@ final class MuesliController: NSObject {
             dictationCorrectionMonitor.cancel()
             queuedDictionarySuggestionPromptKeys.removeAll()
             promptedDictionarySuggestionPromptKeys.removeAll()
+            dictionarySuggestionPromptAdvanceTask?.cancel()
+            dictionarySuggestionPromptAdvanceTask = nil
             activeDictionarySuggestionPromptKey = nil
             dictionarySuggestionPrompt.dismiss()
         }
@@ -2057,12 +2060,27 @@ final class MuesliController: NSObject {
         guard activeDictionarySuggestionPromptKey == key else { return }
         activeDictionarySuggestionPromptKey = nil
         logDictionarySuggestion("complete action=\(action) queued=\(queuedDictionarySuggestionPromptKeys.count)")
-        presentNextDictionarySuggestionPromptIfPossible()
+        scheduleNextDictionarySuggestionPrompt()
+    }
+
+    private func scheduleNextDictionarySuggestionPrompt() {
+        dictionarySuggestionPromptAdvanceTask?.cancel()
+        dictionarySuggestionPromptAdvanceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+            self?.dictionarySuggestionPromptAdvanceTask = nil
+            self?.presentNextDictionarySuggestionPromptIfPossible()
+        }
     }
 
     private func presentNextDictionarySuggestionPromptIfPossible() {
         guard config.enableDictionaryCorrectionPrompts else { return }
         guard activeDictionarySuggestionPromptKey == nil else { return }
+        guard dictionarySuggestionPromptAdvanceTask == nil else { return }
+        guard !dictionarySuggestionPrompt.isShowing else {
+            scheduleNextDictionarySuggestionPrompt()
+            return
+        }
 
         while !queuedDictionarySuggestionPromptKeys.isEmpty {
             let key = queuedDictionarySuggestionPromptKeys.removeFirst()
@@ -2076,6 +2094,10 @@ final class MuesliController: NSObject {
             presentDictionarySuggestionPrompt(suggestion)
             return
         }
+    }
+
+    private func presentNextDictionarySuggestionPromptIfPossibleBeforeQueueHandoff() {
+        presentNextDictionarySuggestionPromptIfPossible()
     }
 
     private func dictionarySuggestionLogMetadata(_ suggestion: DictionarySuggestion) -> String {
