@@ -803,7 +803,7 @@ final class DictationCorrectionMonitor {
                         Self.log("stableSnapshot rejected suggestions=0")
                     }
                     for suggestion in suggestions where !emittedSuggestionKeys.contains(suggestion.key) {
-                        let shouldPresentPrompt = emittedSuggestionCount == 0
+                        let shouldPresentPrompt = true
                         emittedSuggestionKeys.insert(suggestion.key)
                         emittedSuggestionCount += 1
                         Self.log("emit presentPrompt=\(shouldPresentPrompt) \(Self.suggestionLogMetadata(suggestion))")
