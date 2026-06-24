@@ -102,7 +102,7 @@ struct SettingsView: View {
     // Uniform width for all right-side controls
     private let controlWidth: CGFloat = 220
     private let meetingControlWidth: CGFloat = 275
-    private let iOSCompanionURL = URL(string: "https://github.com/Muesli-HQ/muesli-ios")!
+    private let iOSCompanionURL = IPhoneBridgeLinks.installURL
     private let screenContextGrantIntentTimeout: TimeInterval = 15 * 60
     private let meetingDetectionAppOptions: [MeetingDetectionAppOption] = [
         MeetingDetectionAppOption(bundleID: "com.google.Chrome", name: "Chrome", icon: "globe"),
@@ -416,6 +416,12 @@ struct SettingsView: View {
                                 .font(MuesliTheme.caption())
                                 .foregroundStyle(MuesliTheme.textTertiary)
                         }
+                        if let linkedDeviceText = syncLinkedDeviceText {
+                            Text(linkedDeviceText)
+                                .font(MuesliTheme.caption())
+                                .foregroundStyle(MuesliTheme.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer(minLength: MuesliTheme.spacing16)
                     actionButton("Sync now", systemImage: "arrow.triangle.2.circlepath") {
@@ -466,6 +472,28 @@ struct SettingsView: View {
     private var syncLastSyncedText: String? {
         guard let date = appState.iCloudLastSyncedAt else { return nil }
         return DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+    }
+
+    private var syncLinkedDeviceText: String? {
+        guard appState.config.iCloudSyncEnabled else { return nil }
+        if let remoteDeviceName = appState.iCloudBridgeCompanionDeviceName {
+            if let platform = appState.iCloudBridgeRemoteDevicePlatform {
+                return "Linked \(syncDeviceLabel(for: platform)): \(remoteDeviceName)"
+            }
+            return "Linked device: \(remoteDeviceName)"
+        }
+        return "No linked iPhone yet."
+    }
+
+    private func syncDeviceLabel(for platform: String) -> String {
+        switch platform.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "ios":
+            return "iPhone"
+        case "ipados":
+            return "iPad"
+        default:
+            return platform
+        }
     }
 
     private var dictationSettingsPane: some View {
