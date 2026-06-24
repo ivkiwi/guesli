@@ -210,7 +210,6 @@ final class MuesliController: NSObject {
     private let dictionarySuggestionPrompt = DictionarySuggestionPromptController()
     private var activeDictionarySuggestionPromptKey: String?
     private var queuedDictionarySuggestionPromptKeys: [String] = []
-    private var promptedDictionarySuggestionPromptKeys = Set<String>()
     private var dictionarySuggestionPromptAdvanceTask: Task<Void, Never>?
     private let audioDuckingController: AudioDuckingManaging
     private let dictationAudioRoutingController: DictationAudioRouting
@@ -914,7 +913,6 @@ final class MuesliController: NSObject {
         if previousEnableDictionaryCorrectionPrompts, !config.enableDictionaryCorrectionPrompts {
             dictationCorrectionMonitor.cancel()
             queuedDictionarySuggestionPromptKeys.removeAll()
-            promptedDictionarySuggestionPromptKeys.removeAll()
             dictionarySuggestionPromptAdvanceTask?.cancel()
             dictionarySuggestionPromptAdvanceTask = nil
             activeDictionarySuggestionPromptKey = nil
@@ -2034,7 +2032,6 @@ final class MuesliController: NSObject {
     private func presentDictionarySuggestionPrompt(_ suggestion: DictionarySuggestion) {
         let key = suggestion.key
         activeDictionarySuggestionPromptKey = key
-        promptedDictionarySuggestionPromptKeys.insert(key)
         logDictionarySuggestion("present \(dictionarySuggestionLogMetadata(suggestion))")
         dictionarySuggestionPrompt.show(
             suggestion: suggestion,
@@ -2059,10 +2056,9 @@ final class MuesliController: NSObject {
         let key = suggestion.key
         guard config.enableDictionaryCorrectionPrompts else { return }
         guard activeDictionarySuggestionPromptKey != key else { return }
-        guard !promptedDictionarySuggestionPromptKeys.contains(key) else { return }
         guard !queuedDictionarySuggestionPromptKeys.contains(key) else { return }
-        // The monitor caps each dictation edit window at a small suggestion set.
-        // Queue all of them here so add/ignore/dismiss reveals the next correction.
+        // Showing or timing out a prompt is not a final answer. Only Add or
+        // Ignore suppresses future prompts for this correction pair.
         queuedDictionarySuggestionPromptKeys.append(key)
         logDictionarySuggestion("queue depth=\(queuedDictionarySuggestionPromptKeys.count) \(dictionarySuggestionLogMetadata(suggestion))")
         presentNextDictionarySuggestionPromptIfPossible()
@@ -2098,7 +2094,6 @@ final class MuesliController: NSObject {
 
         while !queuedDictionarySuggestionPromptKeys.isEmpty {
             let key = queuedDictionarySuggestionPromptKeys.removeFirst()
-            guard !promptedDictionarySuggestionPromptKeys.contains(key) else { continue }
             guard !config.dismissedDictionarySuggestionKeys.contains(key) else { continue }
             guard let suggestion = config.dictionarySuggestions.first(where: { $0.key == key }) else { continue }
             let hasCustomWord = config.customWords.contains {
@@ -6417,6 +6412,10 @@ final class MuesliController: NSObject {
                     if outputMode != .voiceNote {
                         PasteController.paste(text: text)
                         if self.config.enableDictionaryCorrectionPrompts {
+                            // Dictionary correction prompts are an explicit opt-in
+                            // screen-context feature: they briefly read focused app
+                            // text via Accessibility after dictation, then stop when
+                            // the bounded edit monitor session ends.
                             self.dictationCorrectionMonitor.start(
                                 originalText: text,
                                 appContext: storageContext,
