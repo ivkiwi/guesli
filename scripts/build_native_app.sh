@@ -245,7 +245,7 @@ if [[ "$SKIP_SIGN" != "1" ]]; then
   }
   trap cleanup_sign_temp_files EXIT
   if [[ -n "$PROVISIONING_PROFILE" ]]; then
-    PROFILE_PLIST="$(mktemp "${TMPDIR:-/tmp}/muesli-profile.XXXXXX.plist")"
+    PROFILE_PLIST="$(mktemp "${TMPDIR:-/tmp}/muesli-profile.XXXXXX")"
     SIGN_TEMP_FILES+=("$PROFILE_PLIST")
     if security cms -D -i "$PROVISIONING_PROFILE" > "$PROFILE_PLIST" 2>/dev/null; then
       if [[ -z "$APS_ENVIRONMENT" ]]; then
@@ -258,7 +258,7 @@ if [[ "$SKIP_SIGN" != "1" ]]; then
   fi
 
   if [[ -n "$APS_ENVIRONMENT" || -n "$PROFILE_PLIST" ]]; then
-    TEMP_ENTITLEMENTS="$(mktemp "${TMPDIR:-/tmp}/muesli-entitlements.XXXXXX.plist")"
+    TEMP_ENTITLEMENTS="$(mktemp "${TMPDIR:-/tmp}/muesli-entitlements.XXXXXX")"
     SIGN_TEMP_FILES+=("$TEMP_ENTITLEMENTS")
     cp "$ENTITLEMENTS" "$TEMP_ENTITLEMENTS"
     copy_profile_string_entitlement() {
