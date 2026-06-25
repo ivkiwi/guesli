@@ -67,6 +67,17 @@ final class CalendarMonitor {
         removeObserver()
     }
 
+    var canConfirmMissingEvents: Bool {
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess, .authorized:
+            return true
+        case .notDetermined, .restricted, .denied, .writeOnly:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
     private func registerForChanges(token: Int) {
         guard changeObserver == nil else { return }
         guard case .requesting(let activeToken) = state, activeToken == token else { return }

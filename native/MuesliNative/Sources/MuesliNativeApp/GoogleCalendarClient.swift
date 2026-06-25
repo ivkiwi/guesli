@@ -156,6 +156,8 @@ final class GoogleCalendarClient {
         var token = try await auth.validAccessToken()
         let isoFormatter = Self.isoFormatter
 
+        let isFullWindowFetch = syncTokens[calendarID] == nil
+        var bucket = isFullWindowFetch ? [:] : cachedEventsByCalendar[calendarID] ?? [:]
         var pageToken: String? = nil
         var tokenRetried = false
 
@@ -217,8 +219,6 @@ final class GoogleCalendarClient {
                 throw GoogleCalendarClientError.requestFailed("events returned malformed JSON")
             }
 
-            let isFullWindowFetch = pageToken == nil && syncTokens[calendarID] == nil
-            var bucket = isFullWindowFetch ? [:] : cachedEventsByCalendar[calendarID] ?? [:]
             if let items = json["items"] as? [[String: Any]] {
                 for item in items {
                     guard let id = item["id"] as? String else { continue }
@@ -231,8 +231,6 @@ final class GoogleCalendarClient {
                     }
                 }
             }
-            cachedEventsByCalendar[calendarID] = bucket
-
             if let nextPage = json["nextPageToken"] as? String {
                 pageToken = nextPage
             } else {
@@ -240,6 +238,7 @@ final class GoogleCalendarClient {
                 if let newSyncToken = json["nextSyncToken"] as? String {
                     syncTokens[calendarID] = newSyncToken
                 }
+                cachedEventsByCalendar[calendarID] = bucket
             }
         } while pageToken != nil
     }

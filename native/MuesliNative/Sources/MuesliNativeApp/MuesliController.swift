@@ -1875,7 +1875,9 @@ final class MuesliController: NSObject {
             hiddenIDs: appState.hiddenCalendarEventIDs,
             visibleEventIDs: currentEventIDs,
             dayCount: dayCount,
-            canConfirmMissingEvents: canConfirmMissingCalendarEvents && disabledIDs.isEmpty
+            canConfirmMissingEvents: canConfirmMissingCalendarEvents &&
+                calendarMonitor.canConfirmMissingEvents &&
+                disabledIDs.isEmpty
         )
         if !staleIDs.isEmpty {
             appState.hiddenCalendarEventIDs.subtract(staleIDs)
