@@ -2134,6 +2134,36 @@ struct DictationStoreTests {
         #expect(folders.first(where: { $0.id == child })?.parentID == nil)
     }
 
+    @Test("delete folder in cycle reparents child to top level")
+    func deleteFolderInCycleReparentsChildToTopLevel() throws {
+        let store = try makeStore()
+
+        let folderA = try store.createFolder(name: "A")
+        let folderB = try store.createFolder(name: "B", parentID: folderA)
+        try setFolderParentRaw(folderID: folderA, parentID: folderB, store: store)
+
+        try store.deleteFolder(id: folderA)
+
+        let folders = try store.listFolders()
+        #expect(!folders.contains(where: { $0.id == folderA }))
+        #expect(folders.first(where: { $0.id == folderB })?.parentID == nil)
+    }
+
+    @Test("delete orphaned folder reparents child to top level")
+    func deleteOrphanedFolderReparentsChildToTopLevel() throws {
+        let store = try makeStore()
+
+        let orphan = try store.createFolder(name: "Orphan")
+        let child = try store.createFolder(name: "Child", parentID: orphan)
+        try setFolderParentRaw(folderID: orphan, parentID: 999, store: store)
+
+        try store.deleteFolder(id: orphan)
+
+        let folders = try store.listFolders()
+        #expect(!folders.contains(where: { $0.id == orphan }))
+        #expect(folders.first(where: { $0.id == child })?.parentID == nil)
+    }
+
     @Test("recentMeetings with folderID includes descendant folder meetings")
     func recentMeetingsIncludesDescendants() throws {
         let store = try makeStore()

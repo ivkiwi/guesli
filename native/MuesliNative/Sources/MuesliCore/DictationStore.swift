@@ -1471,20 +1471,56 @@ public final class DictationStore {
                 parentID = sqlite3_column_int64(pStmt, 0)
             }
 
-            // Reparent child folders to the deleted folder's parent (or root).
-            var sChildren: OpaquePointer?
-            guard sqlite3_prepare_v2(db, "UPDATE meeting_folders SET parent_id = ? WHERE parent_id = ?", -1, &sChildren, nil) == SQLITE_OK else {
+            var childIDs: [Int64] = []
+            var childStmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT id FROM meeting_folders WHERE parent_id = ?", -1, &childStmt, nil) == SQLITE_OK else {
                 throw lastError(db)
             }
-            defer { sqlite3_finalize(sChildren) }
-            if let parentID {
-                sqlite3_bind_int64(sChildren, 1, parentID)
-            } else {
-                sqlite3_bind_null(sChildren, 1)
+            sqlite3_bind_int64(childStmt, 1, id)
+            while sqlite3_step(childStmt) == SQLITE_ROW {
+                childIDs.append(sqlite3_column_int64(childStmt, 0))
             }
-            sqlite3_bind_int64(sChildren, 2, id)
-            guard sqlite3_step(sChildren) == SQLITE_DONE else {
+            sqlite3_finalize(childStmt)
+
+            func folderExists(_ folderID: Int64) throws -> Bool {
+                var existsStmt: OpaquePointer?
+                guard sqlite3_prepare_v2(db, "SELECT 1 FROM meeting_folders WHERE id = ? LIMIT 1", -1, &existsStmt, nil) == SQLITE_OK else {
+                    throw lastError(db)
+                }
+                defer { sqlite3_finalize(existsStmt) }
+                sqlite3_bind_int64(existsStmt, 1, folderID)
+                return sqlite3_step(existsStmt) == SQLITE_ROW
+            }
+
+            func safeReplacementParent(for childID: Int64) throws -> Int64? {
+                guard let parentID,
+                      parentID != id,
+                      parentID != childID,
+                      try folderExists(parentID)
+                else {
+                    return nil
+                }
+                let descendants = try descendantFolderIDs(of: childID, db: db)
+                return descendants.contains(parentID) ? nil : parentID
+            }
+
+            var reparentStmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "UPDATE meeting_folders SET parent_id = ? WHERE id = ?", -1, &reparentStmt, nil) == SQLITE_OK else {
                 throw lastError(db)
+            }
+            defer { sqlite3_finalize(reparentStmt) }
+            for childID in childIDs where childID != id {
+                sqlite3_reset(reparentStmt)
+                sqlite3_clear_bindings(reparentStmt)
+                if let replacementParent = try safeReplacementParent(for: childID) {
+                    sqlite3_bind_int64(reparentStmt, 1, replacementParent)
+                } else {
+                    sqlite3_bind_null(reparentStmt, 1)
+                }
+                sqlite3_bind_int64(reparentStmt, 2, childID)
+                guard sqlite3_step(reparentStmt) == SQLITE_DONE else {
+                    throw lastError(db)
+                }
             }
 
             // Move meetings in deleted folder to unfiled.
@@ -1520,24 +1556,7 @@ public final class DictationStore {
     public func listFolders() throws -> [MeetingFolder] {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
-        let sql = "SELECT id, name, parent_id, created_at FROM meeting_folders ORDER BY id ASC"
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw lastError(db)
-        }
-        defer { sqlite3_finalize(statement) }
-        var rows: [MeetingFolder] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            let parentID: Int64? = sqlite3_column_type(statement, 2) != SQLITE_NULL
-                ? sqlite3_column_int64(statement, 2) : nil
-            rows.append(MeetingFolder(
-                id: sqlite3_column_int64(statement, 0),
-                name: stringColumn(statement, index: 1),
-                parentID: parentID,
-                createdAt: stringColumn(statement, index: 3)
-            ))
-        }
-        return rows
+        return try listFoldersInternal(db: db)
     }
 
     public func moveMeeting(id: Int64, toFolder folderID: Int64?) throws {

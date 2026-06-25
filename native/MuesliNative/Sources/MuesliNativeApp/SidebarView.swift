@@ -714,7 +714,14 @@ private struct FolderDropDelegate: DropDelegate {
         let movedFolders = folders.filter { draggedSubtree.contains($0.id) }
         folders.removeAll { draggedSubtree.contains($0.id) }
         guard let adjustedTargetIndex = folders.firstIndex(where: { $0.id == folderID }) else { return }
-        let insertionIndex = toIndex > fromIndex ? adjustedTargetIndex + 1 : adjustedTargetIndex
+        let insertionIndex: Int
+        if toIndex > fromIndex {
+            let targetSubtree = subtreeIDs(rootedAt: folderID, folders: folders)
+            let lastTargetIndex = folders.indices.last { targetSubtree.contains(folders[$0].id) } ?? adjustedTargetIndex
+            insertionIndex = lastTargetIndex + 1
+        } else {
+            insertionIndex = adjustedTargetIndex
+        }
 
         withAnimation(.easeInOut(duration: 0.15)) {
             folders.insert(contentsOf: movedFolders, at: insertionIndex)
