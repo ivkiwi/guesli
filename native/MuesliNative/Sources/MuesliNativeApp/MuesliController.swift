@@ -1488,7 +1488,8 @@ final class MuesliController: NSObject {
 
         updateConfig { $0.upcomingMeetingsDayCount = resolvedDayCount }
         Task {
-            await refreshUpcomingCalendarEvents()
+            let refreshed = await refreshUpcomingCalendarEvents()
+            guard refreshed else { return }
             checkUpcomingCalendarNotifications()
             meetingMonitor.refreshState(trigger: .calendarChanged)
         }
@@ -1834,7 +1835,8 @@ final class MuesliController: NSObject {
         }
     }
 
-    func refreshUpcomingCalendarEvents() async {
+    @discardableResult
+    func refreshUpcomingCalendarEvents() async -> Bool {
         let disabledIDs = Set(config.disabledCalendarIDs)
         let dayCount = UpcomingMeetingsWindow.resolve(dayCount: config.upcomingMeetingsDayCount).dayCount
         var ekEvents = calendarMonitor.upcomingEvents(daysAhead: dayCount, disabledCalendarIDs: disabledIDs)
@@ -1854,7 +1856,7 @@ final class MuesliController: NSObject {
             } catch GoogleCalendarAuthError.refreshFailed(let message) {
                 fputs("[muesli-native] Google Calendar token refresh failed: \(message)\n", stderr)
             } catch GoogleCalendarClientError.staleRequest {
-                return
+                return false
             } catch {
                 fputs("[muesli-native] Google Calendar fetch failed: \(error)\n", stderr)
             }
@@ -1863,7 +1865,7 @@ final class MuesliController: NSObject {
         let currentDisabledIDs = Set(config.disabledCalendarIDs)
         let currentDayCount = UpcomingMeetingsWindow.resolve(dayCount: config.upcomingMeetingsDayCount).dayCount
         guard dayCount == currentDayCount, disabledIDs == currentDisabledIDs else {
-            return
+            return false
         }
 
         appState.upcomingCalendarEvents = ekEvents
@@ -1901,6 +1903,7 @@ final class MuesliController: NSObject {
         }
 
         statusBarController?.updateMenuBarTitle()
+        return true
     }
 
     func startCalendarMonitoring() {
@@ -1911,7 +1914,8 @@ final class MuesliController: NSObject {
             guard let self else { return }
             Task { @MainActor in
                 self.refreshAvailableEventKitCalendars()
-                await self.refreshUpcomingCalendarEvents()
+                let refreshed = await self.refreshUpcomingCalendarEvents()
+                guard refreshed else { return }
                 self.checkUpcomingCalendarNotifications()
                 self.meetingMonitor.refreshState(trigger: .calendarChanged)
             }
@@ -1929,7 +1933,8 @@ final class MuesliController: NSObject {
             Task { @MainActor in
                 self.calendarMonitor.start()
                 self.refreshAvailableEventKitCalendars()
-                await self.refreshUpcomingCalendarEvents()
+                let refreshed = await self.refreshUpcomingCalendarEvents()
+                guard refreshed else { return }
                 self.checkUpcomingCalendarNotifications()
                 self.meetingMonitor.refreshState(trigger: .calendarChanged)
             }
@@ -1938,7 +1943,8 @@ final class MuesliController: NSObject {
         // Run first cycle immediately
         Task { @MainActor in
             self.refreshAvailableEventKitCalendars()
-            await self.refreshUpcomingCalendarEvents()
+            let refreshed = await self.refreshUpcomingCalendarEvents()
+            guard refreshed else { return }
             self.checkUpcomingCalendarNotifications()
             self.meetingMonitor.refreshState(trigger: .calendarChanged)
         }
