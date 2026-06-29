@@ -332,6 +332,30 @@ struct StreamingDictationControllerTests {
         #expect(text == " hello")
         #expect(await transcriber.transcribeCalls == 1)
     }
+
+    @available(macOS 15, *)
+    @Test("stop drains final queued chunk with Nemotron 3.5 chunk size")
+    func stopDrainsFinalQueuedChunkWithNemotron35ChunkSize() async {
+        let transcriber = DelayedStreamingTranscriber()
+        let recorder = InspectableStreamingDictationRecorder()
+        let controller = StreamingDictationController(
+            transcriber: transcriber,
+            recorder: recorder,
+            stopStreamStateTimeout: 2.0,
+            chunkSamples: 35_840
+        )
+
+        #expect(controller.start() == true)
+        recorder.emit(samples: [Float](repeating: 0.2, count: 35_840))
+
+        async let stoppedText = stop(controller)
+        try? await Task.sleep(for: .milliseconds(1_100))
+        await transcriber.releaseState()
+
+        let text = await stoppedText
+        #expect(text == " hello")
+        #expect(await transcriber.transcribeCalls == 1)
+    }
 }
 
 private final class FailingStreamingDictationRecorder: StreamingDictationRecording {

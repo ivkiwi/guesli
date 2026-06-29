@@ -6255,8 +6255,16 @@ final class MuesliController: NSObject {
         sessionID: UUID
     ) {
         Task {
-            await transcriptionCoordinator.setNemotron35PromptId(config.resolvedNemotron35Language.promptId)
-            let transcriber = await transcriptionCoordinator.getNemotron35Transcriber()
+            let transcriber: Nemotron35StreamingTranscriber
+            do {
+                await transcriptionCoordinator.setNemotron35PromptId(config.resolvedNemotron35Language.promptId)
+                transcriber = try await transcriptionCoordinator.getLoadedNemotron35Transcriber()
+            } catch {
+                await MainActor.run {
+                    self.handleNemotronStreamingRuntimeFailure(error: error, sessionID: sessionID)
+                }
+                return
+            }
             fputs("[muesli-native] got Nemotron 3.5 transcriber\n", stderr)
             let chunkSamples = transcriber.chunkSamples
             let makeController: @MainActor (AudioObjectID?) -> StreamingDictationController = { preferredID in
@@ -6326,7 +6334,7 @@ final class MuesliController: NSObject {
     @MainActor
     private func handleNemotronStreamingRuntimeFailure(error: Error, sessionID: UUID) {
         guard isNemotron35Streaming, nemotron35StreamingSessionID == sessionID else { return }
-        fputs("[muesli-native] Nemotron streaming failed after mic start: \(error)\n", stderr)
+        fputs("[muesli-native] Nemotron streaming failed: \(error)\n", stderr)
         isNemotron35Streaming = false
         _streamingDictationController = nil
         nemotron35StreamingSessionID = nil

@@ -70,6 +70,7 @@ final class StreamingDictationController {
         stopDrainTimeout: TimeInterval? = nil,
         chunkSamples: Int = 8960
     ) {
+        precondition(chunkSamples > 0, "StreamingDictationController chunkSamples must be positive")
         self.transcriber = transcriber
         self.recorder = recorder
         self.stopStreamStateTimeout = stopStreamStateTimeout
