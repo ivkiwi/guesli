@@ -761,19 +761,6 @@ struct NemotronDictationModePolicyTests {
     }
 }
 
-@Suite("TranscriptionCoordinator Nemotron accessor")
-struct TranscriptionCoordinatorNemotronTests {
-
-    @available(macOS 15, *)
-    @Test("getNemotron35Transcriber returns valid instance via lazy init")
-    func nemotron35LazyInit() async {
-        let coordinator = TranscriptionCoordinator()
-        let transcriber = await coordinator.getNemotron35Transcriber()
-        let state = try? await transcriber.makeStreamState()
-        #expect(state != nil)
-    }
-}
-
 @Suite("Nemotron35 backend")
 struct Nemotron35StreamStateTests {
 

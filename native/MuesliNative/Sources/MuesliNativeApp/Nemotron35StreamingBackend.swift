@@ -21,6 +21,9 @@ actor Nemotron35StreamingTranscriber: NemotronStreamingTranscribing {
     private var tokenizer: [Int: String] = [:]
     private var loaded = false
     private var loadedRevision: String?
+    private var isLoading = false
+    private var loadWaiters: [CheckedContinuation<Void, Error>] = []
+    private var loadGeneration = 0
 
     /// Selected language `prompt_id` fed to the encoder (101 = auto-detect).
     /// Set from app config via `setPromptId(_:)` before dictation.
@@ -64,6 +67,31 @@ actor Nemotron35StreamingTranscriber: NemotronStreamingTranscribing {
     }()
 
     func loadModels(progress: ((Double, String?) -> Void)? = nil) async throws {
+        if loaded, loadedRevision == Self.installedRevision() { return }
+        if isLoading {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                loadWaiters.append(continuation)
+            }
+            return
+        }
+
+        isLoading = true
+        let generation = loadGeneration
+        do {
+            try await performLoadModels(progress: progress, generation: generation)
+            isLoading = false
+            completeLoadWaiters()
+        } catch {
+            isLoading = false
+            completeLoadWaiters(throwing: error)
+            throw error
+        }
+    }
+
+    private func performLoadModels(
+        progress: ((Double, String?) -> Void)? = nil,
+        generation: Int
+    ) async throws {
         let modelDir = try await ensureModelsDownloaded(progress: progress)
         let installedRevision = Self.installedRevision()
         if loaded, loadedRevision == installedRevision { return }
@@ -95,9 +123,27 @@ actor Nemotron35StreamingTranscriber: NemotronStreamingTranscribing {
             }
         }
 
+        guard generation == loadGeneration else {
+            preprocessor = nil; encoder = nil; decoder = nil; joint = nil
+            tokenizer = [:]
+            throw TranscriberError.notLoaded
+        }
+
         loaded = true
         loadedRevision = installedRevision
         fputs("[nemotron35] models ready (\(tokenizer.count) vocab tokens)\n", stderr)
+    }
+
+    private func completeLoadWaiters(throwing error: Error? = nil) {
+        let waiters = loadWaiters
+        loadWaiters.removeAll()
+        for waiter in waiters {
+            if let error {
+                waiter.resume(throwing: error)
+            } else {
+                waiter.resume()
+            }
+        }
     }
 
     // MARK: - Streaming API
@@ -145,8 +191,11 @@ actor Nemotron35StreamingTranscriber: NemotronStreamingTranscribing {
     }
 
     func shutdown() {
+        loadGeneration += 1
         preprocessor = nil; encoder = nil; decoder = nil; joint = nil
         tokenizer = [:]; loaded = false; loadedRevision = nil
+        isLoading = false
+        completeLoadWaiters(throwing: TranscriberError.notLoaded)
     }
 
     // MARK: - Model Download

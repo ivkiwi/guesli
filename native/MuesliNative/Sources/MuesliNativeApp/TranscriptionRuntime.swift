@@ -42,15 +42,6 @@ actor TranscriptionCoordinator {
         return _nemotron35Transcriber as! Nemotron35StreamingTranscriber
     }
 
-    /// Public accessor for streaming dictation (Nemotron 3.5 multilingual). Applies
-    /// the currently-selected language prompt id before returning.
-    @available(macOS 15, *)
-    func getNemotron35Transcriber() async -> Nemotron35StreamingTranscriber {
-        let transcriber = nemotron35Transcriber
-        await transcriber.setPromptId(nemotron35PromptId)
-        return transcriber
-    }
-
     /// Loaded accessor for production dictation paths. Preload normally warms the
     /// model, but direct hold-to-talk or early double-tap after relaunch must not
     /// reach the actor while its CoreML models are still unloaded.
@@ -229,7 +220,7 @@ actor TranscriptionCoordinator {
                 fputs("[muesli-native] Nemotron 3.5 warmup: running silent chunk for ANE compilation...\n", stderr)
                 var state = try await transcriber.makeStreamState()
                 let silence = [Float](repeating: 0, count: transcriber.chunkSamples)
-                _ = try? await transcriber.transcribeChunk(samples: silence, state: &state)
+                _ = try await transcriber.transcribeChunk(samples: silence, state: &state)
                 fputs("[muesli-native] Nemotron 3.5 warmup complete\n", stderr)
             } else {
                 throw NSError(domain: "MuesliTranscriptionRuntime", code: 1, userInfo: [
