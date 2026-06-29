@@ -82,6 +82,28 @@ struct BackendOptionTests {
         #expect(BackendOption.indicASR.model.contains("indic-conformer"))
     }
 
+    @Test("Indic ASR chunk merge deduplicates Indic overlap")
+    func indicASRChunkMergeDeduplicatesIndicOverlap() {
+        let result = IndicASRTranscriptMerger.mergeOverlappingTranscripts([
+            "मैं हिंदी में बोल सकता हूँ",
+            "बोल सकता हूँ और तमिल भी",
+            "தமிழ் கூட பேச முடியும்",
+            "பேச முடியும் இப்போ",
+        ])
+
+        #expect(result == "मैं हिंदी में बोल सकता हूँ और तमिल भी தமிழ் கூட பேச முடியும் இப்போ")
+    }
+
+    @Test("Indic ASR chunk merge preserves non-overlapping text")
+    func indicASRChunkMergePreservesNonOverlappingText() {
+        let result = IndicASRTranscriptMerger.mergeOverlappingTranscripts([
+            "நான் தமிழ் பேசுகிறேன்",
+            "यह नया वाक्य है",
+        ])
+
+        #expect(result == "நான் தமிழ் பேசுகிறேன் यह नया वाक्य है")
+    }
+
     @Test("Indic ASR mel transpose uses row-major vDSP parameter order")
     func indicASRMelTransposeParameterOrder() {
         let rows = 2

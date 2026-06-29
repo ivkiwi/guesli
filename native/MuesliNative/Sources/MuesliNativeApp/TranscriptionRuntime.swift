@@ -413,6 +413,10 @@ actor TranscriptionCoordinator {
             Qwen3PostProcessorLogging.logVerbose("Qwen3 post-processor disabled for dictation")
             return nil
         }
+        guard backend.backend != "indicasr" else {
+            Qwen3PostProcessorLogging.logVerbose("Qwen3 post-processor skipped: Indic ASR output is not English post-processor safe")
+            return nil
+        }
         guard !result.text.isEmpty else {
             Qwen3PostProcessorLogging.logVerbose("Qwen3 post-processor skipped: empty transcript")
             return nil

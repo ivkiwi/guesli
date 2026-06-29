@@ -132,6 +132,43 @@ enum IndicASRLogging {
     }
 }
 
+enum IndicASRTranscriptMerger {
+    static func mergeOverlappingTranscripts(_ transcripts: [String]) -> String {
+        var mergedWords: [String] = []
+        for transcript in transcripts {
+            let words = transcript.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard !words.isEmpty else { continue }
+            guard !mergedWords.isEmpty else {
+                mergedWords.append(contentsOf: words)
+                continue
+            }
+
+            let existing = mergedWords.map(normalizeMergeToken)
+            let incoming = words.map(normalizeMergeToken)
+            let maxOverlap = min(existing.count, incoming.count, 16)
+            var overlap = 0
+            if maxOverlap > 0 {
+                for count in stride(from: maxOverlap, through: 1, by: -1) {
+                    if Array(existing.suffix(count)) == Array(incoming.prefix(count)) {
+                        overlap = count
+                        break
+                    }
+                }
+            }
+            mergedWords.append(contentsOf: words.dropFirst(overlap))
+        }
+        return mergedWords.joined(separator: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func normalizeMergeToken(_ token: String) -> String {
+        let punctuation = CharacterSet.punctuationCharacters.union(.symbols)
+        let scalars = token.unicodeScalars.filter { !punctuation.contains($0) }
+        return String(String.UnicodeScalarView(scalars)).lowercased()
+    }
+}
+
 private struct IndicASRModelLayout {
     let root: URL
     let encoderDirectory: URL
@@ -744,9 +781,7 @@ private struct IndicASRRNNTGreedyDecoder {
             start += stepSize
         }
 
-        return transcripts.joined(separator: " ")
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return IndicASRTranscriptMerger.mergeOverlappingTranscripts(transcripts)
     }
 
     private func transcribeChunk(audioSamples: [Float], language: IndicASRLanguage) async throws -> String {
