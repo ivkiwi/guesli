@@ -121,7 +121,8 @@ final class GoogleCalendarClient {
     /// each event fetch incremental.
     func fetchUpcomingEvents(
         daysAhead: Int = UpcomingMeetingsWindow.defaultDayCount,
-        disabledCalendarIDs: Set<String> = []
+        disabledCalendarIDs: Set<String> = [],
+        now: Date = Date()
     ) async throws -> [UnifiedCalendarEvent] {
         upcomingEventsFetchGeneration += 1
         let fetchGeneration = upcomingEventsFetchGeneration
@@ -133,7 +134,6 @@ final class GoogleCalendarClient {
         }
 
         let resolvedDayCount = UpcomingMeetingsWindow.resolve(dayCount: daysAhead).dayCount
-        let now = Date()
         let windowScope = EventWindowScope(
             dayCount: resolvedDayCount,
             startOfDay: Calendar.current.startOfDay(for: now)

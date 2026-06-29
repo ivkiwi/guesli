@@ -1855,9 +1855,15 @@ final class MuesliController: NSObject {
 
     @discardableResult
     func refreshUpcomingCalendarEvents() async -> Bool {
+        let refreshNow = Date()
+        let refreshStartOfDay = Calendar.current.startOfDay(for: refreshNow)
         let disabledIDs = Set(config.disabledCalendarIDs)
         let dayCount = UpcomingMeetingsWindow.resolve(dayCount: config.upcomingMeetingsDayCount).dayCount
-        var ekEvents = calendarMonitor.upcomingEvents(daysAhead: dayCount, disabledCalendarIDs: disabledIDs)
+        var ekEvents = calendarMonitor.upcomingEvents(
+            daysAhead: dayCount,
+            disabledCalendarIDs: disabledIDs,
+            now: refreshNow
+        )
         var observedEventIDs = Set(ekEvents.map(\.id))
         var canConfirmMissingGoogleEvents = false
 
@@ -1865,7 +1871,8 @@ final class MuesliController: NSObject {
             do {
                 let googleEvents = try await googleCalClient.fetchUpcomingEvents(
                     daysAhead: dayCount,
-                    disabledCalendarIDs: disabledIDs
+                    disabledCalendarIDs: disabledIDs,
+                    now: refreshNow
                 )
                 canConfirmMissingGoogleEvents = googleCalClient.lastUpcomingEventsFetchWasComplete
                 observedEventIDs.formUnion(googleEvents.map(\.id))
@@ -1884,7 +1891,10 @@ final class MuesliController: NSObject {
 
         let currentDisabledIDs = Set(config.disabledCalendarIDs)
         let currentDayCount = UpcomingMeetingsWindow.resolve(dayCount: config.upcomingMeetingsDayCount).dayCount
-        guard dayCount == currentDayCount, disabledIDs == currentDisabledIDs else {
+        let currentStartOfDay = Calendar.current.startOfDay(for: Date())
+        guard dayCount == currentDayCount,
+              disabledIDs == currentDisabledIDs,
+              refreshStartOfDay == currentStartOfDay else {
             return false
         }
 
