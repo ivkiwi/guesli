@@ -100,6 +100,15 @@ struct BackendOption: Equatable {
         recommended: false
     )
 
+    static let indicASR = BackendOption(
+        backend: "indicasr",
+        model: "phequals/indic-conformer-600m-multilingual-coreml-rnnt",
+        label: "Indic ASR",
+        sizeLabel: "~618 MB",
+        description: "Experimental AI4Bharat IndicConformer RNNT CoreML backend for seven Indian languages. Requires explicit language selection.",
+        recommended: false
+    )
+
     static let senseVoiceSmall = BackendOption(
         backend: "sensevoice",
         model: "FluidInference/sensevoice-small-coreml",
@@ -130,7 +139,7 @@ struct BackendOption: Equatable {
     )
 
     static let experimental: [BackendOption] = [
-        .senseVoiceSmall, .qwen3Asr, .canaryQwen,
+        .senseVoiceSmall, .qwen3Asr, .canaryQwen, .indicASR,
     ]
 
     /// Models available for download and use.
@@ -204,6 +213,8 @@ struct BackendOption: Equatable {
             return CanaryQwenModelStore.isAvailableLocally()
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
+        case "indicasr":
+            return IndicASRModelStore.isAvailableLocally()
         case "sensevoice":
             return SenseVoiceTranscriber.isModelDownloaded()
         default:
@@ -897,6 +908,7 @@ struct AppConfig: Codable {
     var sttModel: String = BackendOption.whisper.model
     var dictationInputDeviceUID: String? = nil
     var cohereLanguage: String = CohereTranscribeLanguage.defaultLanguage.rawValue
+    var indicASRLanguage: String = IndicASRLanguage.defaultLanguage.rawValue
     var nemotron35Language: String = Nemotron35Language.defaultLanguage.rawValue
     var meetingTranscriptionBackend: String = BackendOption.whisper.backend
     var meetingTranscriptionModel: String = BackendOption.whisper.model
@@ -988,6 +1000,7 @@ struct AppConfig: Codable {
         case sttModel = "stt_model"
         case dictationInputDeviceUID = "dictation_input_device_uid"
         case cohereLanguage = "cohere_language"
+        case indicASRLanguage = "indic_asr_language"
         case nemotron35Language = "nemotron35_language"
         case meetingTranscriptionBackend = "meeting_transcription_backend"
         case meetingTranscriptionModel = "meeting_transcription_model"
@@ -1086,6 +1099,7 @@ struct AppConfig: Codable {
         sttModel = (try? c.decode(String.self, forKey: .sttModel)) ?? defaults.sttModel
         dictationInputDeviceUID = try? c.decode(String.self, forKey: .dictationInputDeviceUID)
         cohereLanguage = CohereTranscribeLanguage.resolvedCode(try? c.decode(String.self, forKey: .cohereLanguage))
+        indicASRLanguage = IndicASRLanguage.resolvedCode(try? c.decode(String.self, forKey: .indicASRLanguage))
         nemotron35Language = Nemotron35Language.resolvedCode(try? c.decode(String.self, forKey: .nemotron35Language))
         meetingTranscriptionBackend = (try? c.decode(String.self, forKey: .meetingTranscriptionBackend)) ?? sttBackend
         meetingTranscriptionModel = (try? c.decode(String.self, forKey: .meetingTranscriptionModel)) ?? sttModel
@@ -1187,6 +1201,10 @@ struct AppConfig: Codable {
 
     var resolvedCohereLanguage: CohereTranscribeLanguage {
         CohereTranscribeLanguage.resolved(cohereLanguage)
+    }
+
+    var resolvedIndicASRLanguage: IndicASRLanguage {
+        IndicASRLanguage.resolved(indicASRLanguage)
     }
 
     var resolvedNemotron35Language: Nemotron35Language {

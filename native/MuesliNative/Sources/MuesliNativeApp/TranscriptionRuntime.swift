@@ -15,7 +15,7 @@ struct SpeechTranscriptionResult: Sendable {
 
 actor TranscriptionCoordinator {
     static let explicitlyRoutedBackendIdentifiers: Set<String> = [
-        "whisper", "nemotron35", "gigaam_v3", "qwen", "canary", "cohere", "sensevoice",
+        "whisper", "nemotron35", "gigaam_v3", "qwen", "canary", "cohere", "indicasr", "sensevoice",
     ]
 
     private let fluidTranscriber = FluidAudioTranscriber()
@@ -25,6 +25,7 @@ actor TranscriptionCoordinator {
     private var _canaryQwenTranscriber: Any?
     private var _cohereTranscriber: Any?
     private let gigaAMV3Transcriber = GigaAMV3Transcriber()
+    private var _indicASRTranscriber: Any?
     private let senseVoiceTranscriber = SenseVoiceTranscriber()
     private var vadManager: VadManager?
     private var diarizerManager: DiarizerManager?
@@ -158,6 +159,14 @@ actor TranscriptionCoordinator {
         return _cohereTranscriber as! CohereTranscribeTranscriber
     }
 
+    @available(macOS 15, *)
+    private var indicASRTranscriber: IndicASRTranscriber {
+        if _indicASRTranscriber == nil {
+            _indicASRTranscriber = IndicASRTranscriber()
+        }
+        return _indicASRTranscriber as! IndicASRTranscriber
+    }
+
     func preload(
         backend: BackendOption,
         enablePostProcessor: Bool = false,
@@ -260,6 +269,14 @@ actor TranscriptionCoordinator {
                     NSLocalizedDescriptionKey: "Cohere Transcribe requires macOS 15 or later.",
                 ])
             }
+        case "indicasr":
+            if #available(macOS 15, *) {
+                try await indicASRTranscriber.prepare(progress: progress)
+            } else {
+                throw NSError(domain: "MuesliTranscriptionRuntime", code: 6, userInfo: [
+                    NSLocalizedDescriptionKey: "Indic ASR requires macOS 15 or later.",
+                ])
+            }
         case "sensevoice":
             try await senseVoiceTranscriber.loadModels(progress: progress)
         default:
@@ -285,6 +302,7 @@ actor TranscriptionCoordinator {
         at url: URL,
         backend: BackendOption,
         cohereLanguage: CohereTranscribeLanguage = CohereTranscribeLanguage.defaultLanguage,
+        indicASRLanguage: IndicASRLanguage = IndicASRLanguage.defaultLanguage,
         enablePostProcessor: Bool = false,
         customWords: [[String: Any]] = [],
         appContext: String? = nil
@@ -303,7 +321,7 @@ actor TranscriptionCoordinator {
                 fputs("[muesli-native] VAD check failed, transcribing anyway: \(error)\n", stderr)
             }
         }
-        var result = try await route(url: url, backend: backend, cohereLanguage: cohereLanguage)
+        var result = try await route(url: url, backend: backend, cohereLanguage: cohereLanguage, indicASRLanguage: indicASRLanguage)
         result = removeArtifacts(result)
         if !result.text.isEmpty {
             Qwen3PostProcessorLogging.logVerbose("Dictation raw transcript after artifact cleanup: \(result.text)")
@@ -324,16 +342,18 @@ actor TranscriptionCoordinator {
     func transcribeMeeting(
         at url: URL,
         backend: BackendOption,
-        cohereLanguage: CohereTranscribeLanguage = CohereTranscribeLanguage.defaultLanguage
+        cohereLanguage: CohereTranscribeLanguage = CohereTranscribeLanguage.defaultLanguage,
+        indicASRLanguage: IndicASRLanguage = IndicASRLanguage.defaultLanguage
     ) async throws -> SpeechTranscriptionResult {
         // Meetings intentionally skip Qwen/custom-word post-processing. Keep deterministic artifact/filler cleanup only.
-        cleanMeetingTranscript(try await route(url: url, backend: backend, cohereLanguage: cohereLanguage))
+        cleanMeetingTranscript(try await route(url: url, backend: backend, cohereLanguage: cohereLanguage, indicASRLanguage: indicASRLanguage))
     }
 
     func transcribeMeetingChunk(
         at url: URL,
         backend: BackendOption,
-        cohereLanguage: CohereTranscribeLanguage = CohereTranscribeLanguage.defaultLanguage
+        cohereLanguage: CohereTranscribeLanguage = CohereTranscribeLanguage.defaultLanguage,
+        indicASRLanguage: IndicASRLanguage = IndicASRLanguage.defaultLanguage
     ) async throws -> SpeechTranscriptionResult {
         // Meeting chunks intentionally skip Qwen/custom-word post-processing for reconciliation.
         // Run VAD to skip silent chunks (prevents hallucinations)
@@ -349,7 +369,7 @@ actor TranscriptionCoordinator {
                 fputs("[muesli-native] VAD check failed, transcribing anyway: \(error)\n", stderr)
             }
         }
-        return cleanMeetingTranscript(try await route(url: url, backend: backend, cohereLanguage: cohereLanguage))
+        return cleanMeetingTranscript(try await route(url: url, backend: backend, cohereLanguage: cohereLanguage, indicASRLanguage: indicASRLanguage))
     }
 
     func diarizeSystemAudio(at url: URL) async throws -> DiarizationResult? {
@@ -389,6 +409,7 @@ actor TranscriptionCoordinator {
             }
             await canaryQwenTranscriber.shutdown()
             await cohereTranscriber.shutdown()
+            await indicASRTranscriber.shutdown()
         }
     }
 
@@ -426,6 +447,10 @@ actor TranscriptionCoordinator {
     ) async -> SpeechTranscriptionResult? {
         guard enabled else {
             Qwen3PostProcessorLogging.logVerbose("Qwen3 post-processor disabled for dictation")
+            return nil
+        }
+        guard backend.backend != "indicasr" else {
+            Qwen3PostProcessorLogging.logVerbose("Qwen3 post-processor skipped: Indic ASR output is not English post-processor safe")
             return nil
         }
         guard !result.text.isEmpty else {
@@ -478,7 +503,8 @@ actor TranscriptionCoordinator {
     private func route(
         url: URL,
         backend: BackendOption,
-        cohereLanguage: CohereTranscribeLanguage
+        cohereLanguage: CohereTranscribeLanguage,
+        indicASRLanguage: IndicASRLanguage
     ) async throws -> SpeechTranscriptionResult {
         switch backend.backend {
         case "whisper":
@@ -493,6 +519,8 @@ actor TranscriptionCoordinator {
             return try await transcribeWithCanaryQwen(url: url)
         case "cohere":
             return try await transcribeWithCohere(url: url, language: cohereLanguage)
+        case "indicasr":
+            return try await transcribeWithIndicASR(url: url, language: indicASRLanguage)
         case "sensevoice":
             return try await transcribeWithSenseVoice(url: url)
         default:
@@ -611,6 +639,28 @@ actor TranscriptionCoordinator {
         } else {
             throw NSError(domain: "Muesli", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "Cohere Transcribe requires macOS 15 or later.",
+            ])
+        }
+    }
+
+    // MARK: - Indic ASR (AI4Bharat IndicConformer RNNT CoreML)
+
+    private func transcribeWithIndicASR(
+        url: URL,
+        language: IndicASRLanguage
+    ) async throws -> SpeechTranscriptionResult {
+        if #available(macOS 15, *) {
+            IndicASRLogging.logVerbose("transcribing with Indic ASR (\(language.rawValue)): \(url.lastPathComponent)")
+            let result = try await indicASRTranscriber.transcribe(wavURL: url, language: language)
+            IndicASRLogging.logVerbose("Indic ASR result chars=\(result.text.count), processingTime=\(String(format: "%.3f", result.processingTime))s")
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return SpeechTranscriptionResult(
+                text: text,
+                segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: 0, text: text)]
+            )
+        } else {
+            throw NSError(domain: "Muesli", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Indic ASR requires macOS 15 or later.",
             ])
         }
     }
