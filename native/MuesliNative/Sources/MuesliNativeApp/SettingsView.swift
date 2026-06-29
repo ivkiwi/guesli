@@ -137,6 +137,10 @@ struct SettingsView: View {
         appState.config.resolvedCohereLanguage
     }
 
+    private var selectedUpcomingMeetingsWindow: UpcomingMeetingsWindow {
+        UpcomingMeetingsWindow.resolve(dayCount: appState.config.upcomingMeetingsDayCount)
+    }
+
     private var dictationMicrophoneOptions: [DictationMicrophoneOption] {
         var options = [DictationMicrophoneOption(uid: nil, label: "Automatic")]
         options += dictationInputDevices.map { device in
@@ -658,12 +662,12 @@ struct SettingsView: View {
     private var meetingsSettingsPane: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing24) {
             settingsSection("Meeting Transcription") {
-                settingsRow("Meeting model") {
+                settingsRow("Meeting model", controlWidth: meetingControlWidth) {
                     if meetingBackendOptions.isEmpty {
                         Text("No downloaded models")
                             .font(MuesliTheme.body())
                             .foregroundStyle(MuesliTheme.textTertiary)
-                            .frame(width: meetingControlWidth, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         settingsMenu(
                             selection: selectedMeetingBackendLabel,
@@ -673,7 +677,6 @@ struct SettingsView: View {
                                 controller.selectMeetingTranscriptionBackend(option)
                             }
                         }
-                        .frame(width: meetingControlWidth)
                     }
                 }
                 if appState.selectedMeetingTranscriptionBackend.backend == BackendOption.cohereTranscribe.backend {
@@ -900,7 +903,19 @@ struct SettingsView: View {
             }
 
             settingsSection("Calendars") {
+                settingsRow("Upcoming meetings", controlWidth: meetingControlWidth) {
+                    settingsMenu(
+                        selection: selectedUpcomingMeetingsWindow.label,
+                        options: UpcomingMeetingsWindow.allCases.map(\.label)
+                    ) { label in
+                        guard let window = UpcomingMeetingsWindow.allCases.first(where: { $0.label == label }) else { return }
+                        controller.updateUpcomingMeetingsWindow(dayCount: window.dayCount)
+                    }
+                }
+                settingsDescription("Controls how many calendar days appear in Coming Up, the menu bar, and scheduled meeting checks.")
+                Divider().background(MuesliTheme.surfaceBorder)
                 calendarSourcesControl
+                    .padding(.bottom, MuesliTheme.spacing8)
             }
 
             if appState.isGoogleCalendarAvailable {
@@ -912,36 +927,22 @@ struct SettingsView: View {
             }
 
             settingsSection("Advanced") {
-                settingsRow("Enable post-meeting hook") {
+                settingsRow("Enable post-meeting hook", controlWidth: meetingControlWidth) {
                     settingsSwitch(isOn: appState.config.meetingHookEnabled) { newValue in
                         controller.updateConfig { $0.meetingHookEnabled = newValue }
                     }
                 }
                 Divider().background(MuesliTheme.surfaceBorder)
-                settingsRow("Hook script") {
+                settingsRow("Hook script", controlWidth: meetingControlWidth) {
                     meetingHookPathPicker
                 }
                 Divider().background(MuesliTheme.surfaceBorder)
-                settingsRow("Timeout") {
-                    Stepper(
-                        value: Binding(
-                            get: { max(appState.config.meetingHookTimeoutSeconds, 1) },
-                            set: { newValue in
-                                controller.updateConfig { $0.meetingHookTimeoutSeconds = max(newValue, 1) }
-                            }
-                        ),
-                        in: 1...600
-                    ) {
-                        Text("\(max(appState.config.meetingHookTimeoutSeconds, 1)) seconds")
-                            .font(MuesliTheme.body())
-                            .foregroundStyle(MuesliTheme.textPrimary)
-                    }
+                settingsRow("Timeout", controlWidth: meetingControlWidth) {
+                    meetingHookTimeoutControl
                 }
-                Text("Advanced: runs a user-supplied executable after each completed meeting. The executable receives JSON on stdin and must already be runnable on its own.")
-                    .font(MuesliTheme.caption())
-                    .foregroundStyle(MuesliTheme.textTertiary)
-                    .padding(.horizontal, MuesliTheme.spacing16)
+                settingsDescription("Runs a user-supplied executable after each completed meeting. The executable receives JSON on stdin and must already be runnable on its own.")
             }
+            .padding(.top, MuesliTheme.spacing8)
         }
         .onAppear {
             controller.refreshAvailableEventKitCalendars()
@@ -1815,7 +1816,7 @@ struct SettingsView: View {
     }
 
     private var calendarSourcesControl: some View {
-        VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
             Text("Calendar sources are listed first, with their calendars underneath. Disabled calendars are hidden from Muesli — no notifications, no Coming Up, no meeting detection.")
                 .font(MuesliTheme.caption())
                 .foregroundStyle(MuesliTheme.textTertiary)
@@ -2007,6 +2008,7 @@ struct SettingsView: View {
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
                     .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
             )
+            .frame(maxWidth: .infinity)
             .help(appState.config.meetingHookPath.isEmpty ? "No hook script selected" : appState.config.meetingHookPath)
 
             if !appState.config.meetingHookPath.isEmpty {
@@ -2045,6 +2047,26 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .help("Choose hook script")
         }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var meetingHookTimeoutControl: some View {
+        Stepper(
+            value: Binding(
+                get: { max(appState.config.meetingHookTimeoutSeconds, 1) },
+                set: { newValue in
+                    controller.updateConfig { $0.meetingHookTimeoutSeconds = max(newValue, 1) }
+                }
+            ),
+            in: 1...600
+        ) {
+            Text("\(max(appState.config.meetingHookTimeoutSeconds, 1)) seconds")
+                .font(MuesliTheme.body())
+                .foregroundStyle(MuesliTheme.textPrimary)
+                .monospacedDigit()
+                .frame(minWidth: 92, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     @ViewBuilder

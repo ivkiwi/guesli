@@ -896,6 +896,7 @@ struct AppConfig: Codable {
     var whisperModel: String = BackendOption.whisper.model
     var idleTimeout: Double = 120
     var autoRecordMeetings: Bool = false
+    var upcomingMeetingsDayCount: Int = UpcomingMeetingsWindow.defaultDayCount
     var showScheduledMeetingNotifications: Bool = true
     var scheduledMeetingNotificationLeadTime: ScheduledMeetingNotificationLeadTime = .atStart
     var showMeetingDetectionNotification: Bool = true
@@ -948,6 +949,7 @@ struct AppConfig: Codable {
     var maraudersMapAudioClip: String = "bbc_world_news"
     var maraudersMapCustomAudioPath: String?
     var hiddenCalendarEventIDs: [String] = []
+    var hiddenCalendarEventSourceHints: [String: String] = [:]
     var disabledCalendarIDs: [String] = []
     var enablePostProcessor: Bool = false
     var activePostProcessorId: String = PostProcessorOption.defaultOption.id
@@ -986,6 +988,7 @@ struct AppConfig: Codable {
         case whisperModel = "whisper_model"
         case idleTimeout = "idle_timeout"
         case autoRecordMeetings = "auto_record_meetings"
+        case upcomingMeetingsDayCount = "upcoming_meetings_day_count"
         case showScheduledMeetingNotifications = "show_scheduled_meeting_notifications"
         case scheduledMeetingNotificationLeadTime = "scheduled_meeting_notification_lead_time"
         case showMeetingDetectionNotification = "show_meeting_detection_notification"
@@ -1036,6 +1039,7 @@ struct AppConfig: Codable {
         case maraudersMapAudioClip = "marauders_map_audio_clip"
         case maraudersMapCustomAudioPath = "marauders_map_custom_audio_path"
         case hiddenCalendarEventIDs = "hidden_calendar_event_ids"
+        case hiddenCalendarEventSourceHints = "hidden_calendar_event_source_hints"
         case disabledCalendarIDs = "disabled_calendar_ids"
         case enablePostProcessor = "enable_post_processor"
         case activePostProcessorId = "active_post_processor_id"
@@ -1083,6 +1087,13 @@ struct AppConfig: Codable {
         whisperModel = (try? c.decode(String.self, forKey: .whisperModel)) ?? defaults.whisperModel
         idleTimeout = (try? c.decode(Double.self, forKey: .idleTimeout)) ?? defaults.idleTimeout
         autoRecordMeetings = (try? c.decode(Bool.self, forKey: .autoRecordMeetings)) ?? defaults.autoRecordMeetings
+        if c.contains(.upcomingMeetingsDayCount) {
+            upcomingMeetingsDayCount = UpcomingMeetingsWindow
+                .resolve(dayCount: try? c.decode(Int.self, forKey: .upcomingMeetingsDayCount))
+                .dayCount
+        } else {
+            upcomingMeetingsDayCount = UpcomingMeetingsWindow.threeDays.dayCount
+        }
         let decodedShowMeetingDetectionNotification = try? c.decode(Bool.self, forKey: .showMeetingDetectionNotification)
         showScheduledMeetingNotifications =
             (try? c.decode(Bool.self, forKey: .showScheduledMeetingNotifications))
@@ -1158,6 +1169,10 @@ struct AppConfig: Codable {
         maraudersMapAudioClip = (try? c.decode(String.self, forKey: .maraudersMapAudioClip)) ?? defaults.maraudersMapAudioClip
         maraudersMapCustomAudioPath = try? c.decode(String.self, forKey: .maraudersMapCustomAudioPath)
         hiddenCalendarEventIDs = (try? c.decode([String].self, forKey: .hiddenCalendarEventIDs)) ?? defaults.hiddenCalendarEventIDs
+        hiddenCalendarEventSourceHints = (try? c.decode(
+            [String: String].self,
+            forKey: .hiddenCalendarEventSourceHints
+        )) ?? defaults.hiddenCalendarEventSourceHints
         disabledCalendarIDs = (try? c.decode([String].self, forKey: .disabledCalendarIDs)) ?? defaults.disabledCalendarIDs
         enablePostProcessor = (try? c.decode(Bool.self, forKey: .enablePostProcessor)) ?? defaults.enablePostProcessor
         activePostProcessorId = (try? c.decode(String.self, forKey: .activePostProcessorId)) ?? defaults.activePostProcessorId

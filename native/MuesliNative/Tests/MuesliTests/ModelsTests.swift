@@ -485,6 +485,8 @@ struct AppConfigTests {
         #expect(config.contributionPromptNextMeetingCount == nil)
         #expect(config.contributionGitHubStarClicked == false)
         #expect(config.contributionBuyMeCoffeeClicked == false)
+        #expect(config.upcomingMeetingsDayCount == UpcomingMeetingsWindow.defaultDayCount)
+        #expect(config.hiddenCalendarEventSourceHints.isEmpty)
     }
 
     @Test("JSON encode/decode round-trip")
@@ -530,6 +532,11 @@ struct AppConfigTests {
         config.contributionPromptNextMeetingCount = 75
         config.contributionGitHubStarClicked = true
         config.contributionBuyMeCoffeeClicked = false
+        config.upcomingMeetingsDayCount = UpcomingMeetingsWindow.today.dayCount
+        config.hiddenCalendarEventSourceHints = [
+            "ek-event-1": UnifiedCalendarEvent.CalendarSource.eventKit.rawValue,
+            "google-event-1": UnifiedCalendarEvent.CalendarSource.googleCalendar.rawValue,
+        ]
 
         let data = try JSONEncoder().encode(config)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
@@ -571,6 +578,8 @@ struct AppConfigTests {
         #expect(decoded.contributionPromptNextMeetingCount == 75)
         #expect(decoded.contributionGitHubStarClicked == true)
         #expect(decoded.contributionBuyMeCoffeeClicked == false)
+        #expect(decoded.upcomingMeetingsDayCount == UpcomingMeetingsWindow.today.dayCount)
+        #expect(decoded.hiddenCalendarEventSourceHints == config.hiddenCalendarEventSourceHints)
     }
 
     @Test("JSON coding keys use snake_case")
@@ -632,6 +641,8 @@ struct AppConfigTests {
         #expect(config.hasCompletedOnboarding == false)
         #expect(config.resolvedOnboardingUseCase == .dictation)
         #expect(config.defaultMeetingTemplateID == MeetingTemplates.autoID)
+        #expect(config.upcomingMeetingsDayCount == UpcomingMeetingsWindow.threeDays.dayCount)
+        #expect(config.hiddenCalendarEventSourceHints.isEmpty)
         #expect(config.meetingRecordingSavePolicy == .never)
         #expect(config.showScheduledMeetingNotifications == true)
         #expect(config.showMeetingDetectionNotification == true)

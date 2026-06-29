@@ -1458,6 +1458,19 @@ final class MuesliController: NSObject {
         updateConfig { $0.dictationInputDeviceUID = uid }
     }
 
+    func updateUpcomingMeetingsWindow(dayCount: Int) {
+        let resolvedDayCount = UpcomingMeetingsWindow.resolve(dayCount: dayCount).dayCount
+        guard config.upcomingMeetingsDayCount != resolvedDayCount else { return }
+
+        updateConfig { $0.upcomingMeetingsDayCount = resolvedDayCount }
+        Task {
+            let refreshed = await refreshUpcomingCalendarEvents()
+            guard refreshed else { return }
+            checkUpcomingCalendarNotifications()
+            meetingMonitor.refreshState(trigger: .calendarChanged)
+        }
+    }
+
     func setLaunchAtLogin(_ enabled: Bool) {
         let result = launchAtLoginCoordinator.setEnabled(enabled, config: config)
         if let error = result.error {
@@ -1807,38 +1820,87 @@ final class MuesliController: NSObject {
         }
     }
 
-    func refreshUpcomingCalendarEvents() async {
+    @discardableResult
+    func refreshUpcomingCalendarEvents() async -> Bool {
+        let refreshNow = Date()
+        let refreshStartOfDay = Calendar.current.startOfDay(for: refreshNow)
         let disabledIDs = Set(config.disabledCalendarIDs)
-        var ekEvents = calendarMonitor.upcomingEvents(daysAhead: 7, disabledCalendarIDs: disabledIDs)
+        let dayCount = UpcomingMeetingsWindow.resolve(dayCount: config.upcomingMeetingsDayCount).dayCount
+        var ekEvents = calendarMonitor.upcomingEvents(
+            daysAhead: dayCount,
+            disabledCalendarIDs: disabledIDs,
+            now: refreshNow
+        )
+        var observedEventIDs = Set(ekEvents.map(\.id))
+        var canConfirmMissingGoogleEvents = false
 
         if googleCalAuth.isAuthenticated {
             do {
-                let googleEvents = try await googleCalClient.fetchUpcomingEvents(
-                    daysAhead: 7,
-                    disabledCalendarIDs: disabledIDs
+                let googleResult = try await googleCalClient.fetchUpcomingEvents(
+                    daysAhead: dayCount,
+                    disabledCalendarIDs: disabledIDs,
+                    now: refreshNow
                 )
-                ekEvents = GoogleCalendarClient.mergeEvents(eventKit: ekEvents, google: googleEvents)
+                canConfirmMissingGoogleEvents = googleResult.wasComplete
+                observedEventIDs.formUnion(googleResult.events.map(\.id))
+                ekEvents = GoogleCalendarClient.mergeEvents(eventKit: ekEvents, google: googleResult.events)
             } catch GoogleCalendarAuthError.notAuthenticated {
                 invalidateGoogleCalendarAuth()
                 fputs("[muesli-native] Google Calendar token invalid, signed out\n", stderr)
             } catch GoogleCalendarAuthError.refreshFailed(let message) {
                 fputs("[muesli-native] Google Calendar token refresh failed: \(message)\n", stderr)
+            } catch GoogleCalendarClientError.staleRequest {
+                return false
             } catch {
                 fputs("[muesli-native] Google Calendar fetch failed: \(error)\n", stderr)
             }
         }
 
+        let currentDisabledIDs = Set(config.disabledCalendarIDs)
+        let currentDayCount = UpcomingMeetingsWindow.resolve(dayCount: config.upcomingMeetingsDayCount).dayCount
+        let currentStartOfDay = Calendar.current.startOfDay(for: Date())
+        guard dayCount == currentDayCount,
+              disabledIDs == currentDisabledIDs,
+              refreshStartOfDay == currentStartOfDay else {
+            return false
+        }
+
         appState.upcomingCalendarEvents = ekEvents
 
-        // Prune hidden IDs for events that no longer exist in the calendar
-        let currentEventIDs = Set(ekEvents.map(\.id))
-        let staleIDs = appState.hiddenCalendarEventIDs.subtracting(currentEventIDs)
+        // Prune hidden IDs only when the widest supported window still cannot see the event.
+        observedEventIDs.formUnion(ekEvents.map(\.id))
+        let sourceHints = config.hiddenCalendarEventSourceHints
+        let canConfirmMissingEventKitEvents = calendarMonitor.canConfirmMissingEvents
+        let canPruneHiddenEvents = disabledIDs.isEmpty
+        let staleIDs = UpcomingMeetingsWindow.staleHiddenEventIDs(
+            hiddenIDs: appState.hiddenCalendarEventIDs,
+            visibleEventIDs: observedEventIDs,
+            dayCount: dayCount,
+            canConfirmMissingEvents: canPruneHiddenEvents,
+            canConfirmMissingEventID: { eventID in
+                guard canPruneHiddenEvents else { return false }
+                switch sourceHints[eventID].flatMap(UnifiedCalendarEvent.CalendarSource.init(rawValue:)) {
+                case .some(.eventKit):
+                    return canConfirmMissingEventKitEvents
+                case .some(.googleCalendar):
+                    return canConfirmMissingGoogleEvents
+                case .none:
+                    return false
+                }
+            }
+        )
         if !staleIDs.isEmpty {
             appState.hiddenCalendarEventIDs.subtract(staleIDs)
-            updateConfig { $0.hiddenCalendarEventIDs = self.appState.hiddenCalendarEventIDs.sorted() }
+            updateConfig {
+                $0.hiddenCalendarEventIDs = self.appState.hiddenCalendarEventIDs.sorted()
+                $0.hiddenCalendarEventSourceHints = $0.hiddenCalendarEventSourceHints.filter {
+                    !staleIDs.contains($0.key)
+                }
+            }
         }
 
         statusBarController?.updateMenuBarTitle()
+        return true
     }
 
     func startCalendarMonitoring() {
@@ -1849,7 +1911,8 @@ final class MuesliController: NSObject {
             guard let self else { return }
             Task { @MainActor in
                 self.refreshAvailableEventKitCalendars()
-                await self.refreshUpcomingCalendarEvents()
+                let refreshed = await self.refreshUpcomingCalendarEvents()
+                guard refreshed else { return }
                 self.checkUpcomingCalendarNotifications()
                 self.meetingMonitor.refreshState(trigger: .calendarChanged)
             }
@@ -1867,7 +1930,8 @@ final class MuesliController: NSObject {
             Task { @MainActor in
                 self.calendarMonitor.start()
                 self.refreshAvailableEventKitCalendars()
-                await self.refreshUpcomingCalendarEvents()
+                let refreshed = await self.refreshUpcomingCalendarEvents()
+                guard refreshed else { return }
                 self.checkUpcomingCalendarNotifications()
                 self.meetingMonitor.refreshState(trigger: .calendarChanged)
             }
@@ -1876,7 +1940,8 @@ final class MuesliController: NSObject {
         // Run first cycle immediately
         Task { @MainActor in
             self.refreshAvailableEventKitCalendars()
-            await self.refreshUpcomingCalendarEvents()
+            let refreshed = await self.refreshUpcomingCalendarEvents()
+            guard refreshed else { return }
             self.checkUpcomingCalendarNotifications()
             self.meetingMonitor.refreshState(trigger: .calendarChanged)
         }
@@ -3560,9 +3625,12 @@ final class MuesliController: NSObject {
         syncAppState()
     }
 
-    func hideCalendarEvent(_ eventID: String) {
-        appState.hiddenCalendarEventIDs.insert(eventID)
-        updateConfig { $0.hiddenCalendarEventIDs = self.appState.hiddenCalendarEventIDs.sorted() }
+    func hideCalendarEvent(_ event: UnifiedCalendarEvent) {
+        appState.hiddenCalendarEventIDs.insert(event.id)
+        updateConfig {
+            $0.hiddenCalendarEventIDs = self.appState.hiddenCalendarEventIDs.sorted()
+            $0.hiddenCalendarEventSourceHints[event.id] = event.source.rawValue
+        }
         statusBarController?.refresh()
     }
 
@@ -3871,6 +3939,16 @@ final class MuesliController: NSObject {
     }
 
     @objc func startMeetingFromCalendarMenuItem(_ sender: NSMenuItem) {
+        if let payload = sender.representedObject as? CalendarMenuMeetingPayload {
+            startForegroundMeetingRecording(
+                title: payload.title,
+                calendarEventID: payload.calendarEventID,
+                endDate: payload.endDate,
+                autoStopSource: payload.autoStopSource
+            )
+            return
+        }
+
         guard let title = sender.representedObject as? String else { return }
         startForegroundMeetingRecording(title: title)
     }

@@ -499,7 +499,7 @@ struct MeetingsView: View {
     private func hideEventButton(_ event: UnifiedCalendarEvent) -> some View {
         Button {
             withAnimation(.easeOut(duration: 0.2)) {
-                controller.hideCalendarEvent(event.id)
+                controller.hideCalendarEvent(event)
             }
         } label: {
             Image(systemName: "xmark")
