@@ -224,6 +224,7 @@ enum GigaAMV3ModelStore {
 actor GigaAMV3Transcriber {
     private var recognizer: GigaAMRecognizer?
     private var isLoading = false
+    private var activeDownloadTask: Task<URL, Error>?
     private var loadWaiters: [CheckedContinuation<Void, Error>] = []
     private var loadGeneration = 0
 
@@ -252,7 +253,11 @@ actor GigaAMV3Transcriber {
         do {
             let directory: URL
             if allowDownload {
-                directory = try await GigaAMV3ModelStore.downloadIfNeeded(progress: progress)
+                let downloadTask = Task {
+                    try await GigaAMV3ModelStore.downloadIfNeeded(progress: progress)
+                }
+                activeDownloadTask = downloadTask
+                directory = try await downloadTask.value
             } else {
                 guard GigaAMV3ModelStore.isAvailableLocally() else {
                     throw NSError(domain: "GigaAMV3Transcriber", code: 2, userInfo: [
@@ -267,6 +272,7 @@ actor GigaAMV3Transcriber {
                     NSLocalizedDescriptionKey: "GigaAM v3 load was cancelled.",
                 ])
             }
+            activeDownloadTask = nil
             let loadedRecognizer = try GigaAMRecognizer(configuration: .init(modelDirectory: directory))
             guard generation == loadGeneration else {
                 throw NSError(domain: "GigaAMV3Transcriber", code: 3, userInfo: [
@@ -279,6 +285,7 @@ actor GigaAMV3Transcriber {
             progress?(1.0, nil)
         } catch {
             if generation == loadGeneration {
+                activeDownloadTask = nil
                 isLoading = false
                 completeLoadWaiters(throwing: error)
             }
@@ -307,6 +314,8 @@ actor GigaAMV3Transcriber {
 
     func shutdown() {
         loadGeneration += 1
+        activeDownloadTask?.cancel()
+        activeDownloadTask = nil
         recognizer = nil
         isLoading = false
         completeLoadWaiters(throwing: NSError(domain: "GigaAMV3Transcriber", code: 1, userInfo: [

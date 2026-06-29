@@ -4427,6 +4427,14 @@ final class MuesliController: NSObject {
             return
         }
 
+        guard pendingMeetingJoinRecording == nil else {
+            presentErrorAlert(
+                title: "Already waiting for a meeting",
+                message: "Muesli is already waiting for a meeting to start before recording."
+            )
+            return
+        }
+
         guard let request = PendingMeetingJoinRecordingPolicy.Request(meetingURL: meetingURL) else {
             presentErrorAlert(
                 title: "Meeting link not recognized",
