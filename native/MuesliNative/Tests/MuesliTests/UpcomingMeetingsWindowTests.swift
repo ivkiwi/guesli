@@ -23,13 +23,13 @@ struct UpcomingMeetingsWindowTests {
         #expect(UpcomingMeetingsWindow.endDate(from: now, calendar: calendar, dayCount: 3) == threeDayEnd)
     }
 
-    @Test("invalid day counts resolve to three days")
+    @Test("invalid day counts resolve to today")
     func invalidDayCountsResolveToDefault() throws {
         let now = try date(year: 2026, month: 4, day: 10, hour: 9)
-        let defaultEnd = try date(year: 2026, month: 4, day: 13, hour: 0)
+        let defaultEnd = try date(year: 2026, month: 4, day: 11, hour: 0)
 
-        #expect(UpcomingMeetingsWindow.resolve(dayCount: nil) == .threeDays)
-        #expect(UpcomingMeetingsWindow.resolve(dayCount: 7) == .threeDays)
+        #expect(UpcomingMeetingsWindow.resolve(dayCount: nil) == .today)
+        #expect(UpcomingMeetingsWindow.resolve(dayCount: 7) == .today)
         #expect(UpcomingMeetingsWindow.endDate(from: now, calendar: calendar, dayCount: 7) == defaultEnd)
     }
 
@@ -65,7 +65,7 @@ struct UpcomingMeetingsWindowTests {
         let staleIDs = UpcomingMeetingsWindow.staleHiddenEventIDs(
             hiddenIDs: ["today", "deleted"],
             visibleEventIDs: ["today"],
-            dayCount: UpcomingMeetingsWindow.defaultDayCount
+            dayCount: UpcomingMeetingsWindow.threeDays.dayCount
         )
 
         #expect(staleIDs == ["deleted"])
@@ -76,7 +76,7 @@ struct UpcomingMeetingsWindowTests {
         let staleIDs = UpcomingMeetingsWindow.staleHiddenEventIDs(
             hiddenIDs: ["google-event"],
             visibleEventIDs: [],
-            dayCount: UpcomingMeetingsWindow.defaultDayCount,
+            dayCount: UpcomingMeetingsWindow.threeDays.dayCount,
             canConfirmMissingEvents: false
         )
 
@@ -88,7 +88,7 @@ struct UpcomingMeetingsWindowTests {
         let staleIDs = UpcomingMeetingsWindow.staleHiddenEventIDs(
             hiddenIDs: ["legacy-hidden"],
             visibleEventIDs: [],
-            dayCount: UpcomingMeetingsWindow.defaultDayCount,
+            dayCount: UpcomingMeetingsWindow.threeDays.dayCount,
             canConfirmMissingEvents: true,
             canConfirmMissingEventID: { _ in false }
         )

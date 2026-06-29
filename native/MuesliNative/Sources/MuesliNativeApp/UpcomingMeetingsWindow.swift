@@ -5,7 +5,7 @@ enum UpcomingMeetingsWindow: Int, CaseIterable, Identifiable {
     case twoDays = 2
     case threeDays = 3
 
-    static let defaultDayCount = UpcomingMeetingsWindow.threeDays.rawValue
+    static let defaultDayCount = UpcomingMeetingsWindow.today.rawValue
 
     static var maxDayCount: Int {
         allCases.map(\.dayCount).max() ?? defaultDayCount
@@ -27,7 +27,7 @@ enum UpcomingMeetingsWindow: Int, CaseIterable, Identifiable {
 
     static func resolve(dayCount: Int?) -> UpcomingMeetingsWindow {
         guard let dayCount, let window = UpcomingMeetingsWindow(rawValue: dayCount) else {
-            return .threeDays
+            return .today
         }
         return window
     }
