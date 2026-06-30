@@ -781,7 +781,7 @@ struct MeetingDetailView: View {
            !isEditingTranscript,
            !isSummarizing,
            !isRetranscribing {
-            resumeFollowUpChooser(for: meeting)
+            resumeRecordingButton(for: meeting)
         }
     }
 
@@ -998,22 +998,12 @@ struct MeetingDetailView: View {
         .help(isPaused ? "Resume recording" : "Pause recording")
     }
 
-    /// Chooser shown on a finished meeting when no recording is active: "Resume
-    /// recording" appends to this meeting; "Start a follow-up" is scaffolded for
-    /// a later PR.
+    /// Shown on a finished meeting when no recording is active. Appends the next
+    /// recording segment to this existing meeting artifact.
     @ViewBuilder
-    private func resumeFollowUpChooser(for meeting: MeetingRecord) -> some View {
-        Menu {
-            Button {
-                controller.resumeFinishedMeeting(meetingID: meeting.id)
-            } label: {
-                Label("Resume recording", systemImage: "record.circle")
-            }
-            Button {
-            } label: {
-                Label("Start a follow-up (coming soon)", systemImage: "arrow.turn.down.right")
-            }
-            .disabled(true)
+    private func resumeRecordingButton(for meeting: MeetingRecord) -> some View {
+        Button {
+            controller.resumeFinishedMeeting(meetingID: meeting.id)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "record.circle")
@@ -1031,10 +1021,9 @@ struct MeetingDetailView: View {
                     .strokeBorder(MuesliTheme.accent.opacity(0.35), lineWidth: 1)
             )
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .fixedSize()
-        .help("Resume recording or start a follow-up")
+        .help("Resume recording")
     }
 
     private var stopRecordingButton: some View {
