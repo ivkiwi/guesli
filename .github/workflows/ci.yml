@@ -58,7 +58,7 @@ jobs:
   build_release:
     needs: changes
     if: needs.changes.outputs.native_or_packaging == 'true'
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - name: Check out repository
@@ -83,7 +83,7 @@ jobs:
   test_shards:
     needs: changes
     if: needs.changes.outputs.native_or_packaging == 'true'
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -101,7 +101,7 @@ jobs:
   cli-smoke:
     needs: changes
     if: needs.changes.outputs.native_or_packaging == 'true'
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - name: Check out repository
