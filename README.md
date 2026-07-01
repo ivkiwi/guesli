@@ -37,20 +37,24 @@ Start a meeting recording → Muesli captures your mic (You) and system audio (O
 ## Features
 
 - **Native Swift, zero Python** — Pure Swift app with CoreML and Metal backends. No bundled runtimes, no subprocess IPC.
-- **Multiple ASR models** — Parakeet TDT (Neural Engine), Cohere Transcribe 2B (mixed precision CoreML), Whisper Small/Medium/Large Turbo (CoreML/ANE via WhisperKit), and Qwen3 ASR (52 languages, CoreML).
+- **Multiple ASR models** — Parakeet TDT and Nemotron 3.5 (Neural Engine), Cohere Transcribe 2B (mixed precision CoreML), Whisper Tiny/Small/Medium/Large Turbo (CoreML/ANE via WhisperKit), Qwen3 ASR, SenseVoice Small, and Indic ASR.
 - **Hold-to-talk & hands-free** — Hold hotkey for quick dictation, or double-tap for sustained recording.
 - **Meeting recording** — Captures mic + system audio (including Bluetooth/AirPods) with a CoreAudio process tap by default and ScreenCaptureKit fallback. System audio from Zoom, Teams, and other call clients stays on the Others side of the transcript.
 - **VAD-driven chunk rotation** — Silero VAD detects natural speech boundaries in real-time, splitting mic audio at pauses instead of fixed intervals. No mid-sentence cuts.
 - **Speaker diarization** — Identifies individual speakers in system audio (Speaker 1, Speaker 2, etc.) using FluidAudio's pyannote-based CoreML diarization model.
 - **Camera-based meeting detection** — Detects when your webcam + mic activate in a recognized meeting app (Zoom, Chrome, Teams, FaceTime, Slack, WhatsApp). Camera alone (e.g. Photo Booth) won't trigger false positives.
 - **Join & Record** — Extracts meeting URLs from calendar events (Zoom, Google Meet, Teams, Webex, Chime, FaceTime). Split-button notification: "Join & Record" opens the meeting + starts recording, "Join Only" opens without recording, "Record Only" starts recording without joining. Platform icons (Zoom, Meet) in the notification panel.
-- **Google Calendar integration** — Connect your Google Calendar to see upcoming meetings in the Coming Up section and status bar. Event-driven notifications via `EKEventStoreChangedNotification` for instant calendar change detection. Pre-meeting countdowns via Marauder's Map easter egg.
+- **Google Calendar integration** — Connect your Google Calendar to see upcoming meetings in the Coming Up section and status bar. Choose whether Muesli watches today, two days, or three days of upcoming events. Event-driven notifications via `EKEventStoreChangedNotification` for instant calendar change detection. Pre-meeting countdowns via Marauder's Map easter egg.
+- **Import Audio** — Import m4a, mp4, wav, or mp3 files for offline transcription, speaker diarization, title generation, summaries, and saved meeting history.
 - **Meeting export** — Export meeting notes or transcripts as PDF (paginated US Letter) or Markdown. Format picker in the save panel, auto-opens the exported file.
 - **Meeting templates** — Built-in and custom templates for meeting notes. Choose a template before or after recording — re-summarize any meeting with a different template.
 - **Dismiss calendar events** — Hide irrelevant events from Coming Up, status bar, and menu bar. Dismissed events are pruned automatically.
+- **iCloud Text Sync & iPhone Bridge** — Privately sync dictation text, meeting transcripts, notes, summaries, and manual notes with Muesli for iPhone through iCloud. Audio recordings are never synced.
 - **Filler word removal** — Automatically strips "uh", "um", "er", "hmm" and verbal disfluencies.
 - **AI meeting notes** — BYOK with OpenAI or OpenRouter, sign in with your ChatGPT Plus/Pro subscription (no API key needed), or use local Ollama models. Auto-generated meeting titles. Re-summarize any meeting.
 - **ChatGPT OAuth** — Sign in with your existing ChatGPT subscription via browser-based OAuth (PKCE). Tokens stored in the app support directory with owner-only file permissions.
+- **Computer Use planner** — Optional voice-driven planner that can execute local app and browser actions from dictated commands with configurable model and timeout settings.
+- **Post-meeting hooks** — Run a user-supplied executable after completed meetings. Hooks receive a JSON payload on stdin and log results in the app support directory.
 - **Personal dictionary** — Add custom words, phrase matches, and replacement pairs. Jaro-Winkler fuzzy matching auto-corrects transcription output.
 - **Model management** — Download, delete, and switch between models from the Models tab. Background downloads that don't block the app.
 - **Configurable hotkeys** — Choose any modifier key (Cmd, Option, Ctrl, Fn, Shift) for dictation.
@@ -216,14 +220,17 @@ Important meeting fields:
 |-------|---------|---------|------|-----------|---------|
 | **Parakeet v3** (recommended) | FluidAudio | CoreML / Neural Engine | ~450 MB | 25 languages | ~0.13s |
 | Parakeet v2 | FluidAudio | CoreML / Neural Engine | ~450 MB | English only | ~0.13s |
-| **Cohere Transcribe 2B** | CoreML | FP16 encoder + INT8 decoder | ~3.8 GB | English | ~1s |
+| **Cohere Transcribe 2B** | CoreML | FP16 encoder + INT8 decoder | ~3.8 GB | 14 languages | ~1s |
+| Nemotron 3.5 Multilingual | FluidInference | CoreML / Neural Engine | ~665 MB | 100+ locales | Streaming |
 | SenseVoice Small | FluidAudio | INT8 CoreML / Neural Engine | ~240 MB | 50+ languages | ~1s |
 | Qwen3 ASR | FluidAudio | CoreML / Neural Engine | ~1.3 GB | 52 languages | ~2-3s |
-| Whisper Small | WhisperKit | CoreML / Neural Engine | ~190 MB | English only | ~1-2s |
+| Indic ASR | CoreML | RNNT | ~618 MB | 7 Indian languages | Experimental |
+| Whisper Tiny English | WhisperKit | CoreML / Neural Engine | ~153 MB | English only | Fastest setup |
+| Whisper Small | WhisperKit | CoreML / Neural Engine | ~250 MB | English only | ~1-2s |
 | Whisper Medium | WhisperKit | CoreML / Neural Engine | ~1.5 GB | English only | ~2-3s |
-| Whisper Large Turbo | WhisperKit | CoreML / Neural Engine | ~600 MB | Multilingual | ~2-4s |
+| Whisper Large Turbo | WhisperKit | CoreML / Neural Engine | ~626 MB | Multilingual | ~2-4s |
 
-Cohere Transcribe is a 2B parameter model (#1 on Open ASR Leaderboard) running in mixed precision — FP16 FastConformer encoder on the Neural Engine with INT8 quantized decoders. Includes VAD-gated silence detection to prevent hallucination. Best for high-accuracy English dictation.
+Cohere Transcribe is a 2B parameter model (#1 on Open ASR Leaderboard) running in mixed precision — FP16 FastConformer encoder on the Neural Engine with INT8 quantized decoders. Includes VAD-gated silence detection to prevent hallucination. Best for high-accuracy multilingual dictation.
 
 Meeting echo cancellation uses the bundled LocalVQE `localvqe-v1.2-1.3M-f32.gguf` model by default, so users do not need to download an AEC model before their first meeting transcription. DTLN remains available as the fallback AEC path.
 
@@ -251,8 +258,9 @@ Muesli needs these macOS permissions (guided during onboarding):
 | Component | Technology |
 |---|---|
 | App | Swift, AppKit, SwiftUI |
-| Primary ASR | [FluidAudio](https://github.com/FluidInference/FluidAudio) (Parakeet TDT, SenseVoice Small, and Qwen3 ASR on CoreML/ANE) |
+| Primary ASR | [FluidAudio](https://github.com/FluidInference/FluidAudio) and FluidInference models (Parakeet TDT, Nemotron 3.5, SenseVoice Small, and Qwen3 ASR on CoreML/ANE) |
 | Cohere ASR | [Cohere Transcribe](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026) (FP16 encoder + INT8 decoder on CoreML) |
+| Indic ASR | AI4Bharat IndicConformer RNNT CoreML backend |
 | Whisper ASR | [WhisperKit](https://github.com/argmaxinc/WhisperKit) (CoreML/ANE) |
 | Voice activity | Silero VAD via FluidAudio (streaming, event-driven) |
 | Speaker diarization | pyannote via FluidAudio (CoreML on ANE) |
@@ -260,6 +268,8 @@ Muesli needs these macOS permissions (guided during onboarding):
 | System audio | CoreAudio process tap by default; ScreenCaptureKit (`SCStream`) fallback |
 | Meeting notes | OpenAI / OpenRouter (BYOK), ChatGPT subscription (OAuth), or Ollama |
 | Calendar | Google Calendar API (OAuth 2.0) |
+| Sync | CloudKit private database for text-only iCloud sync |
+| Automation | Computer Use planner and post-meeting executable hooks |
 | Export | PDF (NSPrintOperation, paginated US Letter) + Markdown |
 | Word correction | Jaro-Winkler similarity (native Swift) |
 | Storage | SQLite (WAL mode) |
@@ -279,7 +289,7 @@ swift test --package-path native/MuesliNative
 ./scripts/test_packaged_cli.sh
 ```
 
-684 tests covering model configuration, custom word and phrase matching, filler removal, transcription routing, data persistence, CLI contract/path-resolution logic, speaker diarization alignment, token consolidation, camera-based meeting detection, CoreAudio system capture, ChatGPT OAuth logic, Ollama summaries, update-flow policy, launch at login, paste/clipboard safety, meeting export, meeting navigation, and Google Calendar URL extraction.
+1,148 tests covering model configuration, custom word and phrase matching, filler removal, transcription routing, data persistence, CLI contract/path-resolution logic, speaker diarization alignment, token consolidation, camera-based meeting detection, CoreAudio system capture, ChatGPT OAuth logic, Ollama summaries, update-flow policy, launch at login, paste/clipboard safety, meeting export, meeting navigation, upcoming-meeting window behavior, and Google Calendar URL extraction.
 
 Current test scope:
 
@@ -321,6 +331,7 @@ Muesli has been possible because of the generosity of companies such as:
 - [NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) — FastConformer TDT speech recognition model
 - [Cohere Transcribe](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026) — 2B parameter autoregressive ASR (#1 Open ASR Leaderboard)
 - [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) — Multilingual speech recognition (52 languages)
+- [AI4Bharat IndicASR](https://huggingface.co/ai4bharat/indic-conformer-600m-multilingual) — IndicConformer multilingual ASR model for Indian languages
 - [pyannote](https://github.com/pyannote/pyannote-audio) — Speaker diarization (via FluidAudio CoreML conversion)
 
 ---
