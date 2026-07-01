@@ -36,15 +36,15 @@ jobs:
           BUNDLE_VERSION="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
           SAFE_VERSION="${VERSION//[^A-Za-z0-9._-]/-}"
           TAG_NAME="beta-${SAFE_VERSION}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          RELEASE_TITLE="Muesli Beta ${VERSION}"
+          RELEASE_TITLE="Guesli Beta ${VERSION}"
           PRERELEASE="true"
-          RELEASE_NOTES=$'Trusted-tester build for Muesli.\n\nThis build is ad-hoc signed and unnotarized. Testers should move the app to /Applications and may need to use System Settings > Privacy & Security > Open Anyway on first launch.'
+          RELEASE_NOTES=$'Russian-focused Guesli build: Muesli fork with telemetry removed and Google Meet speaker bridge included.\n\nThis build is ad-hoc signed and unnotarized. Testers should move the app to /Applications and may need to use System Settings > Privacy & Security > Open Anyway on first launch.'
           ASSET_SUFFIX="-adhoc-unnotarized"
 
-          APP_DIR="dist/Muesli.app"
-          APP_ZIP="dist/Muesli-${SAFE_VERSION}${ASSET_SUFFIX}.zip"
-          DMG_PATH="dist/Muesli-${SAFE_VERSION}${ASSET_SUFFIX}.dmg"
-          EXTENSION_ZIP="dist/Muesli-Meet-Speaker-Bridge-${SAFE_VERSION}.zip"
+          APP_DIR="dist/Guesli.app"
+          APP_ZIP="dist/Guesli-${SAFE_VERSION}${ASSET_SUFFIX}.zip"
+          DMG_PATH="dist/Guesli-${SAFE_VERSION}${ASSET_SUFFIX}.dmg"
+          EXTENSION_ZIP="dist/Guesli-Meet-Speaker-Bridge-${SAFE_VERSION}.zip"
 
           {
             echo "version=$VERSION"
@@ -78,6 +78,13 @@ jobs:
           MUESLI_BUILD_VERSION: ${{ steps.meta.outputs.version }}
           MUESLI_BUNDLE_VERSION: ${{ steps.meta.outputs.bundle_version }}
           MUESLI_SHORT_VERSION: ${{ steps.meta.outputs.version }}
+          MUESLI_APP_NAME: Guesli
+          MUESLI_DISPLAY_NAME: Guesli
+          MUESLI_APP_BUNDLE_NAME: Guesli.app
+          MUESLI_EXECUTABLE_NAME: Guesli
+          MUESLI_SUPPORT_DIR_NAME: Guesli
+          MUESLI_BUNDLE_ID: com.ivkiwi.guesli
+          MUESLI_SPARKLE_FEED_URL: ""
           MUESLI_SKIP_SIGN: "1"
           MUESLI_SWIFTPM_SCRATCH_PATH: ${{ runner.temp }}/muesli-spm
         run: ./scripts/build_native_app.sh release
@@ -93,7 +100,7 @@ jobs:
           STAGING="$(mktemp -d)"
           cp -R "${{ steps.meta.outputs.app_dir }}" "$STAGING/"
           ln -s /Applications "$STAGING/Applications"
-          hdiutil create -volname "Muesli" -srcfolder "$STAGING" -ov -format UDZO "${{ steps.meta.outputs.dmg_path }}"
+          hdiutil create -volname "Guesli" -srcfolder "$STAGING" -ov -format UDZO "${{ steps.meta.outputs.dmg_path }}"
           rm -rf "$STAGING"
 
       - name: Package Meet speaker extension
@@ -109,7 +116,7 @@ jobs:
       - name: Upload app artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Muesli-macos
+          name: Guesli-macos
           path: |
             ${{ steps.meta.outputs.dmg_path }}
             ${{ steps.meta.outputs.app_zip }}
@@ -119,7 +126,7 @@ jobs:
         if: hashFiles('browser-extension/muesli-meet-speaker/content.js') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: Muesli-Meet-Speaker-Bridge
+          name: Guesli-Meet-Speaker-Bridge
           path: |
             ${{ steps.meta.outputs.extension_zip }}
           compression-level: 0
