@@ -94,16 +94,28 @@ jobs:
       - name: Package Meet speaker extension
         run: |
           EXTENSION_ZIP="${{ steps.meta.outputs.extension_zip }}"
-          mkdir -p "$(dirname "$EXTENSION_ZIP")"
-          /usr/bin/ditto -c -k --keepParent browser-extension/muesli-meet-speaker "$EXTENSION_ZIP"
+          if [[ -d browser-extension/muesli-meet-speaker ]]; then
+            mkdir -p "$(dirname "$EXTENSION_ZIP")"
+            /usr/bin/ditto -c -k --keepParent browser-extension/muesli-meet-speaker "$EXTENSION_ZIP"
+          else
+            echo "Meet speaker extension is not present on this ref; skipping extension package."
+          fi
 
-      - name: Upload workflow artifact
+      - name: Upload app artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Muesli-macos
           path: |
             ${{ steps.meta.outputs.dmg_path }}
             ${{ steps.meta.outputs.app_zip }}
+          compression-level: 0
+
+      - name: Upload Meet speaker extension artifact
+        if: hashFiles('browser-extension/muesli-meet-speaker/content.js') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Muesli-Meet-Speaker-Bridge
+          path: |
             ${{ steps.meta.outputs.extension_zip }}
           compression-level: 0
 
@@ -133,4 +145,8 @@ jobs:
             fi
             gh release create "${GH_ARGS[@]}"
           fi
-          gh release upload "$TAG_NAME" "$DMG" "$APP_ZIP" "$EXTENSION_ZIP" --clobber
+          ASSETS=("$DMG" "$APP_ZIP")
+          if [[ -f "$EXTENSION_ZIP" ]]; then
+            ASSETS+=("$EXTENSION_ZIP")
+          fi
+          gh release upload "$TAG_NAME" "${ASSETS[@]}" --clobber
