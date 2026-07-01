@@ -308,8 +308,6 @@ Muesli has been possible because of the generosity of companies such as:
   &nbsp;&nbsp;&nbsp;
   <a href="https://openai.com/codex/"><img src="assets/OpenAI_Logo.svg.png" alt="OpenAI Codex" height="44" /></a>
   &nbsp;&nbsp;&nbsp;
-  <a href="https://telemetrydeck.com"><img src="assets/sponsors/telemetrydeck.svg" alt="TelemetryDeck" height="44" /></a>
-  &nbsp;&nbsp;&nbsp;
   <a href="https://www.coderabbit.ai"><img src="assets/sponsors/coderabbit.svg" alt="CodeRabbit" height="44" /></a>
 </p>
 

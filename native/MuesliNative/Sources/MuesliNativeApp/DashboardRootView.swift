@@ -40,12 +40,6 @@ struct DashboardRootView: View {
         } message: {
             Text(appState.contributionMilestonePrompt?.message ?? "")
         }
-        .onAppear {
-            controller.recordContributionMilestonePromptSeen()
-        }
-        .onChange(of: appState.contributionMilestonePrompt?.id) { _, _ in
-            controller.recordContributionMilestonePromptSeen()
-        }
     }
 
     @ViewBuilder
