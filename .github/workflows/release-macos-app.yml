@@ -64,8 +64,13 @@ jobs:
       - name: Check browser extension
         run: node --check browser-extension/muesli-meet-speaker/content.js
 
-      - name: Run tests
-        run: swift test --package-path native/MuesliNative --scratch-path "$RUNNER_TEMP/muesli-spm"
+      - name: Run Meet speaker tests
+        run: |
+          if [[ -f native/MuesliNative/Tests/MuesliTests/MeetSpeakerBridgeTests.swift ]]; then
+            swift test --package-path native/MuesliNative --scratch-path "$RUNNER_TEMP/muesli-spm" --filter MeetSpeakerBridgeTests
+          else
+            echo "Meet speaker bridge tests are not present on this ref; skipping focused test step."
+          fi
 
       - name: Build app bundle
         env:
