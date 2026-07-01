@@ -4622,6 +4622,8 @@ final class MuesliController: NSObject {
         ) {
             meetingMonitor.markRecordingStarted(candidate)
         } else {
+            statusBarController?.setStatus("Idle")
+            statusBarController?.refresh()
             meetingMonitor.refreshState()
         }
         syncMeetingDetectionMonitor()
