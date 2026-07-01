@@ -87,6 +87,7 @@ struct BackendCoverageTests {
         #expect(backendCounts["whisper"]! >= 1, "Whisper should have at least 1 model")
         #expect(backendCounts["sensevoice"]! >= 1, "SenseVoice should have at least 1 model")
         #expect(backendCounts["nemotron35"]! == 1, "Nemotron 3.5 should be the only Nemotron backend")
+        #expect(backendCounts["gigaam_v3"]! == 1, "GigaAM v3 should have exactly 1 model")
     }
 
     @Test("size labels are human-readable")

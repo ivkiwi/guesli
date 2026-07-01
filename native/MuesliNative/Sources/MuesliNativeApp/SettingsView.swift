@@ -11,6 +11,13 @@ private struct MeetingDetectionAppOption: Identifiable {
     var id: String { bundleID }
 }
 
+private struct MeetingBrowserOpenOption: Identifiable {
+    let bundleID: String
+    let name: String
+
+    var id: String { bundleID.isEmpty ? "__system_default__" : bundleID }
+}
+
 private struct DictationMicrophoneOption: Identifiable {
     let uid: String?
     let label: String
@@ -117,6 +124,14 @@ struct SettingsView: View {
         MeetingDetectionAppOption(bundleID: "com.apple.FaceTime", name: "FaceTime", icon: "video.fill"),
         MeetingDetectionAppOption(bundleID: "net.whatsapp.WhatsApp", name: "WhatsApp", icon: "phone.fill"),
     ]
+    private let allMeetingBrowserOpenOptions: [MeetingBrowserOpenOption] = [
+        MeetingBrowserOpenOption(bundleID: "", name: "System Default"),
+        MeetingBrowserOpenOption(bundleID: "com.brave.Browser", name: "Brave"),
+        MeetingBrowserOpenOption(bundleID: "com.google.Chrome", name: "Chrome"),
+        MeetingBrowserOpenOption(bundleID: "com.apple.Safari", name: "Safari"),
+        MeetingBrowserOpenOption(bundleID: "com.microsoft.edgemac", name: "Edge"),
+        MeetingBrowserOpenOption(bundleID: "company.thebrowser.Browser", name: "Arc"),
+    ]
 
     private var dictationBackendOptions: [BackendOption] {
         backendOptions(including: appState.selectedBackend)
@@ -131,6 +146,17 @@ struct SettingsView: View {
             return appState.selectedMeetingTranscriptionBackend.label
         }
         return meetingBackendOptions.first?.label ?? "No downloaded models"
+    }
+
+    private var meetingBrowserOpenOptions: [MeetingBrowserOpenOption] {
+        allMeetingBrowserOpenOptions.filter { option in
+            option.bundleID.isEmpty || NSWorkspace.shared.urlForApplication(withBundleIdentifier: option.bundleID) != nil
+        }
+    }
+
+    private var selectedMeetingBrowserLabel: String {
+        let bundleID = appState.config.preferredMeetingBrowserBundleID
+        return meetingBrowserOpenOptions.first { $0.bundleID == bundleID }?.name ?? "System Default"
     }
 
     private var selectedCohereLanguage: CohereTranscribeLanguage {
@@ -865,6 +891,18 @@ struct SettingsView: View {
             }
 
             settingsSection("Meeting Notifications") {
+                settingsRow("Open meeting links") {
+                    settingsMenu(
+                        selection: selectedMeetingBrowserLabel,
+                        options: meetingBrowserOpenOptions.map(\.name)
+                    ) { label in
+                        guard let option = meetingBrowserOpenOptions.first(where: { $0.name == label }) else { return }
+                        controller.updateConfig { $0.preferredMeetingBrowserBundleID = option.bundleID }
+                    }
+                }
+                settingsDescription("System Default keeps macOS/OpenIn routing. Choosing a browser opens meeting links directly there.")
+                Divider().background(MuesliTheme.surfaceBorder)
+
                 settingsRow("Scheduled meetings") {
                     settingsSwitch(isOn: appState.config.showScheduledMeetingNotifications) { newValue in
                         controller.updateConfig { $0.showScheduledMeetingNotifications = newValue }

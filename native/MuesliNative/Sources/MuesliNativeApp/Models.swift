@@ -73,6 +73,15 @@ struct BackendOption: Equatable {
         recommended: false
     )
 
+    static let gigaAMV3Russian = BackendOption(
+        backend: "gigaam_v3",
+        model: "kruatech/gigaam-v3-mlx",
+        label: "GigaAM v3 Russian",
+        sizeLabel: GigaAMV3ModelStore.downloadedModelSizeLabel,
+        description: "Russian-first offline ASR via MLX Swift. Runs locally on Apple Silicon; no Python server or cloud.",
+        recommended: false
+    )
+
     static let canaryQwen = BackendOption(
         backend: "canary",
         model: "phequals/canary-qwen-2.5b-coreml-int8",
@@ -125,12 +134,12 @@ struct BackendOption: Equatable {
     ]
 
     /// Models available for download and use.
-    static let all: [BackendOption] = parakeetFamily + whisperFamily + [.cohereTranscribe, .nemotron35Multilingual] + experimental
+    static let all: [BackendOption] = [.gigaAMV3Russian] + parakeetFamily + whisperFamily + [.cohereTranscribe, .nemotron35Multilingual] + experimental
 
     /// Curated first-run choices shown in onboarding's "Other models" section.
     /// This is a deliberate hand-picked list, not a derived rule. Experimental models
     /// are excluded by default.
-    static let onboarding: [BackendOption] = [.parakeetMultilingual, .whisperTinyEnglish, .whisperSmall, .cohereTranscribe, .nemotron35Multilingual]
+    static let onboarding: [BackendOption] = [.gigaAMV3Russian, .parakeetMultilingual, .whisperTinyEnglish, .whisperSmall, .cohereTranscribe, .nemotron35Multilingual]
 
     /// Models coming soon — shown greyed out in the Models tab.
     static let comingSoon: [BackendOption] = []
@@ -189,6 +198,8 @@ struct BackendOption: Equatable {
             let path = fm.homeDirectoryForCurrentUser
                 .appendingPathComponent(".cache/muesli/models/nemotron35-multilingual-2240ms/encoder.mlmodelc/coremldata.bin")
             return fm.fileExists(atPath: path.path)
+        case "gigaam_v3":
+            return GigaAMV3ModelStore.isAvailableLocally()
         case "canary":
             return CanaryQwenModelStore.isAvailableLocally()
         case "cohere":
@@ -891,6 +902,7 @@ struct AppConfig: Codable {
     var nemotron35Language: String = Nemotron35Language.defaultLanguage.rawValue
     var meetingTranscriptionBackend: String = BackendOption.whisper.backend
     var meetingTranscriptionModel: String = BackendOption.whisper.model
+    var preferredMeetingBrowserBundleID: String = ""
     var meetingSummaryBackend: String = MeetingSummaryBackendOption.chatGPT.backend
     var defaultMeetingTemplateID: String = MeetingTemplates.autoID
     var whisperModel: String = BackendOption.whisper.model
@@ -983,6 +995,7 @@ struct AppConfig: Codable {
         case nemotron35Language = "nemotron35_language"
         case meetingTranscriptionBackend = "meeting_transcription_backend"
         case meetingTranscriptionModel = "meeting_transcription_model"
+        case preferredMeetingBrowserBundleID = "preferred_meeting_browser_bundle_id"
         case meetingSummaryBackend = "meeting_summary_backend"
         case defaultMeetingTemplateID = "default_meeting_template_id"
         case whisperModel = "whisper_model"
@@ -1082,6 +1095,7 @@ struct AppConfig: Codable {
         nemotron35Language = Nemotron35Language.resolvedCode(try? c.decode(String.self, forKey: .nemotron35Language))
         meetingTranscriptionBackend = (try? c.decode(String.self, forKey: .meetingTranscriptionBackend)) ?? sttBackend
         meetingTranscriptionModel = (try? c.decode(String.self, forKey: .meetingTranscriptionModel)) ?? sttModel
+        preferredMeetingBrowserBundleID = (try? c.decode(String.self, forKey: .preferredMeetingBrowserBundleID)) ?? defaults.preferredMeetingBrowserBundleID
         meetingSummaryBackend = (try? c.decode(String.self, forKey: .meetingSummaryBackend)) ?? defaults.meetingSummaryBackend
         defaultMeetingTemplateID = (try? c.decode(String.self, forKey: .defaultMeetingTemplateID)) ?? defaults.defaultMeetingTemplateID
         whisperModel = (try? c.decode(String.self, forKey: .whisperModel)) ?? defaults.whisperModel

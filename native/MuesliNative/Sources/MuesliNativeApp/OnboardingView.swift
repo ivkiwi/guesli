@@ -3,6 +3,78 @@ import ApplicationServices
 import SwiftUI
 import MuesliCore
 
+struct OnboardingInitialDownloadProgressStatusChoice: Equatable {
+    let progress: Double?
+    let status: String
+}
+
+func makeOnboardingAlternativeModels(
+    selectedBackend: BackendOption,
+    onboardingOptions: [BackendOption]
+) -> [BackendOption] {
+    var options = onboardingOptions.filter { $0 != .gigaAMV3Russian && $0 != .parakeetMultilingual }
+    if BackendOption.onboarding.contains(selectedBackend),
+       selectedBackend != .gigaAMV3Russian,
+       selectedBackend != .parakeetMultilingual,
+       !options.contains(selectedBackend) {
+        options.insert(selectedBackend, at: 0)
+    }
+    return options
+}
+
+func onboardingInitialDownloadProgressStatusChoice(
+    backend: BackendOption,
+    alreadyDownloaded: Bool,
+    currentProgress: Double?,
+    currentStatus: String?
+) -> OnboardingInitialDownloadProgressStatusChoice {
+    if alreadyDownloaded {
+        return OnboardingInitialDownloadProgressStatusChoice(
+            progress: nil,
+            status: "Warming up \(backend.label)..."
+        )
+    }
+
+    let initialStatus = onboardingInitialDownloadStatus(for: backend)
+    if backend.backend == BackendOption.gigaAMV3Russian.backend {
+        return OnboardingInitialDownloadProgressStatusChoice(
+            progress: 0.02,
+            status: initialStatus
+        )
+    }
+
+    return OnboardingInitialDownloadProgressStatusChoice(
+        progress: currentProgress ?? 0.02,
+        status: currentStatus ?? initialStatus
+    )
+}
+
+func onboardingNextModelDownloadProgress(
+    backend: BackendOption,
+    currentProgress: Double?,
+    reportedProgress: Double
+) -> Double? {
+    let clampedProgress = min(max(reportedProgress, 0), 1)
+    let currentProgress = currentProgress ?? 0
+    let isZeroReset = clampedProgress <= 0.001 && currentProgress > 0.03
+    guard !isZeroReset else { return nil }
+
+    let nextProgress = max(clampedProgress, 0.02)
+    return backend.backend == BackendOption.gigaAMV3Russian.backend
+        ? nextProgress
+        : max(currentProgress, nextProgress)
+}
+
+func onboardingInitialDownloadStatus(for backend: BackendOption) -> String {
+    let size = backend.sizeLabel
+        .replacingOccurrences(of: "~", with: "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    if !size.isEmpty {
+        return "0 MB of \(size)"
+    }
+    return "Starting \(backend.label) download..."
+}
+
 struct OnboardingView: View {
     let controller: MuesliController
     let appState: AppState
@@ -73,14 +145,11 @@ struct OnboardingView: View {
         orderedSteps.count
     }
 
-    private var onboardingAlternativeModels: [BackendOption] {
-        var options = BackendOption.onboarding.filter { $0 != .parakeetMultilingual }
-        if BackendOption.onboarding.contains(selectedBackend),
-           selectedBackend != .parakeetMultilingual,
-           !options.contains(selectedBackend) {
-            options.insert(selectedBackend, at: 0)
-        }
-        return options
+    private var onboardingAlternativeModelOptions: [BackendOption] {
+        makeOnboardingAlternativeModels(
+            selectedBackend: selectedBackend,
+            onboardingOptions: BackendOption.onboarding
+        )
     }
 
     init(
@@ -622,6 +691,8 @@ struct OnboardingView: View {
 
             ScrollView {
                 VStack(spacing: MuesliTheme.spacing8) {
+                    modelCard(option: .gigaAMV3Russian)
+
                     modelCard(option: .parakeetMultilingual)
 
                     Button {
@@ -641,7 +712,7 @@ struct OnboardingView: View {
                     .padding(.top, MuesliTheme.spacing4)
 
                     if showMoreModels {
-                        ForEach(onboardingAlternativeModels, id: \.model) { option in
+                        ForEach(onboardingAlternativeModelOptions, id: \.model) { option in
                             modelCard(option: option)
                         }
 
@@ -1618,13 +1689,17 @@ struct OnboardingView: View {
         let backend = selectedBackend
         let useCase = selectedUseCase
         let alreadyDownloaded = backend.isDownloaded
+        let initialChoice = onboardingInitialDownloadProgressStatusChoice(
+            backend: backend,
+            alreadyDownloaded: alreadyDownloaded,
+            currentProgress: modelDownloadProgress,
+            currentStatus: modelDownloadStatus
+        )
         modelDownloadBackend = backend
         isModelStillDownloading = true
-        modelDownloadProgress = alreadyDownloaded ? nil : (modelDownloadProgress ?? 0.02)
+        modelDownloadProgress = initialChoice.progress
         isModelPreparingAfterDownload = alreadyDownloaded
-        modelDownloadStatus = alreadyDownloaded
-            ? "Warming up \(backend.label)..."
-            : (modelDownloadStatus ?? initialDownloadStatus(for: backend))
+        modelDownloadStatus = initialChoice.status
         modelDownloadError = nil
         publishModelPreparationStatus(
             title: "Preparing \(backend.label)",
@@ -1717,12 +1792,12 @@ struct OnboardingView: View {
         }
 
         isModelPreparingAfterDownload = false
-        let clampedProgress = min(max(progress, 0), 1)
-        let currentProgress = modelDownloadProgress ?? 0
-        let isZeroReset = clampedProgress <= 0.001 && currentProgress > 0.03
-
-        guard !isZeroReset else { return }
-        modelDownloadProgress = max(currentProgress, max(clampedProgress, 0.02))
+        guard let nextProgress = onboardingNextModelDownloadProgress(
+            backend: backend,
+            currentProgress: modelDownloadProgress,
+            reportedProgress: progress
+        ) else { return }
+        modelDownloadProgress = nextProgress
         modelDownloadStatus = detail
         publishModelPreparationStatus(
             title: "Preparing \(backend.label)",
@@ -1747,16 +1822,6 @@ struct OnboardingView: View {
         modelDownloadStatus = nil
         modelDownloadError = nil
         isModelStillDownloading = false
-    }
-
-    private func initialDownloadStatus(for backend: BackendOption) -> String {
-        let size = backend.sizeLabel
-            .replacingOccurrences(of: "~", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !size.isEmpty {
-            return "0 MB of \(size)"
-        }
-        return "Starting \(backend.label) download..."
     }
 
     private func modelPreparationFailureMessage(for backend: BackendOption) -> String {

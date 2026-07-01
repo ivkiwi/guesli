@@ -24,7 +24,7 @@ struct BackendOptionTests {
 
     @Test("backend field is one of the known backends")
     func knownBackends() {
-        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron35", "canary", "cohere", "sensevoice"]
+        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron35", "gigaam_v3", "canary", "cohere", "sensevoice"]
         for option in BackendOption.all {
             #expect(known.contains(option.backend), "Unknown backend: \(option.backend)")
         }
@@ -53,6 +53,48 @@ struct BackendOptionTests {
         #expect(BackendOption.all.contains(.nemotron35Multilingual))
     }
 
+    @Test("GigaAM v3 uses MLX Russian backend")
+    func gigaAMV3Backend() {
+        #expect(BackendOption.gigaAMV3Russian.backend == "gigaam_v3")
+        #expect(BackendOption.gigaAMV3Russian.model == "kruatech/gigaam-v3-mlx")
+        #expect(BackendOption.gigaAMV3Russian.label.contains("GigaAM v3"))
+        #expect(BackendOption.gigaAMV3Russian.description.contains("Russian"))
+        #expect(BackendOption.gigaAMV3Russian.description.contains("MLX"))
+        #expect(!BackendOption.gigaAMV3Russian.recommended)
+        #expect(BackendOption.all.contains(.gigaAMV3Russian))
+        #expect(BackendOption.all.first == .gigaAMV3Russian)
+        #expect(BackendOption.onboarding.first == .gigaAMV3Russian)
+    }
+
+    @Test("GigaAM v3 detector requires complete model files")
+    func gigaAMV3ModelDirectoryDetection() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("gigaam-v3-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        #expect(!GigaAMV3ModelStore.isCompleteModelDirectory(root, fileManager: fm))
+
+        for file in gigaAMV3RequiredFiles {
+            let url = root.appendingPathComponent(file.path)
+            _ = fm.createFile(atPath: url.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: UInt64(max(file.minimumBytes - 1, 0)))
+            try handle.close()
+        }
+
+        #expect(!GigaAMV3ModelStore.isCompleteModelDirectory(root, fileManager: fm))
+
+        for file in gigaAMV3RequiredFiles {
+            let url = root.appendingPathComponent(file.path)
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: UInt64(file.minimumBytes))
+            try handle.close()
+        }
+
+        #expect(GigaAMV3ModelStore.isCompleteModelDirectory(root, fileManager: fm))
+    }
+
     @Test("whisper alias points to parakeetMultilingual")
     func whisperAlias() {
         #expect(BackendOption.whisper == BackendOption.parakeetMultilingual)
@@ -68,6 +110,7 @@ struct BackendOptionTests {
         #expect(BackendOption.all.contains(.qwen3Asr))
         #expect(BackendOption.all.contains(.canaryQwen))
         #expect(BackendOption.all.contains(.cohereTranscribe))
+        #expect(BackendOption.all.contains(.gigaAMV3Russian))
         #expect(BackendOption.all.contains(.senseVoiceSmall))
         #expect(BackendOption.all.contains(.nemotron35Multilingual))
     }
@@ -90,12 +133,13 @@ struct BackendOptionTests {
         #expect(!BackendOption.experimental.contains(.cohereTranscribe))
     }
 
-    @Test("onboarding offers the conservative models plus Nemotron 3.5")
+    @Test("onboarding offers Russian-first model plus conservative fallbacks")
     func onboardingModelChoices() {
-        #expect(BackendOption.onboarding == [.parakeetMultilingual, .whisperTinyEnglish, .whisperSmall, .cohereTranscribe, .nemotron35Multilingual])
+        #expect(BackendOption.onboarding == [.gigaAMV3Russian, .parakeetMultilingual, .whisperTinyEnglish, .whisperSmall, .cohereTranscribe, .nemotron35Multilingual])
         for option in BackendOption.experimental {
             #expect(!BackendOption.onboarding.contains(option))
         }
+        #expect(BackendOption.onboarding.contains(.gigaAMV3Russian))
         #expect(BackendOption.onboarding.contains(.nemotron35Multilingual))
     }
 
@@ -112,6 +156,17 @@ struct BackendOptionTests {
         #expect(BackendOption.whisperSmall.model == "small.en")
         #expect(BackendOption.whisperMedium.model == "medium.en")
         #expect(BackendOption.whisperLargeTurbo.model.contains("large"))
+    }
+
+    private var gigaAMV3RequiredFiles: [(path: String, minimumBytes: Int64)] {
+        [
+            ("manifest.json", 1_269),
+            ("hann_window.f32.bin", 1_280),
+            ("mel_filterbank_mel_freq.f32.bin", 41_216),
+            ("tokenizer.model", 255_336),
+            ("tokenizer_vocab.json", 16_691),
+            ("weights.fp16.safetensors", 445_105_914),
+        ]
     }
 
     @Test("resolveDownloaded keeps selected downloaded meeting model")
@@ -452,6 +507,7 @@ struct AppConfigTests {
         #expect(config.scheduledMeetingNotificationLeadTime == .atStart)
         #expect(config.showMeetingDetectionNotification == true)
         #expect(config.mutedMeetingDetectionAppBundleIDs.isEmpty)
+        #expect(config.preferredMeetingBrowserBundleID.isEmpty)
         #expect(config.openAIAPIKey.isEmpty)
         #expect(config.openRouterAPIKey.isEmpty)
         #expect(config.ollamaURL == "http://localhost:11434")
@@ -514,6 +570,7 @@ struct AppConfigTests {
         config.scheduledMeetingNotificationLeadTime = .threeMinutes
         config.showMeetingDetectionNotification = false
         config.mutedMeetingDetectionAppBundleIDs = ["com.google.Chrome", "com.tinyspeck.slackmacgap"]
+        config.preferredMeetingBrowserBundleID = "com.brave.Browser"
         config.computerUseHotkey = HotkeyConfig(keyCode: 62, label: "Right Ctrl")
         config.enableComputerUseHotkey = false
         config.enableComputerUsePlanner = false
@@ -558,6 +615,7 @@ struct AppConfigTests {
         #expect(decoded.scheduledMeetingNotificationLeadTime == .threeMinutes)
         #expect(decoded.showMeetingDetectionNotification == false)
         #expect(decoded.mutedMeetingDetectionAppBundleIDs == ["com.google.Chrome", "com.tinyspeck.slackmacgap"])
+        #expect(decoded.preferredMeetingBrowserBundleID == "com.brave.Browser")
         #expect(decoded.meetingTranscriptionBackend == config.meetingTranscriptionBackend)
         #expect(decoded.indicatorAnchor == config.indicatorAnchor)
         #expect(decoded.computerUseHotkey == HotkeyConfig(keyCode: 62, label: "Right Ctrl"))
@@ -613,6 +671,7 @@ struct AppConfigTests {
         #expect(json["show_scheduled_meeting_notifications"] != nil)
         #expect(json["show_meeting_detection_notification"] != nil)
         #expect(json["muted_meeting_detection_app_bundle_ids"] != nil)
+        #expect(json["preferred_meeting_browser_bundle_id"] != nil)
         #expect(json["custom_meeting_templates"] != nil)
         #expect(json["meeting_hook_enabled"] != nil)
         #expect(json["meeting_hook_path"] != nil)
@@ -647,6 +706,7 @@ struct AppConfigTests {
         #expect(config.showScheduledMeetingNotifications == true)
         #expect(config.showMeetingDetectionNotification == true)
         #expect(config.mutedMeetingDetectionAppBundleIDs.isEmpty)
+        #expect(config.preferredMeetingBrowserBundleID.isEmpty)
         #expect(config.customMeetingTemplates.isEmpty)
         #expect(config.computerUseHotkey == .computerUseDefault)
         #expect(config.enableComputerUseHotkey == false)

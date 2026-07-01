@@ -19,11 +19,28 @@
       }
     },
     {
+      "identity" : "gigaam-v3-mlx",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/kruatech/gigaam-v3-mlx.git",
+      "state" : {
+        "revision" : "95389fb5cc076bbe57d6254a20d99f8ea4c178b9"
+      }
+    },
+    {
       "identity" : "llm.swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/obra/LLM.swift.git",
       "state" : {
         "revision" : "f1e1e11982dbc59662be191b8bed408dfb48e9df"
+      }
+    },
+    {
+      "identity" : "mlx-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ml-explore/mlx-swift",
+      "state" : {
+        "branch" : "main",
+        "revision" : "e23ae6b2cf96737bbd31a34ed304123162f8c409"
       }
     },
     {
@@ -51,6 +68,15 @@
       "state" : {
         "revision" : "b601256eab081c0f92f059e12818ac1d4f178ff7",
         "version" : "1.3.0"
+      }
+    },
+    {
+      "identity" : "swift-numerics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-numerics",
+      "state" : {
+        "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+        "version" : "1.1.1"
       }
     },
     {

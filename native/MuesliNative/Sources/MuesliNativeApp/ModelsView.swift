@@ -46,6 +46,8 @@ struct ModelsView: View {
                     .font(MuesliTheme.body())
                     .foregroundStyle(MuesliTheme.textSecondary)
 
+                modelCard(option: .gigaAMV3Russian)
+
                 familyCard(
                     title: "Parakeet Family",
                     subtitle: "NVIDIA speech models for fast everyday dictation.",
@@ -572,6 +574,7 @@ struct ModelsView: View {
         case "fluidaudio": return "nvidia-logo"
         case "whisper": return "openai-logo"
         case "cohere": return "cohere-logo"
+        case "gigaam_v3": return nil
         case "qwen": return "qwen-logo"
         case "nemotron35": return "nvidia-logo"
         case "canary": return "qwen-logo"
@@ -1043,11 +1046,16 @@ struct ModelsView: View {
     }
 
     private func deleteModel(_ option: BackendOption) {
+        let fallback = downloadedModels
+            .compactMap { model in BackendOption.all.first(where: { $0.model == model && $0 != option }) }
+            .first ?? .parakeetMultilingual
+        let fallbackIsDownloaded = downloadedModels.contains(fallback.model)
+
         if appState.selectedBackend == option {
-            let fallback = downloadedModels
-                .compactMap { model in BackendOption.all.first(where: { $0.model == model && $0 != option }) }
-                .first ?? .parakeetMultilingual
             controller.selectBackend(fallback)
+        }
+        if appState.selectedMeetingTranscriptionBackend == option {
+            controller.selectMeetingTranscriptionBackend(fallback, requireDownloaded: fallbackIsDownloaded)
         }
         // Remove cached model files
         Task {
@@ -1075,6 +1083,8 @@ struct ModelsView: View {
             try removeItemIfPresent(at: CanaryQwenModelStore.cacheDirectory(), fileManager: fm)
         case "cohere":
             try removeItemIfPresent(at: CohereTranscribeModelStore.cacheDirectory(), fileManager: fm)
+        case "gigaam_v3":
+            try GigaAMV3ModelStore.deleteModelFiles(fileManager: fm)
         case "sensevoice":
             SenseVoiceTranscriber.deleteModelFiles(fileManager: fm)
         case "fluidaudio":
@@ -1166,6 +1176,8 @@ struct ModelsView: View {
             return CanaryQwenModelStore.isAvailableLocally()
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
+        case "gigaam_v3":
+            return GigaAMV3ModelStore.isAvailableLocally()
         case "sensevoice":
             return SenseVoiceTranscriber.isModelDownloaded()
         default:
