@@ -2,6 +2,25 @@ import FluidAudio
 import Foundation
 import os
 
+struct StreamingVadChunkingPolicy: Equatable, Sendable {
+    let minChunkDuration: TimeInterval
+    let maxChunkDuration: TimeInterval
+
+    static let defaultLive = StreamingVadChunkingPolicy(
+        minChunkDuration: 3.0,
+        maxChunkDuration: 5.0
+    )
+
+    static let gigaAMLongForm = StreamingVadChunkingPolicy(
+        minChunkDuration: 15.0,
+        maxChunkDuration: 22.0
+    )
+
+    static func liveMeetingPolicy(for backend: BackendOption) -> StreamingVadChunkingPolicy {
+        backend.backend == "gigaam_v3" ? .gigaAMLongForm : .defaultLive
+    }
+}
+
 /// Bridges real-time meeting audio to VadManager's streaming API.
 ///
 /// The key requirement here is single-flight state ownership: exactly one chunk
@@ -35,11 +54,13 @@ final class StreamingVadController: @unchecked Sendable {
     private let maxChunkDuration: TimeInterval
     private var maxDurationTimer: Timer?
 
-    convenience init(vadManager: VadManager) {
+    convenience init(
+        vadManager: VadManager,
+        chunkingPolicy: StreamingVadChunkingPolicy = .defaultLive
+    ) {
         self.init(
-            minChunkDuration: 3.0,
-            // Keep live transcript latency bounded by forcing shorter meeting chunks.
-            maxChunkDuration: 5.0,
+            minChunkDuration: chunkingPolicy.minChunkDuration,
+            maxChunkDuration: chunkingPolicy.maxChunkDuration,
             makeInitialState: { await vadManager.makeStreamState() },
             processStreamChunk: { samples, state in
                 try await vadManager.processStreamingChunk(samples, state: state)

@@ -222,6 +222,8 @@ enum GigaAMV3ModelStore {
 }
 
 actor GigaAMV3Transcriber {
+    private static let longFormChunkSeconds = 22.0
+
     private var recognizer: GigaAMRecognizer?
     private var isLoading = false
     private var activeDownloadTask: Task<URL, Error>?
@@ -312,6 +314,54 @@ actor GigaAMV3Transcriber {
         )
     }
 
+    func transcribeLongForm(wavURL: URL) async throws -> GigaAMV3TranscriptionResult {
+        let wav = try WavReader.readFloatMonoWAV(from: wavURL)
+        let ranges = Self.chunkSampleRanges(
+            sampleCount: wav.samples.count,
+            sampleRate: wav.sampleRate,
+            chunkSeconds: Self.longFormChunkSeconds
+        )
+        guard ranges.count > 1 else {
+            return try await transcribe(wavURL: wavURL)
+        }
+
+        let start = CFAbsoluteTimeGetCurrent()
+        var texts: [String] = []
+        var processingTime: TimeInterval = 0
+
+        for (index, range) in ranges.enumerated() {
+            try Task.checkCancellation()
+            let chunkURL = try WavWriter.writeTemporaryWAV(
+                samples: Array(wav.samples[range]),
+                directoryName: "muesli-gigaam-v3-chunks"
+            )
+            defer { try? FileManager.default.removeItem(at: chunkURL) }
+
+            fputs("[muesli-native] GigaAM v3 chunk \(index + 1)/\(ranges.count) samples=\(range.count)\n", stderr)
+            let result = try await transcribe(wavURL: chunkURL)
+            processingTime += result.processingTime
+            let text = TranscriptionEngineArtifactsFilter.apply(result.text)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                texts.append(text)
+            }
+        }
+
+        return GigaAMV3TranscriptionResult(
+            text: texts.joined(separator: " "),
+            duration: Double(wav.samples.count) / Double(wav.sampleRate),
+            processingTime: max(processingTime, CFAbsoluteTimeGetCurrent() - start)
+        )
+    }
+
+    static func chunkSampleRangesForTests(
+        sampleCount: Int,
+        sampleRate: Int,
+        chunkSeconds: TimeInterval = longFormChunkSeconds
+    ) -> [Range<Int>] {
+        chunkSampleRanges(sampleCount: sampleCount, sampleRate: sampleRate, chunkSeconds: chunkSeconds)
+    }
+
     func shutdown() {
         loadGeneration += 1
         activeDownloadTask?.cancel()
@@ -333,5 +383,22 @@ actor GigaAMV3Transcriber {
                 waiter.resume()
             }
         }
+    }
+
+    private static func chunkSampleRanges(
+        sampleCount: Int,
+        sampleRate: Int,
+        chunkSeconds: TimeInterval
+    ) -> [Range<Int>] {
+        guard sampleCount > 0, sampleRate > 0, chunkSeconds > 0 else { return [] }
+        let chunkSize = max(1, Int((chunkSeconds * Double(sampleRate)).rounded()))
+        var ranges: [Range<Int>] = []
+        var start = 0
+        while start < sampleCount {
+            let end = min(start + chunkSize, sampleCount)
+            ranges.append(start..<end)
+            start = end
+        }
+        return ranges
     }
 }

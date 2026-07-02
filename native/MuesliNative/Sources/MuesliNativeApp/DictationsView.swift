@@ -1,7 +1,6 @@
 import AppKit
 import CoreImage.CIFilterBuiltins
 import SwiftUI
-import TelemetryDeck
 import MuesliCore
 
 enum DictationFilter: Hashable {
@@ -217,7 +216,6 @@ struct DictationsView: View {
             if shouldShowBridgeHandoffButton {
                 Button {
                     isBridgeQRCodePresented = true
-                    TelemetryDeck.signal("bridge_qr_shown", parameters: ["platform": "macos"])
                 } label: {
                     Image(systemName: "qrcode")
                         .font(.system(size: 12, weight: .semibold))
@@ -275,7 +273,6 @@ struct DictationsView: View {
         .onAppear {
             guard !bridgePromptSeen else { return }
             bridgePromptSeen = true
-            TelemetryDeck.signal("bridge_prompt_seen", parameters: ["platform": "macos"])
         }
     }
 

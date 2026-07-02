@@ -185,8 +185,7 @@ enum AudioFileImportController {
         let transcription = try await transcriptionCoordinator.transcribeMeeting(
             at: wavURL,
             backend: backend,
-            cohereLanguage: config.resolvedCohereLanguage,
-            indicASRLanguage: config.resolvedIndicASRLanguage
+            cohereLanguage: config.resolvedCohereLanguage
         )
         let rawTranscript = transcription.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawTranscript.isEmpty else {

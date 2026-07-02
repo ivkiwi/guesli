@@ -391,8 +391,7 @@ final class MeetingSession {
                 let result = try await transcriptionCoordinator.transcribeMeetingChunk(
                     at: lastSystemChunkURL,
                     backend: currentBackend(),
-                    cohereLanguage: config.resolvedCohereLanguage,
-                    indicASRLanguage: config.resolvedIndicASRLanguage
+                    cohereLanguage: config.resolvedCohereLanguage
                 )
                 let normalizedSegments = normalizeSystemTranscription(
                     result: result,
@@ -794,8 +793,7 @@ final class MeetingSession {
                 let result = try await self.transcriptionCoordinator.transcribeMeetingChunk(
                     at: chunkURL,
                     backend: backend,
-                    cohereLanguage: config.resolvedCohereLanguage,
-                    indicASRLanguage: config.resolvedIndicASRLanguage
+                    cohereLanguage: config.resolvedCohereLanguage
                 )
                 if !result.text.isEmpty {
                     fputs("[meeting] system chunk transcribed: \"\(String(result.text.prefix(60)))...\"\n", stderr)
@@ -853,7 +851,8 @@ final class MeetingSession {
 
     private func configureRealtimeAudioCallbacks(vadManager: VadManager?) {
         if let vadManager {
-            let controller = StreamingVadController(vadManager: vadManager)
+            let chunkingPolicy = StreamingVadChunkingPolicy.liveMeetingPolicy(for: currentBackend())
+            let controller = StreamingVadController(vadManager: vadManager, chunkingPolicy: chunkingPolicy)
             controller.onChunkBoundary = { [weak self] in
                 // Streaming VAD callbacks can arrive off-main; serialize chunk rotation explicitly.
                 self?.chunkRotationQueue.async { [weak self] in
@@ -863,7 +862,7 @@ final class MeetingSession {
             controller.start()
             vadController = controller
 
-            let systemController = StreamingVadController(vadManager: vadManager)
+            let systemController = StreamingVadController(vadManager: vadManager, chunkingPolicy: chunkingPolicy)
             systemController.onChunkBoundary = { [weak self] in
                 // Streaming VAD callbacks can arrive off-main; serialize chunk rotation explicitly.
                 self?.chunkRotationQueue.async { [weak self] in
@@ -981,8 +980,7 @@ final class MeetingSession {
             let result = try await transcriptionCoordinator.transcribeMeetingChunk(
                 at: url,
                 backend: currentBackend(),
-                cohereLanguage: config.resolvedCohereLanguage,
-                indicASRLanguage: config.resolvedIndicASRLanguage
+                cohereLanguage: config.resolvedCohereLanguage
             )
             if !result.text.isEmpty {
                 fputs("[meeting] mic chunk transcribed (raw): \"\(String(result.text.prefix(60)))...\"\n", stderr)
@@ -1088,8 +1086,7 @@ final class MeetingSession {
                     let result = try await transcriptionCoordinator.transcribeMeeting(
                         at: segmentURL,
                         backend: currentBackend(),
-                        cohereLanguage: config.resolvedCohereLanguage,
-                        indicASRLanguage: config.resolvedIndicASRLanguage
+                        cohereLanguage: config.resolvedCohereLanguage
                     )
                     repairedSegments.append(contentsOf: normalizeSystemTranscription(
                         result: result,
@@ -1120,8 +1117,7 @@ final class MeetingSession {
             let result = try await transcriptionCoordinator.transcribeMeeting(
                 at: systemAudioURL,
                 backend: currentBackend(),
-                cohereLanguage: config.resolvedCohereLanguage,
-                indicASRLanguage: config.resolvedIndicASRLanguage
+                cohereLanguage: config.resolvedCohereLanguage
             )
             return normalizeSystemTranscription(
                 result: result,

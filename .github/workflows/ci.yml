@@ -27,7 +27,6 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             FILES=$(git diff --name-only HEAD^1 HEAD -- \
               'native/' \
-              'browser-extension/' \
               'assets/' \
               'docs/appcast.xml' \
               'scripts/build_native_app.sh' \
@@ -37,7 +36,6 @@ jobs:
           else
             FILES=$(git diff --name-only HEAD~1 HEAD -- \
               'native/' \
-              'browser-extension/' \
               'assets/' \
               'docs/appcast.xml' \
               'scripts/build_native_app.sh' \
@@ -58,7 +56,7 @@ jobs:
   build_release:
     needs: changes
     if: needs.changes.outputs.native_or_packaging == 'true'
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: Check out repository
@@ -67,23 +65,11 @@ jobs:
       - name: Build (release)
         run: swift build --package-path native/MuesliNative -c release --product MuesliNativeApp
 
-  browser-extension:
-    needs: changes
-    if: needs.changes.outputs.native_or_packaging == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Check Meet speaker extension
-        run: node --check browser-extension/muesli-meet-speaker/content.js
-
   # Swift tests — sharded by domain to reduce end-to-end wall time
   test_shards:
     needs: changes
     if: needs.changes.outputs.native_or_packaging == 'true'
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -101,7 +87,7 @@ jobs:
   cli-smoke:
     needs: changes
     if: needs.changes.outputs.native_or_packaging == 'true'
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: Check out repository
@@ -128,18 +114,17 @@ jobs:
   # This is the only required check in branch protection
   ci-gate:
     if: always()
-    needs: [changes, build_release, browser-extension, test_shards, cli-smoke, update-flow]
+    needs: [changes, build_release, test_shards, cli-smoke, update-flow]
     runs-on: ubuntu-latest
     steps:
       - name: Check result
         run: |
           if [[ "${{ needs.build_release.result }}" =~ ^(success|skipped)$ ]] && \
-             [[ "${{ needs.browser-extension.result }}" =~ ^(success|skipped)$ ]] && \
              [[ "${{ needs.test_shards.result }}" =~ ^(success|skipped)$ ]] && \
              [[ "${{ needs.cli-smoke.result }}" =~ ^(success|skipped)$ ]] && \
              [[ "${{ needs.update-flow.result }}" =~ ^(success|skipped)$ ]]; then
-            echo "CI passed (build_release: ${{ needs.build_release.result }}, browser-extension: ${{ needs.browser-extension.result }}, test_shards: ${{ needs.test_shards.result }}, cli-smoke: ${{ needs.cli-smoke.result }}, update-flow: ${{ needs.update-flow.result }})"
+            echo "CI passed (build_release: ${{ needs.build_release.result }}, test_shards: ${{ needs.test_shards.result }}, cli-smoke: ${{ needs.cli-smoke.result }}, update-flow: ${{ needs.update-flow.result }})"
           else
-            echo "CI failed (build_release: ${{ needs.build_release.result }}, browser-extension: ${{ needs.browser-extension.result }}, test_shards: ${{ needs.test_shards.result }}, cli-smoke: ${{ needs.cli-smoke.result }}, update-flow: ${{ needs.update-flow.result }})"
+            echo "CI failed (build_release: ${{ needs.build_release.result }}, test_shards: ${{ needs.test_shards.result }}, cli-smoke: ${{ needs.cli-smoke.result }}, update-flow: ${{ needs.update-flow.result }})"
             exit 1
           fi

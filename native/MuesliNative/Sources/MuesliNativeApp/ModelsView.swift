@@ -203,13 +203,6 @@ struct ModelsView: View {
         )
     }
 
-    private var indicASRLanguageSelection: Binding<IndicASRLanguage> {
-        Binding(
-            get: { appState.config.resolvedIndicASRLanguage },
-            set: { controller.selectIndicASRLanguage($0) }
-        )
-    }
-
     private var nemotron35LanguageSelection: Binding<Nemotron35Language> {
         Binding(
             get: { appState.config.resolvedNemotron35Language },
@@ -585,7 +578,6 @@ struct ModelsView: View {
         case "qwen": return "qwen-logo"
         case "nemotron35": return "nvidia-logo"
         case "canary": return "qwen-logo"
-        case "indicasr": return "ai4bharat-logo"
         case "sensevoice": return "qwen-logo"
         default: return nil
         }
@@ -709,24 +701,6 @@ struct ModelsView: View {
 
                     Picker("", selection: cohereLanguageSelection) {
                         ForEach(CohereTranscribeLanguage.allCases, id: \.self) { language in
-                            Text(language.label).tag(language)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 220, alignment: .leading)
-                }
-            }
-
-            if option.backend == BackendOption.indicASR.backend {
-                HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
-                    Text("Language")
-                        .font(MuesliTheme.caption())
-                        .foregroundStyle(MuesliTheme.textTertiary)
-                        .frame(width: 64, alignment: .leading)
-
-                    Picker("", selection: indicASRLanguageSelection) {
-                        ForEach(IndicASRLanguage.allCases, id: \.self) { language in
                             Text(language.label).tag(language)
                         }
                     }
@@ -1111,10 +1085,6 @@ struct ModelsView: View {
             try removeItemIfPresent(at: CohereTranscribeModelStore.cacheDirectory(), fileManager: fm)
         case "gigaam_v3":
             try GigaAMV3ModelStore.deleteModelFiles(fileManager: fm)
-        case "indicasr":
-            if IndicASRModelStore.localOverrideDirectory() == nil {
-                try removeItemIfPresent(at: IndicASRModelStore.cacheDirectory(), fileManager: fm)
-            }
         case "sensevoice":
             SenseVoiceTranscriber.deleteModelFiles(fileManager: fm)
         case "fluidaudio":
@@ -1208,8 +1178,6 @@ struct ModelsView: View {
             return CohereTranscribeModelStore.isAvailableLocally()
         case "gigaam_v3":
             return GigaAMV3ModelStore.isAvailableLocally()
-        case "indicasr":
-            return IndicASRModelStore.isAvailableLocally()
         case "sensevoice":
             return SenseVoiceTranscriber.isModelDownloaded()
         default:

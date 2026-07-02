@@ -94,6 +94,32 @@ struct TranscriptionCoordinatorTests {
         let backends = Set(BackendOption.all.map(\.backend))
         #expect(backends == TranscriptionCoordinator.explicitlyRoutedBackendIdentifiers.union(["fluidaudio"]))
     }
+
+    @Test("GigaAM live meeting chunking follows longform limits")
+    func gigaAMLiveMeetingChunkingPolicy() {
+        let gigaAM = StreamingVadChunkingPolicy.liveMeetingPolicy(for: .gigaAMV3Russian)
+        let parakeet = StreamingVadChunkingPolicy.liveMeetingPolicy(for: .parakeetMultilingual)
+
+        #expect(gigaAM.minChunkDuration == 15)
+        #expect(gigaAM.maxChunkDuration == 22)
+        #expect(parakeet.minChunkDuration == 3)
+        #expect(parakeet.maxChunkDuration == 5)
+    }
+
+    @Test("GigaAM longform chunk planner caps 40 minute audio at 22 seconds")
+    func gigaAMLongFormChunkPlanner() {
+        let sampleRate = 16_000
+        let sampleCount = 40 * 60 * sampleRate
+        let ranges = GigaAMV3Transcriber.chunkSampleRangesForTests(
+            sampleCount: sampleCount,
+            sampleRate: sampleRate
+        )
+
+        #expect(ranges.count == 110)
+        #expect(ranges.first == 0..<(22 * sampleRate))
+        #expect(ranges.allSatisfy { $0.count <= 22 * sampleRate })
+        #expect(ranges.last?.upperBound == sampleCount)
+    }
 }
 
 @Suite("CohereTranscribeLanguage")
