@@ -923,13 +923,13 @@ struct AppConfig: Codable {
     var enableComputerUsePlanner: Bool = true
     var computerUsePlannerModel: String = ""
     var computerUseTimeoutSeconds: Int = 120
-    var sttBackend: String = BackendOption.whisper.backend
-    var sttModel: String = BackendOption.whisper.model
+    var sttBackend: String = BackendOption.gigaAMV3Russian.backend
+    var sttModel: String = BackendOption.gigaAMV3Russian.model
     var dictationInputDeviceUID: String? = nil
     var cohereLanguage: String = CohereTranscribeLanguage.defaultLanguage.rawValue
     var nemotron35Language: String = Nemotron35Language.defaultLanguage.rawValue
-    var meetingTranscriptionBackend: String = BackendOption.whisper.backend
-    var meetingTranscriptionModel: String = BackendOption.whisper.model
+    var meetingTranscriptionBackend: String = BackendOption.gigaAMV3Russian.backend
+    var meetingTranscriptionModel: String = BackendOption.gigaAMV3Russian.model
     var preferredMeetingBrowserBundleID: String = ""
     var meetingSummaryBackend: String = MeetingSummaryBackendOption.chatGPT.backend
     var defaultMeetingTemplateID: String = MeetingTemplates.autoID

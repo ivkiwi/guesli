@@ -72,8 +72,8 @@ final class AppState {
     var meetingStats: MeetingStats = MeetingStats(totalWords: 0, totalMeetings: 0, averageWPM: 0)
 
     // Config-driven state
-    var selectedBackend: BackendOption = .whisper
-    var selectedMeetingTranscriptionBackend: BackendOption = .whisper
+    var selectedBackend: BackendOption = .gigaAMV3Russian
+    var selectedMeetingTranscriptionBackend: BackendOption = .gigaAMV3Russian
     var selectedMeetingSummaryBackend: MeetingSummaryBackendOption = .chatGPT
     var activePostProcessor: PostProcessorOption = PostProcessorOption.defaultOption
     var config: AppConfig = AppConfig()

@@ -138,7 +138,7 @@ struct SettingsView: View {
     }
 
     private var meetingBackendOptions: [BackendOption] {
-        downloadedBackendOptions
+        backendOptions(including: appState.selectedMeetingTranscriptionBackend)
     }
 
     private var selectedMeetingBackendLabel: String {
@@ -1363,15 +1363,8 @@ struct SettingsView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        guard let appSupportBase = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            fputs("[muesli-native] Could not resolve Application Support directory\n", stderr)
-            return
-        }
-
         do {
-            let supportDir = appSupportBase
-                .appendingPathComponent(Bundle.main.infoDictionary?["MuesliSupportDirectoryName"] as? String ?? "Guesli")
-            let destPath = try SoundController.importCustomClip(from: url, supportDir: supportDir)
+            let destPath = try SoundController.importCustomClip(from: url, supportDir: AppIdentity.supportDirectoryURL)
             controller.updateConfig {
                 $0.maraudersMapAudioClip = SoundController.customClipID
                 $0.maraudersMapCustomAudioPath = destPath
@@ -1430,7 +1423,7 @@ struct SettingsView: View {
             permissionStatusRow(
                 "Microphone",
                 granted: micGranted,
-                action: { AVCaptureDevice.requestAccess(for: .audio) { _ in } },
+                action: requestMicrophonePermission,
                 pane: "Privacy_Microphone"
             )
             Divider().background(MuesliTheme.surfaceBorder)
@@ -1519,6 +1512,23 @@ struct SettingsView: View {
     private func openPrivacyPane(_ pane: String) {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func requestMicrophonePermission() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { _ in
+                Task { @MainActor in
+                    refreshPermissionStatuses()
+                }
+            }
+        case .authorized:
+            refreshPermissionStatuses()
+        case .denied, .restricted:
+            openPrivacyPane("Privacy_Microphone")
+        @unknown default:
+            openPrivacyPane("Privacy_Microphone")
         }
     }
 

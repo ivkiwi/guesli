@@ -822,9 +822,7 @@ struct OnboardingView: View {
     /// successful transcription before meeting-specific permissions appear.
     private var permissionSteps: [(icon: String, name: String, description: String, granted: Bool, action: () -> Void)] {
         var steps: [(String, String, String, Bool, () -> Void)] = [
-            ("mic.fill", "Microphone", "Record audio for voice notes, dictation, and meetings", micGranted, {
-                AVCaptureDevice.requestAccess(for: .audio) { _ in }
-            })
+            ("mic.fill", "Microphone", "Record audio for voice notes, dictation, and meetings", micGranted, requestMicrophonePermission)
         ]
         if selectedUseCase.includesPushToTalk {
             if selectedUseCase.includesDictation {
@@ -1017,6 +1015,35 @@ struct OnboardingView: View {
             if nativePermissionPromptName == "Accessibility", !accessibilityGranted {
                 nativePermissionPromptName = nil
             }
+        }
+    }
+
+    private func requestMicrophonePermission() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined:
+            nativePermissionPromptName = "Microphone"
+            controller.prepareOnboardingForNativePermissionPrompt()
+            AVCaptureDevice.requestAccess(for: .audio) { _ in
+                Task { @MainActor in
+                    nativePermissionPromptName = nil
+                    refreshPermissions()
+                    controller.bringOnboardingToFront()
+                }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(6))
+                if nativePermissionPromptName == "Microphone" {
+                    nativePermissionPromptName = nil
+                    refreshPermissions()
+                    controller.bringOnboardingToFront()
+                }
+            }
+        case .authorized:
+            refreshPermissions()
+        case .denied, .restricted:
+            openSystemSettings("Privacy_Microphone")
+        @unknown default:
+            openSystemSettings("Privacy_Microphone")
         }
     }
 

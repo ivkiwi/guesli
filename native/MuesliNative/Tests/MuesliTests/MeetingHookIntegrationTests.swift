@@ -96,8 +96,18 @@ struct MeetingHookIntegrationTests {
                 appIcon: nil,
                 bundlePath: nil
             ),
+            configStore: makeConfigStore(),
             dictationStore: store,
             meetingHookDispatcher: dispatcher
+        )
+    }
+
+    private func makeConfigStore() -> ConfigStore {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("muesli-hook-config-\(UUID().uuidString)", isDirectory: true)
+        return ConfigStore(
+            supportURL: root.appendingPathComponent("Guesli", isDirectory: true),
+            legacySupportURL: root.appendingPathComponent("Muesli", isDirectory: true)
         )
     }
 

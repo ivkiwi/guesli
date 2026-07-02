@@ -218,7 +218,7 @@ final class MuesliController: NSObject {
     }
 
     private let runtime: RuntimePaths
-    private let configStore = ConfigStore()
+    private let configStore: ConfigStore
     private let dictationStore: DictationStore
     private let meetingHookDispatcher: MeetingHookDispatching
     private let launchAtLoginCoordinator: LaunchAtLoginCoordinator
@@ -357,12 +357,14 @@ final class MuesliController: NSObject {
 
     init(
         runtime: RuntimePaths,
+        configStore: ConfigStore = ConfigStore(),
         dictationStore: DictationStore? = nil,
         meetingHookDispatcher: MeetingHookDispatching = MeetingHookRunner(),
         launchAtLoginManager: LaunchAtLoginManaging = SystemLaunchAtLoginManager(),
         audioDuckingController: AudioDuckingManaging = AudioDuckingController(),
         dictationAudioRoutingController: DictationAudioRouting = DictationAudioRouteController()
     ) {
+        self.configStore = configStore
         let loadedConfig = configStore.load()
         self.runtime = runtime
         self.dictationStore = dictationStore ?? DictationStore(
@@ -938,7 +940,14 @@ final class MuesliController: NSObject {
         dictationBackend: BackendOption,
         downloadedOptions: [BackendOption] = BackendOption.downloaded
     ) -> BackendOption? {
-        BackendOption.resolveDownloaded(
+        if let configured = BackendOption.resolve(
+            backend: config.meetingTranscriptionBackend,
+            model: config.meetingTranscriptionModel
+        ) {
+            return downloadedOptions.contains(configured) ? configured : nil
+        }
+
+        return BackendOption.resolveDownloaded(
             backend: config.meetingTranscriptionBackend,
             model: config.meetingTranscriptionModel,
             fallback: dictationBackend,

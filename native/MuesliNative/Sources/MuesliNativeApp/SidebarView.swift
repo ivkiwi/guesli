@@ -170,7 +170,7 @@ struct SidebarView: View {
                 }
                 .frame(width: 22, height: 22)
                 .foregroundStyle(MuesliTheme.accent)
-                Text("muesli")
+                Text(AppIdentity.displayName)
                     .font(MuesliTheme.title2())
                     .foregroundStyle(MuesliTheme.textPrimary)
             }

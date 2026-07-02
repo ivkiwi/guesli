@@ -315,13 +315,15 @@ final class SparkleUpdateDelegate: NSObject, SPUUpdaterDelegate, SPUStandardUser
 enum UpdateFailureGuidance {
     private static let noUpdateErrorCode = 1001
 
-    static let downloadPageURLString = "https://muesli-hq.github.io/muesli/"
+    static let downloadPageURLString = "https://github.com/ivkiwi/guesli/releases"
 
-    static let message = """
-    Please quit Muesli, reopen it from Applications, and try the update once more.
+    static var message: String {
+        """
+        Please quit \(AppIdentity.displayName), reopen it from Applications, and try the update once more.
 
-    If this keeps happening, download the latest DMG and replace Muesli manually. This can happen when the local updater cannot finish preparing or replacing the app.
-    """
+        If this keeps happening, download the latest DMG and replace \(AppIdentity.displayName) manually. This can happen when the local updater cannot finish preparing or replacing the app.
+        """
+    }
 
     static func isNoUpdateError(_ error: NSError) -> Bool {
         guard error.domain == SUSparkleErrorDomain else { return false }

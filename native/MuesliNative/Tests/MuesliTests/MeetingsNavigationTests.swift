@@ -10,12 +10,34 @@ struct MeetingsNavigationTests {
 
     private func makeController() -> MuesliController {
         MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            )
+            runtime: makeRuntimePaths(),
+            configStore: makeConfigStore()
+        )
+    }
+
+    private func makeController(dictationStore: DictationStore) -> MuesliController {
+        MuesliController(
+            runtime: makeRuntimePaths(),
+            configStore: makeConfigStore(),
+            dictationStore: dictationStore
+        )
+    }
+
+    private func makeRuntimePaths() -> RuntimePaths {
+        RuntimePaths(
+            repoRoot: FileManager.default.temporaryDirectory,
+            menuIcon: nil,
+            appIcon: nil,
+            bundlePath: nil
+        )
+    }
+
+    private func makeConfigStore() -> ConfigStore {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("muesli-nav-config-\(UUID().uuidString)", isDirectory: true)
+        return ConfigStore(
+            supportURL: root.appendingPathComponent("Guesli", isDirectory: true),
+            legacySupportURL: root.appendingPathComponent("Muesli", isDirectory: true)
         )
     }
 
@@ -159,15 +181,7 @@ struct MeetingsNavigationTests {
             savedRecordingPath: savedRecordingURL.path
         )
 
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         let meetingID = try store.recentMeetings(limit: 1).first!.id
         controller.appState.selectedMeetingID = meetingID
         controller.appState.selectedMeetingRecord = try store.meeting(id: meetingID)
@@ -190,15 +204,7 @@ struct MeetingsNavigationTests {
             calendarEventID: nil,
             startTime: Date()
         )
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
 
         let liveMeeting = try #require(try store.meeting(id: meetingID))
         #expect(controller.canDeleteMeeting(liveMeeting) == false)
@@ -225,15 +231,7 @@ struct MeetingsNavigationTests {
             systemAudioPath: nil,
             savedRecordingPath: missingRecordingURL.path
         )
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         let meeting = try #require(try store.meeting(id: meetingID))
 
         let result = await withCheckedContinuation { continuation in
@@ -304,15 +302,7 @@ struct MeetingsNavigationTests {
             calendarEventID: nil,
             startTime: Date()
         )
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
 
         controller.cacheMeetingManualNotes(id: meetingID, notes: "Decision before crash")
 
@@ -323,15 +313,7 @@ struct MeetingsNavigationTests {
     @Test("failed manual note persistence retries on later flush")
     func failedManualNotePersistenceRetriesOnFlush() throws {
         let store = try makeStore()
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
 
         controller.cacheMeetingManualNotes(id: 1, notes: "Draft survives retry")
         let meetingID = try store.createLiveMeeting(
@@ -355,15 +337,7 @@ struct MeetingsNavigationTests {
             calendarEventID: nil,
             startTime: Date()
         )
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
 
         controller.cacheMeetingManualNotes(id: meetingID, notes: "First durable note")
         #expect(controller.hasPersistedMeetingManualNotes(id: meetingID, notes: "First durable note"))
@@ -383,15 +357,7 @@ struct MeetingsNavigationTests {
     @Test("persistCompletedMeetingResult keeps transcript when recording save fails")
     func persistCompletedMeetingResultPreservesMeetingOnRecordingFailure() async throws {
         let store = try makeStore()
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         controller.updateConfig { $0.meetingRecordingSavePolicy = .always }
 
         let invalidRecordingURL = FileManager.default.temporaryDirectory
@@ -424,15 +390,7 @@ struct MeetingsNavigationTests {
     @Test("persistCompletedMeetingResult honors prompt recording save decision")
     func persistCompletedMeetingResultHonorsPromptRecordingSaveDecision() async throws {
         let store = try makeStore()
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         controller.updateConfig { $0.meetingRecordingSavePolicy = .prompt }
 
         let retainedRecordingURL = try makeRetainedRecordingURL()
@@ -466,15 +424,7 @@ struct MeetingsNavigationTests {
     @Test("persistCompletedMeetingResult honors explicit recording save decision after policy drift")
     func persistCompletedMeetingResultHonorsExplicitRecordingSaveDecisionAfterPolicyDrift() async throws {
         let store = try makeStore()
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         controller.updateConfig { $0.meetingRecordingSavePolicy = .never }
 
         let retainedRecordingURL = try makeRetainedRecordingURL()
@@ -509,15 +459,7 @@ struct MeetingsNavigationTests {
     @Test("persistCompletedMeetingResult saves retained recording in configured folder")
     func persistCompletedMeetingResultSavesRecordingInConfiguredFolder() async throws {
         let store = try makeStore()
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         let recordingFolder = FileManager.default.temporaryDirectory
             .appendingPathComponent("meeting-recordings-custom-\(UUID().uuidString)", isDirectory: true)
         controller.updateConfig {
@@ -555,15 +497,7 @@ struct MeetingsNavigationTests {
     @Test("persistCompletedMeetingResult surfaces prompt policy retained recording failures without decision")
     func persistCompletedMeetingResultSurfacesPromptPolicyRetainedRecordingFailuresWithoutDecision() async throws {
         let store = try makeStore()
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         controller.updateConfig { $0.meetingRecordingSavePolicy = .prompt }
 
         let result = MeetingSessionResult(
@@ -591,15 +525,7 @@ struct MeetingsNavigationTests {
     @Test("persistCompletedMeetingResult surfaces retained recording failures after explicit save decision")
     func persistCompletedMeetingResultSurfacesRetainedRecordingFailuresAfterExplicitSaveDecision() async throws {
         let store = try makeStore()
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         controller.updateConfig { $0.meetingRecordingSavePolicy = .prompt }
 
         let result = MeetingSessionResult(
@@ -630,15 +556,7 @@ struct MeetingsNavigationTests {
     @Test("persistCompletedMeetingResult preserves user-edited live meeting title")
     func persistCompletedMeetingResultPreservesEditedLiveTitle() async throws {
         let store = try makeStore()
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         let start = Date()
         let liveID = try store.createLiveMeeting(title: "Meeting", calendarEventID: nil, startTime: start)
         try store.updateMeetingTitle(id: liveID, title: "Investor Follow-up")
@@ -668,15 +586,7 @@ struct MeetingsNavigationTests {
     @Test("persistCompletedMeetingResult preserves cached live title before debounce")
     func persistCompletedMeetingResultPreservesCachedLiveTitle() async throws {
         let store = try makeStore()
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         let start = Date()
         let liveID = try store.createLiveMeeting(title: "Meeting", calendarEventID: nil, startTime: start)
         controller.cacheMeetingTitle(id: liveID, title: "Status Bar Stop Title")
@@ -723,15 +633,7 @@ struct MeetingsNavigationTests {
         let store = try makeStore()
         let id = try store.createLiveMeeting(title: "Crashed Draft", calendarEventID: nil, startTime: Date())
         try store.updateMeetingManualNotes(id: id, manualNotes: "Important draft")
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
 
         controller.recoverStaleLiveMeetings()
 
@@ -744,15 +646,7 @@ struct MeetingsNavigationTests {
     func startupRecoveryMarksEmptyStaleLiveDraftsFailed() throws {
         let store = try makeStore()
         let id = try store.createLiveMeeting(title: "Empty Draft", calendarEventID: nil, startTime: Date())
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
 
         controller.recoverStaleLiveMeetings()
 
@@ -767,15 +661,7 @@ struct MeetingsNavigationTests {
         try store.appendLiveTranscriptCheckpoints(meetingID: id, entries: [
             LiveTranscriptCheckpointEntry(timestampLabel: "11:45:02", speaker: "Others", startSeconds: 2, endSeconds: 3, text: "The fallback transcript survived.")
         ])
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
 
         controller.recoverStaleLiveMeetings()
 

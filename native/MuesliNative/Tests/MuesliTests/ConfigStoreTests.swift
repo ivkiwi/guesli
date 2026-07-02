@@ -6,9 +6,19 @@ import MuesliCore
 @Suite("ConfigStore", .serialized)
 struct ConfigStoreTests {
 
+    private func makeStore() -> ConfigStore {
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("config-store-test-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/Guesli", isDirectory: true)
+        let legacySupportURL = supportURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("Muesli", isDirectory: true)
+        return ConfigStore(supportURL: supportURL, legacySupportURL: legacySupportURL)
+    }
+
     @Test("load returns a valid config")
     func loadReturnsConfig() {
-        let store = ConfigStore()
+        let store = makeStore()
         let config = store.load()
         // Hotkey may have been customized by user — just verify it loaded
         #expect(HotkeyConfig.label(for: config.dictationHotkey.keyCode) != nil)
@@ -17,7 +27,7 @@ struct ConfigStoreTests {
 
     @Test("save and load round-trip")
     func saveLoadRoundTrip() {
-        let store = ConfigStore()
+        let store = makeStore()
         let original = store.load()
 
         var config = original
@@ -43,7 +53,7 @@ struct ConfigStoreTests {
 
     @Test("config path is in Application Support")
     func configPath() {
-        let store = ConfigStore()
+        let store = makeStore()
         let path = store.configPath().path
         #expect(path.contains("Application Support"))
         #expect(path.hasSuffix("config.json"))
@@ -51,7 +61,7 @@ struct ConfigStoreTests {
 
     @Test("saved config uses owner-only file permissions")
     func configPermissions() throws {
-        let store = ConfigStore()
+        let store = makeStore()
         let original = store.load()
 
         store.save(original)
@@ -60,5 +70,75 @@ struct ConfigStoreTests {
         let permissions = attributes[.posixPermissions] as? NSNumber
 
         #expect(permissions?.intValue == 0o600)
+    }
+
+    @Test("load imports legacy user settings once without replacing GigaAM")
+    func importsLegacyUserSettingsWithoutReplacingGigaAM() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("legacy-settings-import-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let legacySupport = root.appendingPathComponent("Muesli", isDirectory: true)
+        let targetSupport = root.appendingPathComponent("Guesli", isDirectory: true)
+        let unusedLegacy = root.appendingPathComponent("Unused", isDirectory: true)
+
+        let legacyStore = ConfigStore(supportURL: legacySupport, legacySupportURL: unusedLegacy)
+        let legacyTemplate = CustomMeetingTemplate(
+            id: "legacy-template",
+            name: "Общий",
+            prompt: "legacy prompt",
+            icon: "doc.text"
+        )
+        var legacyConfig = AppConfig()
+        legacyConfig.sttBackend = BackendOption.parakeetMultilingual.backend
+        legacyConfig.sttModel = BackendOption.parakeetMultilingual.model
+        legacyConfig.meetingTranscriptionBackend = BackendOption.parakeetMultilingual.backend
+        legacyConfig.meetingTranscriptionModel = BackendOption.parakeetMultilingual.model
+        legacyConfig.userName = "Ivan"
+        legacyConfig.customMeetingTemplates = [legacyTemplate]
+        legacyConfig.defaultMeetingTemplateID = legacyTemplate.id
+        legacyConfig.chatGPTModel = "gpt-5.5"
+        legacyConfig.meetingRecordingSavePolicy = .always
+        legacyStore.save(legacyConfig)
+        try Data("legacy auth".utf8).write(to: legacySupport.appendingPathComponent("chatgpt-auth.json"))
+
+        let targetStore = ConfigStore(supportURL: targetSupport, legacySupportURL: legacySupport)
+        var targetConfig = AppConfig()
+        targetConfig.sttBackend = BackendOption.gigaAMV3Russian.backend
+        targetConfig.sttModel = BackendOption.gigaAMV3Russian.model
+        targetConfig.meetingTranscriptionBackend = BackendOption.gigaAMV3Russian.backend
+        targetConfig.meetingTranscriptionModel = BackendOption.gigaAMV3Russian.model
+        targetConfig.preferredMeetingBrowserBundleID = "com.brave.Browser"
+        targetStore.save(targetConfig)
+
+        let loaded = targetStore.load()
+
+        #expect(loaded.sttBackend == BackendOption.gigaAMV3Russian.backend)
+        #expect(loaded.sttModel == BackendOption.gigaAMV3Russian.model)
+        #expect(loaded.meetingTranscriptionBackend == BackendOption.gigaAMV3Russian.backend)
+        #expect(loaded.meetingTranscriptionModel == BackendOption.gigaAMV3Russian.model)
+        #expect(loaded.preferredMeetingBrowserBundleID == "com.brave.Browser")
+        #expect(loaded.userName == "Ivan")
+        #expect(loaded.customMeetingTemplates == [legacyTemplate])
+        #expect(loaded.defaultMeetingTemplateID == legacyTemplate.id)
+        #expect(loaded.chatGPTModel == "gpt-5.5")
+        #expect(loaded.meetingRecordingSavePolicy == .always)
+        #expect(
+            try Data(contentsOf: targetSupport.appendingPathComponent("chatgpt-auth.json"))
+                == Data("legacy auth".utf8)
+        )
+        #expect(
+            FileManager.default.fileExists(
+                atPath: targetSupport.appendingPathComponent("legacy-muesli-settings-import.json").path
+            )
+        )
+
+        legacyConfig.userName = "Wrong World"
+        legacyStore.save(legacyConfig)
+        var manuallyChanged = loaded
+        manuallyChanged.userName = "Manual"
+        targetStore.save(manuallyChanged)
+
+        #expect(targetStore.load().userName == "Manual")
     }
 }
