@@ -11,6 +11,8 @@
 
 # MCP configuration
 .mcp.json
+.codex/
+.serena/
 
 # Logs
 *.log
@@ -26,6 +28,7 @@ dist/
 
 # Dependencies
 node_modules/
+vendor/
 
 # Environment variables
 .env
