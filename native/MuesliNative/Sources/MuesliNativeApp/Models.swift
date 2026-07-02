@@ -978,6 +978,8 @@ struct AppConfig: Codable {
     var contributionPromptNextMeetingCount: Int?
     var contributionGitHubStarClicked: Bool = false
     var contributionBuyMeCoffeeClicked: Bool = false
+    var contributionTweetClicked: Bool = false
+    var contributionLinkedInClicked: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case dictationHotkey = "dictation_hotkey"
@@ -1072,6 +1074,8 @@ struct AppConfig: Codable {
         case contributionPromptNextMeetingCount = "contribution_prompt_next_meeting_count"
         case contributionGitHubStarClicked = "contribution_github_star_clicked"
         case contributionBuyMeCoffeeClicked = "contribution_buy_me_coffee_clicked"
+        case contributionTweetClicked = "contribution_tweet_clicked"
+        case contributionLinkedInClicked = "contribution_linkedin_clicked"
     }
 
     init() {}
@@ -1208,6 +1212,8 @@ struct AppConfig: Codable {
         contributionPromptNextMeetingCount = try? c.decode(Int.self, forKey: .contributionPromptNextMeetingCount)
         contributionGitHubStarClicked = (try? c.decode(Bool.self, forKey: .contributionGitHubStarClicked)) ?? defaults.contributionGitHubStarClicked
         contributionBuyMeCoffeeClicked = (try? c.decode(Bool.self, forKey: .contributionBuyMeCoffeeClicked)) ?? defaults.contributionBuyMeCoffeeClicked
+        contributionTweetClicked = (try? c.decode(Bool.self, forKey: .contributionTweetClicked)) ?? defaults.contributionTweetClicked
+        contributionLinkedInClicked = (try? c.decode(Bool.self, forKey: .contributionLinkedInClicked)) ?? defaults.contributionLinkedInClicked
     }
 
     var resolvedCohereLanguage: CohereTranscribeLanguage {
