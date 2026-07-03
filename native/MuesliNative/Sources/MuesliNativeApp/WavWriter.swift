@@ -32,7 +32,10 @@ enum WavWriter {
     }
 
     /// Write Float32 samples to a temporary 16kHz mono Int16 WAV file.
-    static func writeTemporaryWAV(samples: [Float], directoryName: String = "muesli-wav-temp") throws -> URL {
+    static func writeTemporaryWAV(
+        samples: [Float],
+        directoryName: String = AppTemporaryDirectories.wavTemp
+    ) throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent(directoryName, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

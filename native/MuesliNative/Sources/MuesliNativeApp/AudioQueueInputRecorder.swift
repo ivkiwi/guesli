@@ -35,7 +35,7 @@ final class AudioQueueInputRecorder: StreamingDictationRecording, StreamingDicta
         var latestPowerDB: Float = -160
     }
 
-    init(directoryName: String = "muesli-native-dictation") {
+    init(directoryName: String = AppTemporaryDirectories.nativeDictation) {
         self.directoryName = directoryName
     }
 

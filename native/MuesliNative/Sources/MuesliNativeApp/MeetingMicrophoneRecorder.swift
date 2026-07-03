@@ -8,7 +8,7 @@ final class MeetingMicrophoneRecorder: NSObject, AVAudioRecorderDelegate {
     func prepare() throws {
         if recorder != nil { return }
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("muesli-native", isDirectory: true)
+            .appendingPathComponent(AppTemporaryDirectories.nativeRecordings, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let fileURL = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
         let settings: [String: Any] = [

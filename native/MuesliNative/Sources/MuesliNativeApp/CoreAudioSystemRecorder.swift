@@ -107,7 +107,7 @@ final class CoreAudioSystemRecorder: SystemAudioCapturing, SystemAudioDiagnostic
         guard !isRecording else { return }
 
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("muesli-system-audio", isDirectory: true)
+            .appendingPathComponent(AppTemporaryDirectories.systemAudio, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
         FileManager.default.createFile(atPath: url.path, contents: nil)

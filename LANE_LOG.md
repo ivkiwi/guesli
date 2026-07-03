@@ -19,3 +19,12 @@
 - Targeted tests: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller --filter 'MeetingNotificationController|GoogleCalendarTests'` passed, 44 tests.
 - Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller` passed, 1211 tests; no PasteController/StreamingVadController flake rerun needed.
 - Hygiene: `git diff --check` passed.
+
+## 2026-07-03 - C4 startup temp sweep for app temp dirs
+
+- Branch/worktree: `codex/lane-controller` in `/Users/kiwi/Projects/muesli-lane-controller`.
+- What changed: added one `AppTemporaryDirectories` registry/sweeper, wired launch cleanup through it, repointed temp directory producers to shared names, and removed dead `guesli-retranscription` cleanup.
+- Why: crash/SIGKILL could leave old app-owned temp files in dictation, meeting mic, import, WAV, retained-recording, and PCM chunk dirs; launch now deletes only entries older than 1h to avoid racing live work.
+- Targeted tests: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller --filter AppTemporaryDirectories` passed, 2 tests.
+- Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller` passed, 1213 tests; no PasteController/StreamingVadController flake rerun needed.
+- Hygiene: `git diff --check` passed.

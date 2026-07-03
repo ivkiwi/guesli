@@ -62,7 +62,7 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
     private static let sampleRate: Double = 16_000
     private static let bufferSize: AVAudioFrameCount = 4096 // 256ms at 16kHz
 
-    init(directoryName: String = "muesli-meeting-mic") {
+    init(directoryName: String = AppTemporaryDirectories.meetingMic) {
         self.directoryName = directoryName
     }
 

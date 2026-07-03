@@ -442,15 +442,7 @@ final class MuesliController: NSObject {
         syncLaunchAtLoginConfigWithSystem()
         reconcilePendingDictionaryCorrectionAccessibilityEnable()
 
-        // Clean up leftover audio temp files from previous sessions.
-        cleanupTemporaryDirectory(
-            named: "muesli-system-audio",
-            logDescription: "leftover temp audio files"
-        )
-        cleanupTemporaryDirectory(
-            named: "muesli-meeting-recordings",
-            logDescription: "leftover temp meeting recording files"
-        )
+        AppTemporaryDirectories.sweepAtLaunch()
 
         hotkeyMonitor.onArm = { [weak self] in self?.handleArm() }
         hotkeyMonitor.onPrepare = { [weak self] in self?.handlePrepare() }
@@ -5513,24 +5505,6 @@ final class MuesliController: NSObject {
         }
         if let systemRecordingURL = result.systemRecordingURL {
             try? FileManager.default.removeItem(at: systemRecordingURL)
-        }
-    }
-
-    private func cleanupTemporaryDirectory(named directoryName: String, logDescription: String) {
-        let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(directoryName)
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: nil
-        ) else {
-            return
-        }
-
-        for file in files {
-            try? FileManager.default.removeItem(at: file)
-        }
-
-        if !files.isEmpty {
-            fputs("[muesli-native] cleaned up \(files.count) \(logDescription)\n", stderr)
         }
     }
 

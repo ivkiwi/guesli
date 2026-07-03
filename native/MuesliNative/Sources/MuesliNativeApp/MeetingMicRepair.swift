@@ -24,7 +24,7 @@ enum MeetingMicRepairPlanner {
     }
 
     static func writeTemporaryWAV(samples: [Float]) throws -> URL {
-        try WavWriter.writeTemporaryWAV(samples: samples, directoryName: "muesli-meeting-mic-repair")
+        try WavWriter.writeTemporaryWAV(samples: samples, directoryName: AppTemporaryDirectories.meetingMicRepair)
     }
 
     static func wavDurationSeconds(for url: URL) -> Double {

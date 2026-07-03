@@ -110,7 +110,7 @@ enum AudioFileImportController {
             throw ImportError.noAudioTracks
         }
 
-        let wavURL = try WavWriter.writeTemporaryWAV(samples: samples, directoryName: "muesli-import")
+        let wavURL = try WavWriter.writeTemporaryWAV(samples: samples, directoryName: AppTemporaryDirectories.audioImports)
         let resolvedDuration = duration ?? Double(samples.count) / Double(WavWriter.sampleRate)
         guard resolvedDuration > 0, resolvedDuration.isFinite else {
             try? FileManager.default.removeItem(at: wavURL)
@@ -299,7 +299,7 @@ enum AudioFileImportController {
 
     private static func temporaryWAVURL() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("muesli-import", isDirectory: true)
+            .appendingPathComponent(AppTemporaryDirectories.audioImports, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appendingPathComponent("import_\(UUID().uuidString).wav")
     }
