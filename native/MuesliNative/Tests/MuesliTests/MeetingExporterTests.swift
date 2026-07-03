@@ -1,3 +1,5 @@
+import Foundation
+import Darwin
 import Testing
 @testable import MuesliNativeApp
 import MuesliCore
@@ -197,6 +199,23 @@ struct MeetingExporterTests {
 
         #expect(full.contains("**"))
         #expect(full.contains("no close"))
+    }
+
+    @Test("PDF writer runs off the main thread")
+    func pdfWriterRunsOffMainThread() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-export-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let markdown = String(repeating: "Long transcript line with **bold** text\n", count: 400)
+
+        let ranOnMainThread = try await Task.detached(priority: .userInitiated) { () throws -> Bool in
+            let attributed = MeetingExporter.buildAttributedString(from: markdown)
+            try MeetingExporter.writePDF(attributed: attributed, to: url)
+            return pthread_main_np() != 0
+        }.value
+
+        #expect(ranOnMainThread == false)
+        #expect(try Data(contentsOf: url).starts(with: Data("%PDF".utf8)))
     }
 
     // MARK: - Filename generation

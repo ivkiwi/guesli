@@ -13,7 +13,10 @@ struct MeetingHookIntegrationTests {
         let spy = MeetingHookDispatcherSpy()
         let controller = makeController(store: store, dispatcher: spy)
 
-        let persistence = try controller.persistCompletedMeetingResultAndDispatchHook(makeMeetingResult())
+        let persistence = try controller.persistCompletedMeetingResultAndDispatchHook(
+            makeMeetingResult(),
+            preparedRecordingSave: .none
+        )
 
         #expect(spy.invocations.count == 1)
         #expect(spy.invocations.first?.meetingID == persistence.meetingID)
@@ -26,7 +29,10 @@ struct MeetingHookIntegrationTests {
         let spy = MeetingHookDispatcherSpy()
         let controller = makeController(store: store, dispatcher: spy)
 
-        let persistence = try controller.persistCompletedMeetingResultAndDispatchHook(makeMeetingResult(calendarEventID: "event-123"))
+        let persistence = try controller.persistCompletedMeetingResultAndDispatchHook(
+            makeMeetingResult(calendarEventID: "event-123"),
+            preparedRecordingSave: .none
+        )
 
         let invocation = try #require(spy.invocations.first)
         #expect(invocation.meetingID == persistence.meetingID)
@@ -40,7 +46,10 @@ struct MeetingHookIntegrationTests {
         let controller = makeController(store: store, dispatcher: spy)
         let result = makeMeetingResult()
 
-        _ = try controller.persistCompletedMeetingResultAndDispatchHook(result)
+        _ = try controller.persistCompletedMeetingResultAndDispatchHook(
+            result,
+            preparedRecordingSave: .none
+        )
 
         let invocation = try #require(spy.invocations.first)
         #expect(invocation.completedAt == result.endTime)
@@ -58,9 +67,33 @@ struct MeetingHookIntegrationTests {
             $0.meetingHookTimeoutSeconds = 1
         }
 
-        let persistence = try controller.persistCompletedMeetingResultAndDispatchHook(makeMeetingResult())
+        let persistence = try controller.persistCompletedMeetingResultAndDispatchHook(
+            makeMeetingResult(),
+            preparedRecordingSave: .none
+        )
 
         #expect(try store.meeting(id: persistence.meetingID) != nil)
+    }
+
+    @Test("auto-export receives persisted meeting when enabled")
+    func autoExportReceivesPersistedMeetingWhenEnabled() throws {
+        let store = try makeStore()
+        let exporter = MeetingMarkdownAutoExporterSpy()
+        let controller = makeController(store: store, dispatcher: MeetingHookDispatcherSpy(), autoExporter: exporter)
+        controller.updateConfig {
+            $0.autoExportMarkdownEnabled = true
+            $0.autoExportMarkdownFolderPath = "/tmp/guesli-auto-export"
+        }
+
+        let persistence = try controller.persistCompletedMeetingResultAndDispatchHook(
+            makeMeetingResult(),
+            preparedRecordingSave: .none
+        )
+
+        let invocation = try #require(exporter.invocations.first)
+        #expect(exporter.invocations.count == 1)
+        #expect(invocation.meeting.id == persistence.meetingID)
+        #expect(invocation.config.autoExportMarkdownEnabled)
     }
 
     @Test("no hook runs when meeting persistence fails")
@@ -82,13 +115,18 @@ struct MeetingHookIntegrationTests {
 
         #expect(throws: Error.self) {
             try controller.persistCompletedMeetingResultAndDispatchHook(
-                makeMeetingResult(calendarEventID: "duplicate-event")
+                makeMeetingResult(calendarEventID: "duplicate-event"),
+                preparedRecordingSave: .none
             )
         }
         #expect(spy.invocations.isEmpty)
     }
 
-    private func makeController(store: DictationStore, dispatcher: MeetingHookDispatching) -> MuesliController {
+    private func makeController(
+        store: DictationStore,
+        dispatcher: MeetingHookDispatching,
+        autoExporter: MeetingMarkdownAutoExporting = MeetingMarkdownAutoExporter()
+    ) -> MuesliController {
         MuesliController(
             runtime: RuntimePaths(
                 repoRoot: FileManager.default.temporaryDirectory,
@@ -98,7 +136,8 @@ struct MeetingHookIntegrationTests {
             ),
             configStore: makeConfigStore(),
             dictationStore: store,
-            meetingHookDispatcher: dispatcher
+            meetingHookDispatcher: dispatcher,
+            meetingMarkdownAutoExporter: autoExporter
         )
     }
 
@@ -157,5 +196,23 @@ private final class MeetingHookDispatcherSpy: MeetingHookDispatching {
 
     func dispatchCompletedMeetingHook(meetingID: Int64, completedAt: Date, config: AppConfig) {
         invocations.append(Invocation(meetingID: meetingID, completedAt: completedAt, config: config))
+    }
+}
+
+private final class MeetingMarkdownAutoExporterSpy: MeetingMarkdownAutoExporting {
+    struct Invocation {
+        let meeting: MeetingRecord
+        let config: AppConfig
+    }
+
+    private(set) var invocations: [Invocation] = []
+    private(set) var lookupFailures: [(Int64, Error?)] = []
+
+    func exportIfConfigured(meeting: MeetingRecord, config: AppConfig) {
+        invocations.append(Invocation(meeting: meeting, config: config))
+    }
+
+    func recordMeetingLookupFailure(meetingID: Int64, error: Error?) {
+        lookupFailures.append((meetingID, error))
     }
 }

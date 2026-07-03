@@ -5,6 +5,20 @@ import FluidAudio
 import MuesliCore
 @testable import MuesliNativeApp
 
+private struct ImportStaticMeetingTranscriptCleaner: MeetingTranscriptCleaning {
+    let output: String
+
+    func cleanupMeetingTranscript(_ transcript: String, config: AppConfig) async throws -> String {
+        output
+    }
+}
+
+private struct ImportThrowingMeetingTranscriptCleaner: MeetingTranscriptCleaning {
+    func cleanupMeetingTranscript(_ transcript: String, config: AppConfig) async throws -> String {
+        throw NSError(domain: "AudioFileImportControllerTests", code: 1)
+    }
+}
+
 @Suite("AudioFileImportController")
 struct AudioFileImportControllerTests {
 
@@ -77,6 +91,23 @@ struct AudioFileImportControllerTests {
         #expect(file.fileFormat.commonFormat == .pcmFormatInt16)
     }
 
+    @Test("prepareAudioForImport returns reusable samples with converted WAV")
+    func prepareAudioForImportReturnsReusableSamples() async throws {
+        let sourceURL = try createTestAudioFile(duration: 1.0, sampleRate: 44100, channels: 2)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let prepared = try await AudioFileImportController.prepareAudioForImport(sourceURL: sourceURL)
+        defer { try? FileManager.default.removeItem(at: prepared.wavURL) }
+
+        #expect(!prepared.samples.isEmpty)
+        #expect(abs(Double(prepared.samples.count) / 16_000 - prepared.duration) < 0.2)
+
+        let file = try AVAudioFile(forReading: prepared.wavURL)
+        #expect(file.fileFormat.sampleRate == 16000)
+        #expect(file.fileFormat.channelCount == 1)
+        #expect(file.fileFormat.commonFormat == .pcmFormatInt16)
+    }
+
     @Test("convertToWAV handles short audio clips")
     func convertToWAVHandlesShortAudio() async throws {
         let sourceURL = try createTestAudioFile(duration: 0.5, sampleRate: 44100, channels: 1)
@@ -94,6 +125,42 @@ struct AudioFileImportControllerTests {
         #expect(AudioFileImportController.isSupportedFileURL(URL(fileURLWithPath: "/tmp/test.wav")))
         #expect(AudioFileImportController.isSupportedFileURL(URL(fileURLWithPath: "/tmp/test.MP3")))
         #expect(!AudioFileImportController.isSupportedFileURL(URL(fileURLWithPath: "/tmp/test.txt")))
+    }
+
+    // MARK: - Transcript Cleanup Tests
+
+    @Test("import transcript cleanup preserves original when cleanup changes text")
+    func importTranscriptCleanupPreservesOriginal() async {
+        var config = AppConfig()
+        config.enableMeetingTranscriptCleanup = true
+        config.meetingTranscriptCleanupProvider = MeetingTranscriptCleanupProviderOption.chatGPT.rawValue
+
+        let result = await AudioFileImportController.cleanImportedTranscriptIfNeeded(
+            "[00:00:01] Speaker 1: um hello hello",
+            config: config,
+            isChatGPTAuthenticated: true,
+            cleaner: ImportStaticMeetingTranscriptCleaner(output: "[00:00:01] Speaker 1: Hello.")
+        )
+
+        #expect(result.transcript == "[00:00:01] Speaker 1: Hello.")
+        #expect(result.originalTranscript == "[00:00:01] Speaker 1: um hello hello")
+    }
+
+    @Test("import transcript cleanup falls back to raw transcript on error")
+    func importTranscriptCleanupFallsBackOnError() async {
+        var config = AppConfig()
+        config.enableMeetingTranscriptCleanup = true
+        config.meetingTranscriptCleanupProvider = MeetingTranscriptCleanupProviderOption.chatGPT.rawValue
+
+        let result = await AudioFileImportController.cleanImportedTranscriptIfNeeded(
+            "[00:00:01] Speaker 1: raw words",
+            config: config,
+            isChatGPTAuthenticated: true,
+            cleaner: ImportThrowingMeetingTranscriptCleaner()
+        )
+
+        #expect(result.transcript == "[00:00:01] Speaker 1: raw words")
+        #expect(result.originalTranscript == nil)
     }
 
     // MARK: - Speaker Formatting Tests

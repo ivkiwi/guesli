@@ -51,7 +51,7 @@ final class LegacyMuesliImporter {
         }
 
         let tempDirectory = fileManager.temporaryDirectory
-            .appendingPathComponent("legacy-muesli-import-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(AppTemporaryDirectories.legacyImportDirectoryName(), isDirectory: true)
         try fileManager.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: tempDirectory) }
 

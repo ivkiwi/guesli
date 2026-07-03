@@ -458,7 +458,7 @@ final class MeetingSession {
                 let result = try await transcriptionCoordinator.transcribeMeetingChunk(
                     at: lastSystemChunkURL,
                     backend: currentBackend(),
-                    cohereLanguage: config.resolvedCohereLanguage
+                    cohereLanguage: config.resolvedCohereLanguageMeetings
                 )
                 let normalizedSegments = normalizeSystemTranscription(
                     result: result,
@@ -478,11 +478,21 @@ final class MeetingSession {
             try? FileManager.default.removeItem(at: lastSystemChunkURL)
         }
 
+        var systemAudioSamples: [Float]?
         var diarizationSegments: [TimedSpeakerSegment]?
         if let systemAudioURL {
             // Run speaker diarization on system audio (batch post-processing)
-            if let diarizationResult = try? await transcriptionCoordinator.diarizeSystemAudio(at: systemAudioURL) {
-                diarizationSegments = diarizationResult.segments
+            if let diarizerManager = await transcriptionCoordinator.getDiarizerManager(),
+               diarizerManager.isAvailable {
+                do {
+                    let samples = try AudioConverter().resampleAudioFile(systemAudioURL)
+                    systemAudioSamples = samples
+                    if let diarizationResult = try await transcriptionCoordinator.diarizeSystemAudio(samples: samples) {
+                        diarizationSegments = diarizationResult.segments
+                    }
+                } catch {
+                    // Preserve prior best-effort diarization behavior.
+                }
             }
         }
 
@@ -506,6 +516,7 @@ final class MeetingSession {
             let systemRecovery = await repairSystemSegmentsIfNeeded(
                 existingSystemSegments: systemSegments,
                 systemAudioURL: systemAudioURL,
+                systemAudioSamples: systemAudioSamples,
                 meetingStart: meetingStart,
                 endTime: endTime
             )
@@ -529,6 +540,7 @@ final class MeetingSession {
                 }
             }
         }
+        systemAudioSamples = nil
 
         if liveChunkingConfiguration.deduplicatesText {
             micSegments = TranscriptOverlapMerger.deduplicateSegments(micSegments)
@@ -877,7 +889,7 @@ final class MeetingSession {
                 let result = try await self.transcriptionCoordinator.transcribeMeetingChunk(
                     at: chunkURL,
                     backend: backend,
-                    cohereLanguage: config.resolvedCohereLanguage
+                    cohereLanguage: config.resolvedCohereLanguageMeetings
                 )
                 if !result.text.isEmpty {
                     fputs("[meeting] system chunk transcribed: \"\(String(result.text.prefix(60)))...\"\n", stderr)
@@ -929,11 +941,11 @@ final class MeetingSession {
 
     private func prepareRealtimeAudioPipeline(vadManager: VadManager?) throws {
         rawMicChunkRecorder = try PCMChunkRecorder(
-            directoryName: "muesli-meeting-mic-chunks",
+            directoryName: AppTemporaryDirectories.meetingMicChunks,
             overlapSampleCount: liveChunkingConfiguration.overlapSampleCount
         )
         systemChunkRecorder = try PCMChunkRecorder(
-            directoryName: "muesli-meeting-system-chunks",
+            directoryName: AppTemporaryDirectories.meetingSystemChunks,
             overlapSampleCount: liveChunkingConfiguration.overlapSampleCount
         )
         configureRealtimeAudioCallbacks(vadManager: vadManager)
@@ -1077,7 +1089,7 @@ final class MeetingSession {
             let result = try await transcriptionCoordinator.transcribeMeetingChunk(
                 at: url,
                 backend: currentBackend(),
-                cohereLanguage: config.resolvedCohereLanguage
+                cohereLanguage: config.resolvedCohereLanguageMeetings
             )
             if !result.text.isEmpty {
                 fputs("[meeting] mic chunk transcribed (raw): \"\(String(result.text.prefix(60)))...\"\n", stderr)
@@ -1127,6 +1139,7 @@ final class MeetingSession {
     private func repairSystemSegmentsIfNeeded(
         existingSystemSegments: [SpeechSegment],
         systemAudioURL: URL,
+        systemAudioSamples: [Float]? = nil,
         meetingStart: Date,
         endTime: Date
     ) async -> MeetingTranscriptRecoveryResult {
@@ -1136,14 +1149,15 @@ final class MeetingSession {
             if existingSystemSegments.isEmpty {
                 return .replace(await fallbackToFullSessionSystemTranscription(
                     systemAudioURL: systemAudioURL,
-                    meetingDuration: totalDuration
+                    meetingDuration: totalDuration,
+                    samples: systemAudioSamples
                 ))
             }
             return .none
         }
 
         do {
-            let samples = try AudioConverter().resampleAudioFile(systemAudioURL)
+            let samples = try systemAudioSamples ?? AudioConverter().resampleAudioFile(systemAudioURL)
             let speechSegments = try await vadManager.segmentSpeech(
                 samples,
                 config: VadSegmentationConfig(maxSpeechDuration: 10.0, speechPadding: 0.15)
@@ -1162,7 +1176,8 @@ final class MeetingSession {
                 fputs("[meeting] transcript health triggered full system fallback: \(reason)\n", stderr)
                 return .replace(await fallbackToFullSessionSystemTranscription(
                     systemAudioURL: systemAudioURL,
-                    meetingDuration: totalDuration
+                    meetingDuration: totalDuration,
+                    samples: samples
                 ))
             case .selectiveRepair(let repairSegments):
                 guard !repairSegments.isEmpty else { return .none }
@@ -1183,7 +1198,7 @@ final class MeetingSession {
                     let result = try await transcriptionCoordinator.transcribeMeeting(
                         at: segmentURL,
                         backend: currentBackend(),
-                        cohereLanguage: config.resolvedCohereLanguage
+                        cohereLanguage: config.resolvedCohereLanguageMeetings
                     )
                     repairedSegments.append(contentsOf: normalizeSystemTranscription(
                         result: result,
@@ -1198,7 +1213,8 @@ final class MeetingSession {
             if existingSystemSegments.isEmpty {
                 return .replace(await fallbackToFullSessionSystemTranscription(
                     systemAudioURL: systemAudioURL,
-                    meetingDuration: totalDuration
+                    meetingDuration: totalDuration,
+                    samples: systemAudioSamples
                 ))
             }
             return .none
@@ -1207,14 +1223,16 @@ final class MeetingSession {
 
     private func fallbackToFullSessionSystemTranscription(
         systemAudioURL: URL,
-        meetingDuration: Double
+        meetingDuration: Double,
+        samples: [Float]? = nil
     ) async -> [SpeechSegment] {
         fputs("[meeting] no system chunks survived, falling back to full-session system transcription\n", stderr)
         do {
             let result = try await transcriptionCoordinator.transcribeMeeting(
                 at: systemAudioURL,
+                samples: samples,
                 backend: currentBackend(),
-                cohereLanguage: config.resolvedCohereLanguage
+                cohereLanguage: config.resolvedCohereLanguageMeetings
             )
             return normalizeSystemTranscription(
                 result: result,

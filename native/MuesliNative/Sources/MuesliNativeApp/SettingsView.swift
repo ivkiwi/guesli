@@ -112,6 +112,15 @@ struct SettingsView: View {
     private let meetingControlWidth: CGFloat = 275
     private let iOSCompanionURL = IPhoneBridgeLinks.installURL
     private let screenContextGrantIntentTimeout: TimeInterval = 15 * 60
+    private var selectedTranscriptCleanupProvider: TranscriptCleanupProviderOption {
+        TranscriptCleanupProviderOption.resolved(appState.config.transcriptCleanupProvider)
+    }
+    private var transcriptCleanupCredentialStatus: TranscriptCleanupCredentialStatus? {
+        TranscriptCleanupCredentialStatus.dictationCleanup(
+            provider: selectedTranscriptCleanupProvider,
+            config: appState.config
+        )
+    }
     private let meetingDetectionAppOptions: [MeetingDetectionAppOption] = [
         MeetingDetectionAppOption(bundleID: "com.google.Chrome", name: "Chrome", icon: "globe"),
         MeetingDetectionAppOption(bundleID: "company.thebrowser.Browser", name: "Arc", icon: "globe"),
@@ -159,8 +168,12 @@ struct SettingsView: View {
         return meetingBrowserOpenOptions.first { $0.bundleID == bundleID }?.name ?? "System Default"
     }
 
-    private var selectedCohereLanguage: CohereTranscribeLanguage {
-        appState.config.resolvedCohereLanguage
+    private var selectedDictationCohereLanguage: CohereTranscribeLanguage {
+        appState.config.resolvedCohereLanguageDictation
+    }
+
+    private var selectedMeetingCohereLanguage: CohereTranscribeLanguage {
+        appState.config.resolvedCohereLanguageMeetings
     }
 
     private var selectedUpcomingMeetingsWindow: UpcomingMeetingsWindow {
@@ -560,11 +573,11 @@ struct SettingsView: View {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Cohere language") {
                         settingsMenu(
-                            selection: selectedCohereLanguage.label,
+                            selection: selectedDictationCohereLanguage.label,
                             options: CohereTranscribeLanguage.allCases.map(\.label)
                         ) { label in
                             guard let language = CohereTranscribeLanguage.allCases.first(where: { $0.label == label }) else { return }
-                            controller.selectCohereLanguage(language)
+                            controller.selectDictationCohereLanguage(language)
                         }
                     }
                 }
@@ -593,8 +606,13 @@ struct SettingsView: View {
                 }
                 if appState.config.enablePostProcessor {
                     Divider().background(MuesliTheme.surfaceBorder)
-                    settingsRow("Cleanup provider") {
-                        let provider = TranscriptCleanupProviderOption.resolved(appState.config.transcriptCleanupProvider)
+                    settingsRow(
+                        "Cleanup provider",
+                        description: selectedTranscriptCleanupProvider == .local
+                            ? "Runs on the downloaded local cleanup model."
+                            : "External cleanup uses credentials and models from Meeting Summaries."
+                    ) {
+                        let provider = selectedTranscriptCleanupProvider
                         settingsMenu(
                             selection: provider.label,
                             options: TranscriptCleanupProviderOption.allCases.map(\.label)
@@ -605,8 +623,22 @@ struct SettingsView: View {
                         }
                     }
                 }
+                if appState.config.enablePostProcessor,
+                   let status = transcriptCleanupCredentialStatus {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Cleanup credentials") {
+                        transcriptCleanupStatusView(status)
+                    }
+                }
+                if appState.config.enablePostProcessor,
+                   let warning = appState.lastTranscriptCleanupWarning {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Last cleanup warning") {
+                        transcriptCleanupWarningView(warning)
+                    }
+                }
                 if appState.config.enablePostProcessor
-                    && TranscriptCleanupProviderOption.resolved(appState.config.transcriptCleanupProvider) == .local
+                    && selectedTranscriptCleanupProvider == .local
                     && !downloadedPostProcOptions.isEmpty {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Cleanup model") {
@@ -623,7 +655,7 @@ struct SettingsView: View {
                         }
                     }
                 } else if appState.config.enablePostProcessor
-                    && TranscriptCleanupProviderOption.resolved(appState.config.transcriptCleanupProvider) == .local {
+                    && selectedTranscriptCleanupProvider == .local {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Cleanup model") {
                         Text("Download a cleanup model in Models")
@@ -657,6 +689,17 @@ struct SettingsView: View {
                         controller.updateConfig { $0.muteSystemAudioDuringDictation = newValue }
                     }
                 }
+                Divider().background(MuesliTheme.surfaceBorder)
+                settingsRow("Paste shortcut") {
+                    settingsMenu(
+                        selection: appState.config.pasteShortcut.label,
+                        options: PasteShortcut.allCases.map(\.label)
+                    ) { label in
+                        guard let shortcut = PasteShortcut.allCases.first(where: { $0.label == label }) else { return }
+                        controller.updateConfig { $0.pasteShortcut = shortcut }
+                    }
+                }
+                settingsDescription("Use ⌘⇧V for terminals or apps that remap ⌘V.")
                 screenContextRow("App context")
             }
         }
@@ -726,11 +769,11 @@ struct SettingsView: View {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Cohere language") {
                         settingsMenu(
-                            selection: selectedCohereLanguage.label,
+                            selection: selectedMeetingCohereLanguage.label,
                             options: CohereTranscribeLanguage.allCases.map(\.label)
                         ) { label in
                             guard let language = CohereTranscribeLanguage.allCases.first(where: { $0.label == label }) else { return }
-                            controller.selectCohereLanguage(language)
+                            controller.selectMeetingCohereLanguage(language)
                         }
                     }
                 }
@@ -898,6 +941,27 @@ struct SettingsView: View {
                     }
                 }
                 Divider().background(MuesliTheme.surfaceBorder)
+                settingsRow("Summary retries", controlWidth: meetingControlWidth) {
+                    Stepper(
+                        value: Binding(
+                            get: {
+                                MeetingSummaryRetryPolicy.clampedRetryCount(appState.config.meetingSummaryRetryCount)
+                            },
+                            set: { newValue in
+                                controller.updateConfig {
+                                    $0.meetingSummaryRetryCount = MeetingSummaryRetryPolicy.clampedRetryCount(newValue)
+                                }
+                            }
+                        ),
+                        in: 0...MeetingSummaryRetryPolicy.maximumRetryCount
+                    ) {
+                        Text(summaryRetryLabel(appState.config.meetingSummaryRetryCount))
+                            .font(MuesliTheme.body())
+                            .foregroundStyle(MuesliTheme.textPrimary)
+                    }
+                }
+                settingsDescription("Retry transient AI summary failures before saving failed notes.")
+                Divider().background(MuesliTheme.surfaceBorder)
                 settingsRow("Templates", controlWidth: meetingControlWidth) {
                     actionButton("Manage Templates…") {
                         controller.showMeetingTemplatesManager()
@@ -921,11 +985,59 @@ struct SettingsView: View {
                         controller.updateConfig { $0.meetingRecordingSavePolicy = policy }
                     }
                 }
+                if appState.config.meetingRecordingSavePolicy != .never {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Recording format") {
+                        settingsMenu(
+                            selection: appState.config.resolvedMeetingRecordingFileFormat.displayName,
+                            options: MeetingRecordingFileFormat.allCases.map(recordingFileFormatLabel(for:))
+                        ) { label in
+                            guard let format = recordingFileFormat(for: label) else { return }
+                            controller.updateConfig { $0.meetingRecordingFileFormat = format.rawValue }
+                        }
+                    }
+                    settingsDescription("M4A is recommended for smaller files. WAV is lossless and uses more storage.")
+                }
                 Divider().background(MuesliTheme.surfaceBorder)
                 settingsRow("Recording folder") {
                     meetingRecordingFolderPicker
                 }
-                settingsDescription("Saved recordings are stored as compact m4a audio. Retranscription uses a temporary WAV copy and removes it afterward.")
+                settingsDescription("Retranscription uses a temporary WAV copy and removes it afterward.")
+            }
+
+            settingsSection("Auto Export") {
+                settingsRow("Auto-export meetings") {
+                    settingsSwitch(isOn: appState.config.autoExportMarkdownEnabled) { newValue in
+                        controller.updateConfig { $0.autoExportMarkdownEnabled = newValue }
+                    }
+                }
+                if appState.config.autoExportMarkdownEnabled {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Destination folder") {
+                        autoExportFolderPicker
+                    }
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Content") {
+                        settingsMenu(
+                            selection: appState.config.resolvedAutoExportMarkdownContent.displayName,
+                            options: MeetingExportContent.allCases.map(\.displayName)
+                        ) { label in
+                            guard let content = MeetingExportContent.allCases.first(where: { $0.displayName == label }) else { return }
+                            controller.updateConfig { $0.autoExportMarkdownContent = content.rawValue }
+                        }
+                    }
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("File format") {
+                        settingsMenu(
+                            selection: appState.config.resolvedAutoExportFileFormat.displayName,
+                            options: MeetingAutoExportFileFormat.allCases.map(\.displayName)
+                        ) { label in
+                            guard let format = MeetingAutoExportFileFormat.allCases.first(where: { $0.displayName == label }) else { return }
+                            controller.updateConfig { $0.autoExportFileFormat = format.rawValue }
+                        }
+                    }
+                }
+                settingsDescription("Automatically saves each completed meeting to the chosen folder.")
             }
 
             settingsSection("Meeting Notifications") {
@@ -1405,6 +1517,32 @@ struct SettingsView: View {
         }
     }
 
+    private func pickAutoExportFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a folder for exported notes"
+        panel.prompt = "Choose Folder"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = preferredAutoExportDirectoryURL()
+
+        presentOpenPanel(panel) { url in
+            controller.updateConfig { $0.autoExportMarkdownFolderPath = url.standardizedFileURL.path }
+        }
+    }
+
+    private func preferredAutoExportDirectoryURL() -> URL {
+        let configuredPath = appState.config.autoExportMarkdownFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configuredPath.isEmpty {
+            let configuredURL = URL(fileURLWithPath: configuredPath).standardizedFileURL
+            if FileManager.default.fileExists(atPath: configuredURL.path) {
+                return configuredURL
+            }
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents", isDirectory: true)
+    }
+
     private func preferredMeetingHookDirectoryURL() -> URL {
         let configuredPath = appState.config.meetingHookPath.trimmingCharacters(in: .whitespacesAndNewlines)
         if !configuredPath.isEmpty {
@@ -1653,6 +1791,18 @@ struct SettingsView: View {
     private func clearPendingScreenContextEnable() {
         pendingScreenContextEnable = false
         pendingScreenContextRequestedAt = 0
+    }
+
+    private func summaryRetryLabel(_ retryCount: Int) -> String {
+        let clamped = MeetingSummaryRetryPolicy.clampedRetryCount(retryCount)
+        switch clamped {
+        case 0:
+            return "No retries"
+        case 1:
+            return "1 retry"
+        default:
+            return "\(clamped) retries"
+        }
     }
 
     private func refreshSystemAudioPermissionIfNeeded() {
@@ -2064,6 +2214,84 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
+    private var autoExportFolderPicker: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "folder")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+
+                Text(autoExportFolderLabel)
+                    .font(.system(size: 12))
+                    .foregroundStyle(appState.config.autoExportMarkdownFolderPath.isEmpty ? MuesliTheme.textTertiary : MuesliTheme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(MuesliTheme.surfacePrimary)
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity)
+            .help(autoExportFolderHelp)
+
+            if !appState.config.autoExportMarkdownFolderPath.isEmpty {
+                Button {
+                    controller.updateConfig { $0.autoExportMarkdownFolderPath = "" }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(MuesliTheme.surfacePrimary)
+                        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("Clear destination folder")
+            }
+
+            Button {
+                pickAutoExportFolder()
+            } label: {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .frame(width: 28, height: 28)
+                    .background(MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                            .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Choose destination folder")
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var autoExportFolderLabel: String {
+        let path = appState.config.autoExportMarkdownFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return "Choose a folder..." }
+        return path
+    }
+
+    private var autoExportFolderHelp: String {
+        let path = appState.config.autoExportMarkdownFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return "No destination folder selected" }
+        return path
+    }
+
+    @ViewBuilder
     private var meetingRecordingFolderPicker: some View {
         HStack(spacing: 8) {
             HStack(spacing: 8) {
@@ -2394,6 +2622,43 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
+    private func transcriptCleanupStatusView(_ status: TranscriptCleanupCredentialStatus) -> some View {
+        let tint = status.isWarning ? MuesliTheme.transcribing : MuesliTheme.success
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Spacer(minLength: 0)
+            Circle()
+                .fill(tint)
+                .frame(width: 6, height: 6)
+            Text(status.message)
+                .font(.system(size: 11))
+                .foregroundStyle(tint)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(width: controlWidth, alignment: .trailing)
+        .frame(minHeight: 24)
+    }
+
+    @ViewBuilder
+    private func transcriptCleanupWarningView(_ warning: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Spacer(minLength: 0)
+            Circle()
+                .fill(MuesliTheme.transcribing)
+                .frame(width: 6, height: 6)
+            Text(warning)
+                .font(.system(size: 11))
+                .foregroundStyle(MuesliTheme.transcribing)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(width: controlWidth, alignment: .trailing)
+        .frame(minHeight: 24)
+    }
+
+    @ViewBuilder
     private func actionButton(
         _ title: String,
         systemImage: String? = nil,
@@ -2445,6 +2710,18 @@ struct SettingsView: View {
             assertionFailure("Unexpected recording save label: \(label)")
         }
         return policy
+    }
+
+    private func recordingFileFormatLabel(for format: MeetingRecordingFileFormat) -> String {
+        format.displayName
+    }
+
+    private func recordingFileFormat(for label: String) -> MeetingRecordingFileFormat? {
+        let format = MeetingRecordingFileFormat.allCases.first { recordingFileFormatLabel(for: $0) == label }
+        if format == nil {
+            assertionFailure("Unexpected recording file format label: \(label)")
+        }
+        return format
     }
 
     private func scheduledMeetingLeadTimeLabel(for leadTime: ScheduledMeetingNotificationLeadTime) -> String {

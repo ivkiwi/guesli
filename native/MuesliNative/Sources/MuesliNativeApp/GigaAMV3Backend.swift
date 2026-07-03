@@ -424,6 +424,44 @@ actor GigaAMV3Transcriber {
         }
     }
 
+    func transcribe(samples: [Float], sampleRate: Int) async throws -> GigaAMV3TranscriptionResult {
+        if recognizer == nil {
+            try await loadModels(allowDownload: false)
+        }
+        guard let recognizer else {
+            throw NSError(domain: "GigaAMV3Transcriber", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "GigaAM v3 recognizer is not loaded.",
+            ])
+        }
+
+        let start = CFAbsoluteTimeGetCurrent()
+        do {
+            let windows = GigaAMV3FileChunking.windows(sampleCount: samples.count, sampleRate: sampleRate)
+            fputs("[muesli-native] GigaAM v3 chunked transcription: \(windows.count) windows, \(String(format: "%.1f", Double(samples.count) / Double(sampleRate)))s\n", stderr)
+
+            var transcripts: [String] = []
+            transcripts.reserveCapacity(windows.count)
+            for window in windows {
+                try Task.checkCancellation()
+                let result = try await Self.withMLXErrors {
+                    try await recognizer.transcribe(samples: Array(samples[window]), sampleRate: sampleRate)
+                }
+                let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    transcripts.append(text)
+                }
+            }
+
+            return GigaAMV3TranscriptionResult(
+                text: GigaAMV3FileChunking.mergeTranscripts(transcripts),
+                duration: Double(samples.count) / Double(sampleRate),
+                processingTime: CFAbsoluteTimeGetCurrent() - start
+            )
+        } catch {
+            throw Self.readableTranscriptionError(error)
+        }
+    }
+
     func shutdown() {
         loadGeneration += 1
         activeDownloadTask?.cancel()

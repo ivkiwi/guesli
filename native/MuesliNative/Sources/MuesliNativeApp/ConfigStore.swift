@@ -145,7 +145,8 @@ final class ConfigStore {
             config.dictationInputDeviceUID = legacy.dictationInputDeviceUID
             importedFields.append("dictation_input_device_uid")
         }
-        importValue("cohere_language", \.cohereLanguage)
+        importValue("cohere_language_dictation", \.cohereLanguageDictation)
+        importValue("cohere_language_meetings", \.cohereLanguageMeetings)
         importValue("nemotron35_language", \.nemotron35Language)
 
         if config.preferredMeetingBrowserBundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -169,9 +170,11 @@ final class ConfigStore {
         )
         importValue("meeting_recording_save_policy", \.meetingRecordingSavePolicy)
         importNonEmptyStringIfCurrentEmpty("meeting_recording_folder_path", \.meetingRecordingFolderPath)
+        importValue("meeting_recording_file_format", \.meetingRecordingFileFormat)
 
         importValue("dark_mode", \.darkMode)
         importValue("enable_double_tap_dictation", \.enableDoubleTapDictation)
+        importValue("paste_shortcut", \.pasteShortcut)
         importValue("hotkey_trigger_threshold_ms", \.hotkeyTriggerThresholdMS)
         importValue("computer_use_hotkey_trigger_threshold_ms", \.computerUseHotkeyTriggerThresholdMS)
         importValue("meeting_recording_hotkey_trigger_threshold_ms", \.meetingRecordingHotkeyTriggerThresholdMS)
@@ -256,6 +259,8 @@ final class ConfigStore {
 
         importValue("enable_post_processor", \.enablePostProcessor)
         importValue("transcript_cleanup_provider", \.transcriptCleanupProvider)
+        importValue("enable_meeting_transcript_cleanup", \.enableMeetingTranscriptCleanup)
+        importValue("meeting_transcript_cleanup_provider", \.meetingTranscriptCleanupProvider)
         importValue("active_post_processor_id", \.activePostProcessorId)
         importValue("post_processor_system_prompt", \.postProcessorSystemPrompt)
         importValue("enable_screen_context", \.enableScreenContext)

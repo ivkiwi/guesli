@@ -1,11 +1,50 @@
 import AppKit
+import CoreText
 import UniformTypeIdentifiers
 import MuesliCore
 
-enum MeetingExportContent {
+enum MeetingExportContent: String, CaseIterable {
     case notes
     case transcript
-    case fullMeeting
+    case fullMeeting = "full_meeting"
+
+    var displayName: String {
+        switch self {
+        case .notes: return "Notes"
+        case .transcript: return "Transcript"
+        case .fullMeeting: return "Full Meeting"
+        }
+    }
+
+    static func resolved(_ rawValue: String) -> MeetingExportContent {
+        MeetingExportContent(rawValue: rawValue) ?? .notes
+    }
+}
+
+enum MeetingAutoExportFileFormat: String, CaseIterable {
+    case markdown
+    case pdf
+    case markdownAndPDF = "markdown_and_pdf"
+
+    var displayName: String {
+        switch self {
+        case .markdown: return "Markdown"
+        case .pdf: return "PDF"
+        case .markdownAndPDF: return "Markdown and PDF"
+        }
+    }
+
+    var includesMarkdown: Bool {
+        self == .markdown || self == .markdownAndPDF
+    }
+
+    var includesPDF: Bool {
+        self == .pdf || self == .markdownAndPDF
+    }
+
+    static func resolved(_ rawValue: String) -> MeetingAutoExportFileFormat {
+        MeetingAutoExportFileFormat(rawValue: rawValue) ?? .markdown
+    }
 }
 
 struct MeetingExporter {
@@ -15,7 +54,6 @@ struct MeetingExporter {
 
     static func export(meeting: MeetingRecord, content: MeetingExportContent) {
         DispatchQueue.main.async {
-            let markdown = buildMarkdown(meeting: meeting, content: content)
             let filename = suggestedFilename(meeting: meeting, content: content)
 
             let panel = NSSavePanel()
@@ -28,9 +66,9 @@ struct MeetingExporter {
 
             presentSavePanel(panel) { url in
                 if formatPicker.selectedFormat == .pdf {
-                    writePDF(attributed: buildAttributedString(from: markdown), to: url)
+                    writePDF(meeting: meeting, content: content, to: url)
                 } else {
-                    writeMarkdown(markdown, to: url)
+                    writeMarkdown(meeting: meeting, content: content, to: url)
                 }
             }
         }
@@ -87,9 +125,10 @@ struct MeetingExporter {
 
     // MARK: - Write files
 
-    private static func writeMarkdown(_ text: String, to url: URL) {
+    private static func writeMarkdown(meeting: MeetingRecord, content: MeetingExportContent, to url: URL) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
+                let text = buildMarkdown(meeting: meeting, content: content)
                 try text.write(to: url, atomically: true, encoding: .utf8)
                 DispatchQueue.main.async { NSWorkspace.shared.open(url) }
             } catch {
@@ -98,44 +137,60 @@ struct MeetingExporter {
         }
     }
 
-    private static func writePDF(attributed: NSAttributedString, to url: URL) {
+    private static func writePDF(meeting: MeetingRecord, content: MeetingExportContent, to url: URL) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let markdown = buildMarkdown(meeting: meeting, content: content)
+                let attributed = buildAttributedString(from: markdown)
+                try writePDF(attributed: attributed, to: url)
+                DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+            } catch {
+                DispatchQueue.main.async { showError("Export Failed", error.localizedDescription) }
+            }
+        }
+    }
+
+    static func writePDF(attributed: NSAttributedString, to url: URL) throws {
         let pageWidth: CGFloat = 612   // US Letter
         let pageHeight: CGFloat = 792
         let margin: CGFloat = 72       // 1 inch
         let contentWidth = pageWidth - margin * 2
+        let contentHeight = pageHeight - margin * 2
+        var mediaBox = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
 
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: pageHeight - margin * 2))
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.maxSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainerInset = .zero
-        textView.textStorage?.setAttributedString(attributed)
-
-        let printInfo = NSPrintInfo()
-        printInfo.paperSize = NSSize(width: pageWidth, height: pageHeight)
-        printInfo.topMargin = margin
-        printInfo.bottomMargin = margin
-        printInfo.leftMargin = margin
-        printInfo.rightMargin = margin
-        printInfo.horizontalPagination = .fit
-        printInfo.verticalPagination = .automatic
-        printInfo.isHorizontallyCentered = false
-        printInfo.isVerticallyCentered = false
-        printInfo.jobDisposition = .save
-        printInfo.dictionary().setValue(url, forKey: NSPrintInfo.AttributeKey.jobSavingURL.rawValue)
-
-        let printOp = NSPrintOperation(view: textView, printInfo: printInfo)
-        printOp.showsPrintPanel = false
-        printOp.showsProgressPanel = false
-
-        if printOp.run() {
-            NSWorkspace.shared.open(url)
-        } else {
-            showError("Export Failed", "Could not generate the PDF document.")
+        guard let consumer = CGDataConsumer(url: url as CFURL),
+              let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+            throw CocoaError(.fileWriteUnknown)
         }
+
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed)
+        var range = CFRange(location: 0, length: 0)
+        let length = attributed.length
+
+        repeat {
+            context.beginPDFPage(nil)
+            context.saveGState()
+            context.textMatrix = .identity
+            context.translateBy(x: 0, y: pageHeight)
+            context.scaleBy(x: 1, y: -1)
+
+            let path = CGMutablePath()
+            path.addRect(CGRect(x: margin, y: margin, width: contentWidth, height: contentHeight))
+            let frame = CTFramesetterCreateFrame(framesetter, range, path, nil)
+            CTFrameDraw(frame, context)
+
+            context.restoreGState()
+            context.endPDFPage()
+
+            if length == 0 { break }
+            let visible = CTFrameGetVisibleStringRange(frame)
+            guard visible.length > 0 else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            range.location += visible.length
+        } while range.location < length
+
+        context.closePDF()
     }
 
     // MARK: - Save panel
@@ -314,7 +369,11 @@ struct MeetingExporter {
 
     // MARK: - Helpers
 
-    static func suggestedFilename(meeting: MeetingRecord, content: MeetingExportContent) -> String {
+    static func suggestedFilename(
+        meeting: MeetingRecord,
+        content: MeetingExportContent,
+        fileExtension: String = "pdf"
+    ) -> String {
         let sanitized = String(
             meeting.title
                 .components(separatedBy: CharacterSet.alphanumerics.inverted)
@@ -330,7 +389,7 @@ struct MeetingExporter {
         case .transcript: suffix = "-transcript"
         case .fullMeeting: suffix = ""
         }
-        return "\(stem)\(suffix).pdf"
+        return "\(stem)\(suffix).\(fileExtension)"
     }
 
     private static func formatExportDate(_ raw: String) -> String {

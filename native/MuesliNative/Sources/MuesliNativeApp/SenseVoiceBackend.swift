@@ -114,6 +114,27 @@ actor SenseVoiceTranscriber {
         return (text, processingTime)
     }
 
+    func transcribe(samples: [Float]) async throws -> (text: String, processingTime: Double) {
+        guard let manager else { throw TranscriberError.notLoaded }
+        let start = CFAbsoluteTimeGetCurrent()
+        let windows = SenseVoiceFileChunking.windows(sampleCount: samples.count)
+        guard !windows.isEmpty else {
+            return ("", CFAbsoluteTimeGetCurrent() - start)
+        }
+
+        fputs("[sensevoice] chunked transcription: \(windows.count) windows, \(String(format: "%.1f", Double(samples.count) / Double(SenseVoiceFileChunking.sampleRate)))s\n", stderr)
+        var transcripts: [String] = []
+        transcripts.reserveCapacity(windows.count)
+        for window in windows {
+            try Task.checkCancellation()
+            let text = try await manager.transcribe(audio: Array(samples[window]))
+            transcripts.append(text)
+        }
+
+        let text = SenseVoiceFileChunking.mergeTranscripts(transcripts)
+        return (text, CFAbsoluteTimeGetCurrent() - start)
+    }
+
     func shutdown() {
         manager = nil
         hasCompletedWarmup = false

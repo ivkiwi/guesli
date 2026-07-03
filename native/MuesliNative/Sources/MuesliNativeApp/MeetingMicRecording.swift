@@ -152,13 +152,13 @@ final class RouteAwareMeetingMicRecorder: MeetingMicRecording {
 
     init(
         systemDefaultRecorder: MeetingMicRecording = StreamingMeetingMicRecorderAdapter(
-            recorder: StreamingMicRecorder(directoryName: "muesli-meeting-mic"),
+            recorder: StreamingMicRecorder(directoryName: AppTemporaryDirectories.meetingMic),
             kind: .systemDefaultStreaming
         ),
         appScopedRecorder: MeetingMicRecording = StreamingMeetingMicRecorderAdapter(
             recorder: FallbackStreamingDictationRecorder(
-                primary: AudioQueueInputRecorder(directoryName: "muesli-meeting-mic-audioqueue"),
-                fallback: StreamingMicRecorder(directoryName: "muesli-meeting-mic-app-scoped-fallback")
+                primary: AudioQueueInputRecorder(directoryName: AppTemporaryDirectories.meetingMicAudioQueue),
+                fallback: StreamingMicRecorder(directoryName: AppTemporaryDirectories.meetingMicAppScopedFallback)
             ),
             kind: .appScopedAudioQueue
         ),

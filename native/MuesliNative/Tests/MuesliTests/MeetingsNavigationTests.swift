@@ -214,6 +214,49 @@ struct MeetingsNavigationTests {
         #expect(FileManager.default.fileExists(atPath: cacheURL.path) == false)
     }
 
+    @Test("clearMeetingHistory removes saved recordings and waveform cache")
+    func clearMeetingHistoryRemovesSavedRecordingsAndWaveformCache() throws {
+        let store = try makeStore()
+        let configStore = makeConfigStore()
+        let recordingsDirectory = MeetingRecordingStorage.directory(
+            config: AppConfig(),
+            supportDirectory: configStore.supportDirectory()
+        )
+        try FileManager.default.createDirectory(at: recordingsDirectory, withIntermediateDirectories: true)
+        let savedRecordingURL = recordingsDirectory.appendingPathComponent("meeting.m4a")
+        try Data("recording".utf8).write(to: savedRecordingURL)
+        let cacheURL = try RecordingWaveformCacheFiles.cacheURL(
+            for: savedRecordingURL,
+            supportDirectory: configStore.supportDirectory()
+        )
+        try Data("cache".utf8).write(to: cacheURL)
+        let strandedCacheURL = RecordingWaveformCacheFiles
+            .cacheDirectory(supportDirectory: configStore.supportDirectory())
+            .appendingPathComponent("stranded.mwf")
+        try Data("old-cache".utf8).write(to: strandedCacheURL)
+
+        let now = Date()
+        try store.insertMeeting(
+            title: "Clear Target",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "Transcript",
+            formattedNotes: "## Notes",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: savedRecordingURL.path
+        )
+        let controller = makeController(configStore: configStore, dictationStore: store)
+
+        controller.clearMeetingHistory()
+
+        #expect(try store.recentMeetings(limit: 10).isEmpty)
+        #expect(FileManager.default.fileExists(atPath: recordingsDirectory.path) == false)
+        #expect(FileManager.default.fileExists(atPath: cacheURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: strandedCacheURL.path) == false)
+    }
+
     @Test("deleteMeeting keeps a shared saved recording for remaining meetings")
     func deleteMeetingKeepsSharedRecording() throws {
         let store = try makeStore()
@@ -435,7 +478,11 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
-        let persistenceResult = try controller.persistCompletedMeetingResult(result)
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(for: result)
+        let persistenceResult = try controller.persistCompletedMeetingResult(
+            result,
+            preparedRecordingSave: preparedRecordingSave
+        )
 
         #expect(persistenceResult.recordingSaveError != nil)
         let storedMeeting = try store.meeting(id: persistenceResult.meetingID)
@@ -467,9 +514,13 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(
+            for: result,
+            saveDecision: false
+        )
         let persistenceResult = try controller.persistCompletedMeetingResult(
             result,
-            recordingSaveDecision: false
+            preparedRecordingSave: preparedRecordingSave
         )
 
         let storedMeeting = try store.meeting(id: persistenceResult.meetingID)
@@ -482,7 +533,10 @@ struct MeetingsNavigationTests {
     func persistCompletedMeetingResultHonorsExplicitRecordingSaveDecisionAfterPolicyDrift() async throws {
         let store = try makeStore()
         let controller = makeController(dictationStore: store)
-        controller.updateConfig { $0.meetingRecordingSavePolicy = .never }
+        controller.updateConfig {
+            $0.meetingRecordingSavePolicy = .never
+            $0.meetingRecordingFileFormat = MeetingRecordingFileFormat.wav.rawValue
+        }
 
         let retainedRecordingURL = try makeRetainedRecordingURL()
 
@@ -501,15 +555,19 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(
+            for: result,
+            saveDecision: true
+        )
         let persistenceResult = try controller.persistCompletedMeetingResult(
             result,
-            recordingSaveDecision: true
+            preparedRecordingSave: preparedRecordingSave
         )
 
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
         let savedRecordingPath = try #require(storedMeeting.savedRecordingPath)
         #expect(FileManager.default.fileExists(atPath: savedRecordingPath))
-        #expect(URL(fileURLWithPath: savedRecordingPath).pathExtension == "m4a")
+        #expect(URL(fileURLWithPath: savedRecordingPath).pathExtension == "wav")
         #expect(FileManager.default.fileExists(atPath: retainedRecordingURL.path) == false)
     }
 
@@ -540,7 +598,11 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
-        let persistenceResult = try controller.persistCompletedMeetingResult(result)
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(for: result)
+        let persistenceResult = try controller.persistCompletedMeetingResult(
+            result,
+            preparedRecordingSave: preparedRecordingSave
+        )
 
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
         let savedRecordingPath = try #require(storedMeeting.savedRecordingPath)
@@ -572,7 +634,11 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
-        let persistenceResult = try controller.persistCompletedMeetingResult(result)
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(for: result)
+        let persistenceResult = try controller.persistCompletedMeetingResult(
+            result,
+            preparedRecordingSave: preparedRecordingSave
+        )
 
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
         #expect(storedMeeting.savedRecordingPath == nil)
@@ -600,9 +666,13 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(
+            for: result,
+            saveDecision: true
+        )
         let persistenceResult = try controller.persistCompletedMeetingResult(
             result,
-            recordingSaveDecision: true
+            preparedRecordingSave: preparedRecordingSave
         )
 
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
@@ -633,7 +703,11 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
-        _ = try controller.persistCompletedMeetingResult(result, existingMeetingID: liveID)
+        _ = try controller.persistCompletedMeetingResult(
+            result,
+            existingMeetingID: liveID,
+            preparedRecordingSave: .none
+        )
 
         let storedMeeting = try #require(try store.meeting(id: liveID))
         #expect(storedMeeting.title == "Investor Follow-up")
@@ -663,7 +737,11 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
-        _ = try controller.persistCompletedMeetingResult(result, existingMeetingID: liveID)
+        _ = try controller.persistCompletedMeetingResult(
+            result,
+            existingMeetingID: liveID,
+            preparedRecordingSave: .none
+        )
 
         let storedMeeting = try #require(try store.meeting(id: liveID))
         #expect(storedMeeting.title == "Status Bar Stop Title")

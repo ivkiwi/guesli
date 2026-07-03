@@ -147,6 +147,28 @@ struct CompletedMeetingPersistenceResult {
     let recordingSaveError: MeetingLifecycleError?
 }
 
+struct MeetingRecordingSaveRequest: Sendable {
+    let tempURL: URL
+    let meetingTitle: String
+    let startedAt: Date
+    let destinationDirectory: URL
+    let fileFormat: MeetingRecordingFileFormat
+}
+
+enum MeetingRecordingSavePlan {
+    case none
+    case discard(tempURL: URL)
+    case save(MeetingRecordingSaveRequest)
+    case failed(MeetingLifecycleError)
+}
+
+struct PreparedMeetingRecordingSave {
+    let path: String?
+    let error: MeetingLifecycleError?
+
+    static let none = PreparedMeetingRecordingSave(path: nil, error: nil)
+}
+
 private final class DictationLatencyLogWriter: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.muesli.dictation-latency-log")
     private let url: URL
@@ -221,6 +243,7 @@ final class MuesliController: NSObject {
     private let configStore: ConfigStore
     private let dictationStore: DictationStore
     private let meetingHookDispatcher: MeetingHookDispatching
+    private let meetingMarkdownAutoExporter: MeetingMarkdownAutoExporting
     private let launchAtLoginCoordinator: LaunchAtLoginCoordinator
     let transcriptionCoordinator = TranscriptionCoordinator()
     private let hotkeyMonitor = HotkeyMonitor()
@@ -259,6 +282,8 @@ final class MuesliController: NSObject {
     private var meetingStartingNowTimers = [String: Timer]()
     private var notifiedUpcomingEventIDs = Set<String>()
     private var autoRecordedCalendarEventIDs = Set<String>()
+    private var autoRecordTimers = [String: Timer]()
+    private var autoRecordWakeActivity: NSObjectProtocol?
     private var meetingFeatureMonitorsAllowed = false
     private var meetingDetectionMonitorStarted = false
 
@@ -364,6 +389,7 @@ final class MuesliController: NSObject {
         configStore: ConfigStore = ConfigStore(),
         dictationStore: DictationStore? = nil,
         meetingHookDispatcher: MeetingHookDispatching = MeetingHookRunner(),
+        meetingMarkdownAutoExporter: MeetingMarkdownAutoExporting = MeetingMarkdownAutoExporter(),
         launchAtLoginManager: LaunchAtLoginManaging = SystemLaunchAtLoginManager(),
         audioDuckingController: AudioDuckingManaging = AudioDuckingController(),
         dictationAudioRoutingController: DictationAudioRouting = DictationAudioRouteController()
@@ -375,6 +401,7 @@ final class MuesliController: NSObject {
             databaseURL: MuesliPaths.defaultDatabaseURL(appName: AppIdentity.supportDirectoryName)
         )
         self.meetingHookDispatcher = meetingHookDispatcher
+        self.meetingMarkdownAutoExporter = meetingMarkdownAutoExporter
         self.launchAtLoginCoordinator = LaunchAtLoginCoordinator(manager: launchAtLoginManager)
         self.audioDuckingController = audioDuckingController
         self.dictationAudioRoutingController = dictationAudioRoutingController
@@ -401,6 +428,12 @@ final class MuesliController: NSObject {
         self.indicator = FloatingIndicatorController(configStore: configStore)
         ComputerUseCursorOverlay.shared.attachIndicator(self.indicator)
         super.init()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.transcriptionCoordinator.setTranscriptCleanupWarningHandler { [weak self] warning in
+                self?.presentTranscriptCleanupWarning(warning)
+            }
+        }
         dictationAudioSessionManager.onEvent = { [weak self] event in
             Task { @MainActor [weak self] in
                 self?.handleDictationAudioSessionEvent(event)
@@ -440,14 +473,9 @@ final class MuesliController: NSObject {
         syncLaunchAtLoginConfigWithSystem()
         reconcilePendingDictionaryCorrectionAccessibilityEnable()
 
-        // Clean up leftover audio temp files from previous sessions.
-        cleanupTemporaryDirectory(
-            named: "muesli-system-audio",
-            logDescription: "leftover temp audio files"
-        )
-        cleanupTemporaryDirectory(
-            named: "muesli-meeting-recordings",
-            logDescription: "leftover temp meeting recording files"
+        AppTemporaryDirectories.sweepAtLaunch()
+        RecordingWaveformCacheFiles.sweepStaleCachedWaveforms(
+            supportDirectory: configStore.supportDirectory()
         )
 
         hotkeyMonitor.onArm = { [weak self] in self?.handleArm() }
@@ -766,6 +794,7 @@ final class MuesliController: NSObject {
         meetingStartingNowTimers.removeAll()
         notifiedUpcomingEventIDs.removeAll()
         autoRecordedCalendarEventIDs.removeAll()
+        cancelAllAutoRecordWakes()
         meetingFeatureMonitorsAllowed = false
         disarmMeetingAutoStop()
         meetingMonitor.stop()
@@ -832,6 +861,15 @@ final class MuesliController: NSObject {
         } else {
             indicator.closeIfIdle()
         }
+    }
+
+    @MainActor
+    private func presentTranscriptCleanupWarning(_ warning: String?) {
+        appState.lastTranscriptCleanupWarning = warning
+        guard let warning else { return }
+        statusBarController?.setStatus(warning)
+        statusBarController?.refresh()
+        indicator.showWarning("AI cleanup failed", icon: "!", duration: 3.0)
     }
 
     func refreshUI() {
@@ -1035,6 +1073,16 @@ final class MuesliController: NSObject {
         let previousComputerUseHotkeyTriggerThresholdMS = config.computerUseHotkeyTriggerThresholdMS
         let previousMeetingRecordingHotkeyTriggerThresholdMS = config.meetingRecordingHotkeyTriggerThresholdMS
         let previousEnableDictionaryCorrectionPrompts = config.enableDictionaryCorrectionPrompts
+        let previousEnablePostProcessor = config.enablePostProcessor
+        let previousTranscriptCleanupProvider = config.transcriptCleanupProvider
+        let previousOpenAIAPIKey = config.openAIAPIKey
+        let previousOpenAIModel = config.openAIModel
+        let previousOpenRouterAPIKey = config.openRouterAPIKey
+        let previousOpenRouterModel = config.openRouterModel
+        let previousCustomLLMURL = config.customLLMURL
+        let previousCustomLLMAPIKey = config.customLLMAPIKey
+        let previousCustomLLMModel = config.customLLMModel
+        let previousCustomLLMFormat = config.customLLMFormat
         mutate(&config)
         if previousEnableDictionaryCorrectionPrompts, !config.enableDictionaryCorrectionPrompts {
             dictationCorrectionMonitor.cancel()
@@ -1081,8 +1129,21 @@ final class MuesliController: NSObject {
         appState.selectedMeetingSummaryBackend = selectedMeetingSummaryBackend
         appState.config = config
         appState.isChatGPTAuthenticated = chatGPTAuth.isAuthenticated
+        if previousEnablePostProcessor != config.enablePostProcessor
+            || previousTranscriptCleanupProvider != config.transcriptCleanupProvider
+            || previousOpenAIAPIKey != config.openAIAPIKey
+            || previousOpenAIModel != config.openAIModel
+            || previousOpenRouterAPIKey != config.openRouterAPIKey
+            || previousOpenRouterModel != config.openRouterModel
+            || previousCustomLLMURL != config.customLLMURL
+            || previousCustomLLMAPIKey != config.customLLMAPIKey
+            || previousCustomLLMModel != config.customLLMModel
+            || previousCustomLLMFormat != config.customLLMFormat {
+            appState.lastTranscriptCleanupWarning = nil
+        }
         syncCalendarMonitor()
         syncMeetingDetectionMonitor()
+        syncAutoRecordWakes()
         updateMeetingNotificationVisibility()
         syncDictationRecorderWarmup(intent: .idlePrewarm(.configChange))
         if !wasICloudSyncEnabled && config.iCloudSyncEnabled {
@@ -1670,9 +1731,15 @@ final class MuesliController: NSObject {
         }
     }
 
-    func selectCohereLanguage(_ language: CohereTranscribeLanguage) {
+    func selectDictationCohereLanguage(_ language: CohereTranscribeLanguage) {
         updateConfig {
-            $0.cohereLanguage = language.rawValue
+            $0.cohereLanguageDictation = language.rawValue
+        }
+    }
+
+    func selectMeetingCohereLanguage(_ language: CohereTranscribeLanguage) {
+        updateConfig {
+            $0.cohereLanguageMeetings = language.rawValue
         }
     }
 
@@ -1988,6 +2055,7 @@ final class MuesliController: NSObject {
         }
 
         appState.upcomingCalendarEvents = ekEvents
+        syncAutoRecordWakes()
 
         // Prune hidden IDs only when the widest supported window still cannot see the event.
         observedEventIDs.formUnion(ekEvents.map(\.id))
@@ -2182,6 +2250,100 @@ final class MuesliController: NSObject {
         "\(id)|\(Int(startDate.timeIntervalSince1970))"
     }
 
+    @discardableResult
+    private func autoRecordEventIfNeeded(_ event: UnifiedCalendarEvent) -> Bool {
+        let key = notificationKey(id: event.id, startDate: event.startDate)
+        guard !autoRecordedCalendarEventIDs.contains(key) else { return false }
+        guard !isMeetingRecording(), !isStartingMeetingRecording else { return false }
+        autoRecordedCalendarEventIDs.insert(key)
+        startMeetingRecording(
+            title: event.title,
+            calendarEventID: event.id,
+            openDocument: true,
+            endDate: event.endDate,
+            autoStopSource: event.meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) },
+            startOrigin: .calendarAutoRecord
+        )
+        return true
+    }
+
+    private func syncAutoRecordWakes() {
+        guard meetingFeatureMonitorsAllowed, config.autoRecordMeetings else {
+            cancelAllAutoRecordWakes()
+            return
+        }
+
+        let now = Date()
+        let candidates = ScheduledMeetingNotificationPolicy.autoRecordWakeCandidates(
+            from: appState.upcomingCalendarEvents,
+            now: now,
+            hiddenEventIDs: appState.hiddenCalendarEventIDs
+        )
+
+        var liveKeys = Set<String>()
+        for event in candidates {
+            let key = notificationKey(id: event.id, startDate: event.startDate)
+            liveKeys.insert(key)
+            guard !autoRecordedCalendarEventIDs.contains(key), autoRecordTimers[key] == nil else { continue }
+
+            let eventID = event.id
+            let startDate = event.startDate
+            autoRecordTimers[key] = Timer.scheduledTimer(withTimeInterval: max(event.startDate.timeIntervalSince(now), 0), repeats: false) { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.autoRecordTimers.removeValue(forKey: key)
+                    self.fireAutoRecordWake(eventID: eventID, startDate: startDate)
+                    self.updateAutoRecordWakeActivity()
+                }
+            }
+        }
+
+        let staleKeys = autoRecordTimers.keys.filter { !liveKeys.contains($0) }
+        for key in staleKeys {
+            autoRecordTimers.removeValue(forKey: key)?.invalidate()
+        }
+
+        updateAutoRecordWakeActivity()
+    }
+
+    private func fireAutoRecordWake(eventID: String, startDate: Date) {
+        guard config.autoRecordMeetings,
+              !isMeetingRecording(),
+              !isStartingMeetingRecording,
+              let event = ScheduledMeetingNotificationPolicy.startingNowCandidate(
+                from: appState.upcomingCalendarEvents,
+                eventID: eventID,
+                startDate: startDate,
+                hiddenEventIDs: appState.hiddenCalendarEventIDs
+              ),
+              ScheduledMeetingNotificationPolicy.shouldAutoRecordNow(
+                for: event,
+                now: Date(),
+                hiddenEventIDs: appState.hiddenCalendarEventIDs
+              ) else { return }
+        autoRecordEventIfNeeded(event)
+    }
+
+    private func cancelAllAutoRecordWakes() {
+        autoRecordTimers.values.forEach { $0.invalidate() }
+        autoRecordTimers.removeAll()
+        updateAutoRecordWakeActivity()
+    }
+
+    private func updateAutoRecordWakeActivity() {
+        if autoRecordTimers.isEmpty {
+            if let activity = autoRecordWakeActivity {
+                ProcessInfo.processInfo.endActivity(activity)
+                autoRecordWakeActivity = nil
+            }
+        } else if autoRecordWakeActivity == nil {
+            autoRecordWakeActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep],
+                reason: "Waiting to auto-record scheduled meetings"
+            )
+        }
+    }
+
     private func checkUpcomingCalendarNotifications() {
         guard !isMeetingRecording(),
               !isStartingMeetingRecording else { return }
@@ -2208,19 +2370,7 @@ final class MuesliController: NSObject {
                 now: now,
                 hiddenEventIDs: appState.hiddenCalendarEventIDs
             )
-            for event in autoRecordCandidates {
-                let key = notificationKey(id: event.id, startDate: event.startDate)
-                guard !autoRecordedCalendarEventIDs.contains(key) else { continue }
-                autoRecordedCalendarEventIDs.insert(key)
-
-                startMeetingRecording(
-                    title: event.title,
-                    calendarEventID: event.id,
-                    openDocument: true,
-                    endDate: event.endDate,
-                    autoStopSource: event.meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) },
-                    startOrigin: .calendarAutoRecord
-                )
+            for event in autoRecordCandidates where autoRecordEventIfNeeded(event) {
                 return
             }
         }
@@ -3037,7 +3187,8 @@ final class MuesliController: NSObject {
             config.userName = userName
             config.sttBackend = backend.backend
             config.sttModel = backend.model
-            config.cohereLanguage = cohereLanguage.rawValue
+            config.cohereLanguageDictation = cohereLanguage.rawValue
+            config.cohereLanguageMeetings = cohereLanguage.rawValue
             config.meetingTranscriptionBackend = backend.backend
             config.meetingTranscriptionModel = backend.model
             config.dictationHotkey = hotkey
@@ -3166,7 +3317,7 @@ final class MuesliController: NSObject {
             userName: config.userName,
             selectedBackendKey: config.sttBackend,
             selectedModelKey: config.sttModel,
-            selectedCohereLanguageCode: config.cohereLanguage,
+            selectedCohereLanguageCode: config.cohereLanguageDictation,
             hotkeyKeyCode: config.dictationHotkey.keyCode,
             hotkeyLabel: config.dictationHotkey.label,
             systemAudioRequested: false,
@@ -3438,7 +3589,7 @@ final class MuesliController: NSObject {
                 let transcription = try await self.transcriptionCoordinator.transcribeMeeting(
                     at: transcriptionWAVURL,
                     backend: backend,
-                    cohereLanguage: self.config.resolvedCohereLanguage
+                    cohereLanguage: self.config.resolvedCohereLanguageMeetings
                 )
                 let rawTranscript = transcription.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !rawTranscript.isEmpty else {
@@ -3948,11 +4099,12 @@ final class MuesliController: NSObject {
         }
 
         do {
+            try clearSavedMeetingWaveformCache()
             try clearSavedMeetingRecordingsDirectory()
         } catch {
             presentErrorAlert(
                 title: "Couldn't Clear Meeting History",
-                message: "Saved meeting recordings could not be deleted, so meeting history was left in place. \(error.localizedDescription)"
+                message: "Saved meeting audio files could not be deleted, so meeting history was left in place. \(error.localizedDescription)"
             )
             return
         }
@@ -4401,6 +4553,7 @@ final class MuesliController: NSObject {
         startTime: Date,
         endTime: Date,
         rawTranscript: String,
+        rawOriginalTranscript: String? = nil,
         formattedNotes: String,
         micAudioPath: String?,
         systemAudioPath: String?,
@@ -4416,6 +4569,7 @@ final class MuesliController: NSObject {
             startTime: startTime,
             endTime: endTime,
             rawTranscript: rawTranscript,
+            rawOriginalTranscript: rawOriginalTranscript,
             formattedNotes: formattedNotes,
             micAudioPath: micAudioPath,
             systemAudioPath: systemAudioPath,
@@ -5199,11 +5353,15 @@ final class MuesliController: NSObject {
                     self.setMeetingProcessingStatus("Finalizing")
                 }
                 let recordingSaveDecision = await self.recordingSaveDecision(for: result)
+                let preparedRecordingSave = await self.prepareMeetingRecordingSave(
+                    for: result,
+                    saveDecision: recordingSaveDecision
+                )
                 let persistenceResult = try await MainActor.run {
                     try self.persistCompletedMeetingResultAndDispatchHook(
                         result,
                         existingMeetingID: liveMeetingID,
-                        recordingSaveDecision: recordingSaveDecision
+                        preparedRecordingSave: preparedRecordingSave
                     )
                 }
                 completedMeetingID = persistenceResult.meetingID
@@ -5270,21 +5428,11 @@ final class MuesliController: NSObject {
     func persistCompletedMeetingResult(
         _ result: MeetingSessionResult,
         existingMeetingID: Int64? = nil,
-        recordingSaveDecision: Bool? = nil
+        preparedRecordingSave: PreparedMeetingRecordingSave
     ) throws -> CompletedMeetingPersistenceResult {
         let meetingID: Int64
-        var savedRecordingPath: String?
-        var recordingSaveError: MeetingLifecycleError?
-        do {
-            savedRecordingPath = try persistMeetingRecordingIfNeeded(
-                for: result,
-                saveDecision: recordingSaveDecision
-            )
-        } catch let error as MeetingLifecycleError {
-            recordingSaveError = error
-        } catch {
-            recordingSaveError = .failedToSaveRecording(underlying: error)
-        }
+        let savedRecordingPath = preparedRecordingSave.path
+        let recordingSaveError = preparedRecordingSave.error
 
         if let existingMeetingID {
             let persistedTitle = completedLiveMeetingTitle(for: result, existingMeetingID: existingMeetingID)
@@ -5358,25 +5506,39 @@ final class MuesliController: NSObject {
     func persistCompletedMeetingResultAndDispatchHook(
         _ result: MeetingSessionResult,
         existingMeetingID: Int64? = nil,
-        recordingSaveDecision: Bool? = nil
+        preparedRecordingSave: PreparedMeetingRecordingSave
     ) throws -> CompletedMeetingPersistenceResult {
         let persistenceResult = try persistCompletedMeetingResult(
             result,
             existingMeetingID: existingMeetingID,
-            recordingSaveDecision: recordingSaveDecision
+            preparedRecordingSave: preparedRecordingSave
         )
         meetingHookDispatcher.dispatchCompletedMeetingHook(
             meetingID: persistenceResult.meetingID,
             completedAt: result.endTime,
             config: config
         )
+        dispatchMeetingMarkdownAutoExport(meetingID: persistenceResult.meetingID)
         return persistenceResult
     }
 
-    private func persistMeetingRecordingIfNeeded(
+    private func dispatchMeetingMarkdownAutoExport(meetingID: Int64) {
+        guard config.autoExportMarkdownEnabled else { return }
+        do {
+            if let record = try dictationStore.meeting(id: meetingID) {
+                meetingMarkdownAutoExporter.exportIfConfigured(meeting: record, config: config)
+            } else {
+                meetingMarkdownAutoExporter.recordMeetingLookupFailure(meetingID: meetingID, error: nil)
+            }
+        } catch {
+            meetingMarkdownAutoExporter.recordMeetingLookupFailure(meetingID: meetingID, error: error)
+        }
+    }
+
+    private func meetingRecordingSavePlan(
         for result: MeetingSessionResult,
         saveDecision: Bool? = nil
-    ) throws -> String? {
+    ) -> MeetingRecordingSavePlan {
         let shouldSave: Bool
         if let saveDecision {
             shouldSave = saveDecision
@@ -5393,30 +5555,66 @@ final class MuesliController: NSObject {
 
         guard shouldSave else {
             if let retainedRecordingURL = result.retainedRecordingURL {
-                try? FileManager.default.removeItem(at: retainedRecordingURL)
+                return .discard(tempURL: retainedRecordingURL)
             }
-            return nil
+            return .none
         }
 
         if let retainedRecordingError = result.retainedRecordingError {
-            throw MeetingLifecycleError.failedToSaveRecording(underlying: retainedRecordingError)
+            return .failed(.failedToSaveRecording(underlying: retainedRecordingError))
         }
 
         guard let retainedRecordingURL = result.retainedRecordingURL else {
-            return nil
+            return .none
         }
 
-        do {
-            let outputURL = try MeetingRecordingStorage.persistTemporaryRecording(
-                from: retainedRecordingURL,
-                meetingTitle: result.title,
-                startedAt: result.startTime,
+        return .save(MeetingRecordingSaveRequest(
+            tempURL: retainedRecordingURL,
+            meetingTitle: result.title,
+            startedAt: result.startTime,
+            destinationDirectory: MeetingRecordingStorage.directory(
                 config: config,
                 supportDirectory: AppIdentity.supportDirectoryURL
-            )
-            return outputURL.path
-        } catch {
-            throw MeetingLifecycleError.failedToSaveRecording(underlying: error)
+            ),
+            fileFormat: config.resolvedMeetingRecordingFileFormat
+        ))
+    }
+
+    func prepareMeetingRecordingSave(
+        for result: MeetingSessionResult,
+        saveDecision: Bool? = nil
+    ) async -> PreparedMeetingRecordingSave {
+        let plan = meetingRecordingSavePlan(for: result, saveDecision: saveDecision)
+        return await Self.prepareMeetingRecordingSave(plan)
+    }
+
+    private nonisolated static func prepareMeetingRecordingSave(
+        _ plan: MeetingRecordingSavePlan
+    ) async -> PreparedMeetingRecordingSave {
+        switch plan {
+        case .none:
+            return .none
+        case .discard(let tempURL):
+            try? FileManager.default.removeItem(at: tempURL)
+            return .none
+        case .failed(let error):
+            return PreparedMeetingRecordingSave(path: nil, error: error)
+        case .save(let request):
+            do {
+                let outputURL = try await MeetingRecordingStorage.persistTemporaryRecordingAsync(
+                    from: request.tempURL,
+                    meetingTitle: request.meetingTitle,
+                    startedAt: request.startedAt,
+                    destinationDirectory: request.destinationDirectory,
+                    fileFormat: request.fileFormat
+                )
+                return PreparedMeetingRecordingSave(path: outputURL.path, error: nil)
+            } catch {
+                return PreparedMeetingRecordingSave(
+                    path: nil,
+                    error: .failedToSaveRecording(underlying: error)
+                )
+            }
         }
     }
 
@@ -5429,31 +5627,19 @@ final class MuesliController: NSObject {
         }
     }
 
-    private func cleanupTemporaryDirectory(named directoryName: String, logDescription: String) {
-        let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(directoryName)
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: nil
-        ) else {
-            return
-        }
-
-        for file in files {
-            try? FileManager.default.removeItem(at: file)
-        }
-
-        if !files.isEmpty {
-            fputs("[muesli-native] cleaned up \(files.count) \(logDescription)\n", stderr)
-        }
-    }
-
     private func clearSavedMeetingRecordingsDirectory() throws {
         let recordingsDirectory = MeetingRecordingStorage.directory(
             config: config,
-            supportDirectory: AppIdentity.supportDirectoryURL
+            supportDirectory: configStore.supportDirectory()
         )
         guard FileManager.default.fileExists(atPath: recordingsDirectory.path) else { return }
         try FileManager.default.removeItem(at: recordingsDirectory)
+    }
+
+    private func clearSavedMeetingWaveformCache() throws {
+        try RecordingWaveformCacheFiles.removeAllCachedWaveforms(
+            supportDirectory: configStore.supportDirectory()
+        )
     }
 
     private func deleteSavedMeetingRecording(at path: String) throws {
@@ -6127,7 +6313,7 @@ final class MuesliController: NSObject {
                 let result = try await self.transcriptionCoordinator.transcribeDictation(
                     at: wavURL,
                     backend: self.selectedBackend,
-                    cohereLanguage: self.config.resolvedCohereLanguage,
+                    cohereLanguage: self.config.resolvedCohereLanguageDictation,
                     enablePostProcessor: false,
                     customWords: self.serializedCustomWords(),
                     appContext: nil
@@ -7063,7 +7249,9 @@ final class MuesliController: NSObject {
         let isTestMode = isDictationTestMode
         let outputMode = currentDictationOutputMode
         let transcriptionBackend = isTestMode ? (dictationTestBackend ?? selectedBackend) : selectedBackend
-        let transcriptionLanguage = isTestMode ? (dictationTestCohereLanguage ?? config.resolvedCohereLanguage) : config.resolvedCohereLanguage
+        let transcriptionLanguage = isTestMode
+            ? (dictationTestCohereLanguage ?? config.resolvedCohereLanguageDictation)
+            : config.resolvedCohereLanguageDictation
         let capturedContext = capturedDictationContext
         let promptContext = capturedContext.map { DictationContextCapture.formatForPrompt($0) }
         let correctionTargetApp = capturedDictationCorrectionTargetApp
@@ -7129,7 +7317,7 @@ final class MuesliController: NSObject {
                     self.historyWindowController?.reload()
                     self.syncAppState()
                     if outputMode != .voiceNote {
-                        PasteController.paste(text: text)
+                        PasteController.paste(text: text, shortcut: self.config.pasteShortcut)
                         if self.config.enableDictionaryCorrectionPrompts {
                             // Dictionary correction prompts are an explicit opt-in
                             // screen-context feature: they briefly read focused app
@@ -7322,6 +7510,7 @@ final class MuesliController: NSObject {
             onStartRecording: { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.startForegroundMeetingRecording(
                     title: title,
                     calendarEventID: event.id,
@@ -7333,6 +7522,7 @@ final class MuesliController: NSObject {
             onJoinAndRecord: meetingURL != nil ? { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.joinAndRecord(title: title, meetingURL: meetingURL!, endDate: calendarEndDate, calendarEventID: event.id)
             } : nil,
             onJoinOnly: meetingURL != nil ? { [weak self] in
