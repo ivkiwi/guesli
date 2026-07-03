@@ -28,3 +28,13 @@
 - Targeted tests: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller --filter AppTemporaryDirectories` passed, 2 tests.
 - Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller` passed, 1213 tests; no PasteController/StreamingVadController flake rerun needed.
 - Hygiene: `git diff --check` passed.
+
+## 2026-07-03 - C5 waveform cache hygiene
+
+- Branch/worktree: `codex/lane-controller` in `/Users/kiwi/Projects/muesli-lane-controller`.
+- What changed: clear meeting history now removes the waveform cache directory before deleting saved recordings, startup now sweeps stale `.mwf` cache entries, and cache reads refresh `.mwf` modification time for simple LRU-style age eviction.
+- Why: bulk history clear removed recordings but left waveform cache files, and hash keys include file size/mtime so re-encoded recordings strand old `.mwf` files without a source path to inspect.
+- Targeted tests: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller --filter clearMeetingHistoryRemovesSavedRecordingsAndWaveformCache` passed, 1 test; `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller --filter RecordingWaveformCacheFiles` passed, 1 test.
+- Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller` passed, 1215 tests; no PasteController/StreamingVadController flake rerun needed.
+- Hygiene: `git diff --check` passed.
+- Intended commit subject: `Clean up stale waveform cache files`.

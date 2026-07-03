@@ -443,6 +443,9 @@ final class MuesliController: NSObject {
         reconcilePendingDictionaryCorrectionAccessibilityEnable()
 
         AppTemporaryDirectories.sweepAtLaunch()
+        RecordingWaveformCacheFiles.sweepStaleCachedWaveforms(
+            supportDirectory: configStore.supportDirectory()
+        )
 
         hotkeyMonitor.onArm = { [weak self] in self?.handleArm() }
         hotkeyMonitor.onPrepare = { [weak self] in self?.handlePrepare() }
@@ -4027,11 +4030,12 @@ final class MuesliController: NSObject {
         }
 
         do {
+            try clearSavedMeetingWaveformCache()
             try clearSavedMeetingRecordingsDirectory()
         } catch {
             presentErrorAlert(
                 title: "Couldn't Clear Meeting History",
-                message: "Saved meeting recordings could not be deleted, so meeting history was left in place. \(error.localizedDescription)"
+                message: "Saved meeting audio files could not be deleted, so meeting history was left in place. \(error.localizedDescription)"
             )
             return
         }
@@ -5511,10 +5515,16 @@ final class MuesliController: NSObject {
     private func clearSavedMeetingRecordingsDirectory() throws {
         let recordingsDirectory = MeetingRecordingStorage.directory(
             config: config,
-            supportDirectory: AppIdentity.supportDirectoryURL
+            supportDirectory: configStore.supportDirectory()
         )
         guard FileManager.default.fileExists(atPath: recordingsDirectory.path) else { return }
         try FileManager.default.removeItem(at: recordingsDirectory)
+    }
+
+    private func clearSavedMeetingWaveformCache() throws {
+        try RecordingWaveformCacheFiles.removeAllCachedWaveforms(
+            supportDirectory: configStore.supportDirectory()
+        )
     }
 
     private func deleteSavedMeetingRecording(at path: String) throws {
