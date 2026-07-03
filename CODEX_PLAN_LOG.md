@@ -4,8 +4,9 @@
 
 - Status: in progress.
 - Integration branch: `codex/integration`.
-- Completed: pre-flight crashfix absorption, A3 SenseVoice chunking, A4 model download temp-file leak.
-- Current next item: A5.
+- Completed: pre-flight, A3, A4.
+- Held/Skipped: A5 Nemotron RNNT shape guards.
+- Current next item: B1 upstream PR #268.
 
 ## Journal
 
@@ -40,3 +41,12 @@
 - Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-download-temp-cleanup-wt` passed, 1202 tests.
 - Diff check: `git diff --check` passed.
 - Notes: used explicit `/private/tmp/muesli-spm-download-temp-cleanup-wt` scratch path; no package-local `.build`.
+
+### A5: Nemotron RNNT shape guards
+
+- Status: held/skipped.
+- Branch/worktree: `codex/nemotron-shape-guards` at `86e8a75c` is left unmerged.
+- Reason: required full suite was not green.
+- Evidence: targeted `NemotronRNNTShapeGuardTests` passed 2 tests; `git diff --check` passed; full suite failed on the requested run with 1204 tests, 131 suites, and 3 issues.
+- Quiet diagnostic rerun: existing failures at `StreamingVadControllerTests.swift:70`, `StreamingVadControllerTests.swift:139`, `PasteControllerTests.swift:103`, and `PasteControllerTests.swift:115`.
+- Integration probe retry: SwiftPM manifest `sandbox-exec` failed with `Operation not permitted`.
