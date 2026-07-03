@@ -1,5 +1,19 @@
 # LANE_LOG
 
+## 2026-07-03 - B4 upstream meeting auto-export
+
+- Status: complete on `codex/lane-summary`.
+- Source: `git fetch origin`; inspected Muesli-HQ/muesli PR #263 merge `9a91db7c` and commits `c7ccc280`, `d0a83d63`, `ab9f14a7`, `da605806`, `ae5745b6`.
+- Cherry-pick: `git cherry-pick -x c7ccc280` conflicted in `Models.swift` and `SettingsView.swift`; aborted and manually reapplied the merged upstream behavior.
+- What changed: added `MeetingMarkdownAutoExporter` to auto-export completed meeting notes as Markdown and optional PDF to a configured folder, reusing existing `MeetingExporter` markdown/PDF rendering.
+- Guesli adaptation: exporter defaults to `AppIdentity.supportDirectoryURL`, uses a Guesli bundle-id fallback for unified logging, and Settings copy/path behavior stays fork-local.
+- Targeted tests:
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-summary --filter MeetingMarkdownAutoExporterTests` passed, 12 tests.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-summary --filter 'MeetingHookIntegrationTests|MeetingExporterTests|AppConfig'` passed, 71 tests.
+- Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-summary` passed, 1224 tests in 132 suites.
+- Diff check: `git diff --check` passed.
+- Flaky note: `PasteController` and `StreamingVadController` passed in the full suite; no quiet rerun needed.
+
 ## 2026-07-03 - D1 token-budget meeting summary prompt
 
 - Status: complete on `codex/lane-summary`.

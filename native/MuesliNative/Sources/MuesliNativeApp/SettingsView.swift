@@ -949,6 +949,41 @@ struct SettingsView: View {
                 settingsDescription("Saved recordings are stored as compact m4a audio. Retranscription uses a temporary WAV copy and removes it afterward.")
             }
 
+            settingsSection("Auto Export") {
+                settingsRow("Auto-export meetings") {
+                    settingsSwitch(isOn: appState.config.autoExportMarkdownEnabled) { newValue in
+                        controller.updateConfig { $0.autoExportMarkdownEnabled = newValue }
+                    }
+                }
+                if appState.config.autoExportMarkdownEnabled {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Destination folder") {
+                        autoExportFolderPicker
+                    }
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Content") {
+                        settingsMenu(
+                            selection: appState.config.resolvedAutoExportMarkdownContent.displayName,
+                            options: MeetingExportContent.allCases.map(\.displayName)
+                        ) { label in
+                            guard let content = MeetingExportContent.allCases.first(where: { $0.displayName == label }) else { return }
+                            controller.updateConfig { $0.autoExportMarkdownContent = content.rawValue }
+                        }
+                    }
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("File format") {
+                        settingsMenu(
+                            selection: appState.config.resolvedAutoExportFileFormat.displayName,
+                            options: MeetingAutoExportFileFormat.allCases.map(\.displayName)
+                        ) { label in
+                            guard let format = MeetingAutoExportFileFormat.allCases.first(where: { $0.displayName == label }) else { return }
+                            controller.updateConfig { $0.autoExportFileFormat = format.rawValue }
+                        }
+                    }
+                }
+                settingsDescription("Automatically saves each completed meeting to the chosen folder.")
+            }
+
             settingsSection("Meeting Notifications") {
                 settingsRow("Open meeting links") {
                     settingsMenu(
@@ -1424,6 +1459,32 @@ struct SettingsView: View {
         presentOpenPanel(panel) { url in
             controller.updateConfig { $0.meetingHookPath = url.standardizedFileURL.path }
         }
+    }
+
+    private func pickAutoExportFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a folder for exported notes"
+        panel.prompt = "Choose Folder"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = preferredAutoExportDirectoryURL()
+
+        presentOpenPanel(panel) { url in
+            controller.updateConfig { $0.autoExportMarkdownFolderPath = url.standardizedFileURL.path }
+        }
+    }
+
+    private func preferredAutoExportDirectoryURL() -> URL {
+        let configuredPath = appState.config.autoExportMarkdownFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configuredPath.isEmpty {
+            let configuredURL = URL(fileURLWithPath: configuredPath).standardizedFileURL
+            if FileManager.default.fileExists(atPath: configuredURL.path) {
+                return configuredURL
+            }
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents", isDirectory: true)
     }
 
     private func preferredMeetingHookDirectoryURL() -> URL {
@@ -2094,6 +2155,84 @@ struct SettingsView: View {
             config.disabledCalendarIDs = disabled.sorted()
         }
         Task { await controller.refreshUpcomingCalendarEvents() }
+    }
+
+    @ViewBuilder
+    private var autoExportFolderPicker: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "folder")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+
+                Text(autoExportFolderLabel)
+                    .font(.system(size: 12))
+                    .foregroundStyle(appState.config.autoExportMarkdownFolderPath.isEmpty ? MuesliTheme.textTertiary : MuesliTheme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(MuesliTheme.surfacePrimary)
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                    .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity)
+            .help(autoExportFolderHelp)
+
+            if !appState.config.autoExportMarkdownFolderPath.isEmpty {
+                Button {
+                    controller.updateConfig { $0.autoExportMarkdownFolderPath = "" }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(MuesliTheme.surfacePrimary)
+                        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                                .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("Clear destination folder")
+            }
+
+            Button {
+                pickAutoExportFolder()
+            } label: {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .frame(width: 28, height: 28)
+                    .background(MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                            .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Choose destination folder")
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var autoExportFolderLabel: String {
+        let path = appState.config.autoExportMarkdownFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return "Choose a folder..." }
+        return path
+    }
+
+    private var autoExportFolderHelp: String {
+        let path = appState.config.autoExportMarkdownFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return "No destination folder selected" }
+        return path
     }
 
     @ViewBuilder

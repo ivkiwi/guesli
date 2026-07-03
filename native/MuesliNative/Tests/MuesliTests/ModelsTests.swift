@@ -539,6 +539,12 @@ struct AppConfigTests {
         #expect(config.meetingHookEnabled == false)
         #expect(config.meetingHookPath.isEmpty)
         #expect(config.meetingHookTimeoutSeconds == 30)
+        #expect(config.autoExportMarkdownEnabled == false)
+        #expect(config.autoExportMarkdownFolderPath.isEmpty)
+        #expect(config.autoExportMarkdownContent == MeetingExportContent.notes.rawValue)
+        #expect(config.resolvedAutoExportMarkdownContent == .notes)
+        #expect(config.autoExportFileFormat == MeetingAutoExportFileFormat.markdown.rawValue)
+        #expect(config.resolvedAutoExportFileFormat == .markdown)
         #expect(config.contributionPromptNextWordCount == nil)
         #expect(config.contributionPromptNextMeetingCount == nil)
         #expect(config.contributionGitHubStarClicked == false)
@@ -568,6 +574,10 @@ struct AppConfigTests {
         config.meetingHookEnabled = true
         config.meetingHookPath = "/tmp/meeting-hook.sh"
         config.meetingHookTimeoutSeconds = 45
+        config.autoExportMarkdownEnabled = true
+        config.autoExportMarkdownFolderPath = "/tmp/guesli-auto-export"
+        config.autoExportMarkdownContent = MeetingExportContent.fullMeeting.rawValue
+        config.autoExportFileFormat = MeetingAutoExportFileFormat.markdownAndPDF.rawValue
         config.showScheduledMeetingNotifications = false
         config.scheduledMeetingNotificationLeadTime = .threeMinutes
         config.showMeetingDetectionNotification = false
@@ -615,6 +625,12 @@ struct AppConfigTests {
         #expect(decoded.meetingHookEnabled == true)
         #expect(decoded.meetingHookPath == "/tmp/meeting-hook.sh")
         #expect(decoded.meetingHookTimeoutSeconds == 45)
+        #expect(decoded.autoExportMarkdownEnabled == true)
+        #expect(decoded.autoExportMarkdownFolderPath == "/tmp/guesli-auto-export")
+        #expect(decoded.autoExportMarkdownContent == MeetingExportContent.fullMeeting.rawValue)
+        #expect(decoded.resolvedAutoExportMarkdownContent == .fullMeeting)
+        #expect(decoded.autoExportFileFormat == MeetingAutoExportFileFormat.markdownAndPDF.rawValue)
+        #expect(decoded.resolvedAutoExportFileFormat == .markdownAndPDF)
         #expect(decoded.showScheduledMeetingNotifications == false)
         #expect(decoded.scheduledMeetingNotificationLeadTime == .threeMinutes)
         #expect(decoded.showMeetingDetectionNotification == false)
@@ -683,6 +699,10 @@ struct AppConfigTests {
         #expect(json["meeting_hook_enabled"] != nil)
         #expect(json["meeting_hook_path"] != nil)
         #expect(json["meeting_hook_timeout_seconds"] != nil)
+        #expect(json["auto_export_markdown_enabled"] != nil)
+        #expect(json["auto_export_markdown_folder_path"] != nil)
+        #expect(json["auto_export_markdown_content"] != nil)
+        #expect(json["auto_export_file_format"] != nil)
         #expect(json["contribution_prompt_next_word_count"] != nil)
         #expect(json["contribution_prompt_next_meeting_count"] != nil)
         #expect(json["contribution_github_star_clicked"] != nil)
@@ -729,6 +749,12 @@ struct AppConfigTests {
         #expect(config.meetingHookEnabled == false)
         #expect(config.meetingHookPath.isEmpty)
         #expect(config.meetingHookTimeoutSeconds == 30)
+        #expect(config.autoExportMarkdownEnabled == false)
+        #expect(config.autoExportMarkdownFolderPath.isEmpty)
+        #expect(config.autoExportMarkdownContent == MeetingExportContent.notes.rawValue)
+        #expect(config.resolvedAutoExportMarkdownContent == .notes)
+        #expect(config.autoExportFileFormat == MeetingAutoExportFileFormat.markdown.rawValue)
+        #expect(config.resolvedAutoExportFileFormat == .markdown)
         #expect(config.lmStudioURL == "http://localhost:1234")
         #expect(config.lmStudioModel.isEmpty)
         #expect(config.customLLMURL.isEmpty)

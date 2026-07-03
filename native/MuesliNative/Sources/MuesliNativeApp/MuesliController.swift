@@ -221,6 +221,7 @@ final class MuesliController: NSObject {
     private let configStore: ConfigStore
     private let dictationStore: DictationStore
     private let meetingHookDispatcher: MeetingHookDispatching
+    private let meetingMarkdownAutoExporter: MeetingMarkdownAutoExporting
     private let launchAtLoginCoordinator: LaunchAtLoginCoordinator
     let transcriptionCoordinator = TranscriptionCoordinator()
     private let hotkeyMonitor = HotkeyMonitor()
@@ -364,6 +365,7 @@ final class MuesliController: NSObject {
         configStore: ConfigStore = ConfigStore(),
         dictationStore: DictationStore? = nil,
         meetingHookDispatcher: MeetingHookDispatching = MeetingHookRunner(),
+        meetingMarkdownAutoExporter: MeetingMarkdownAutoExporting = MeetingMarkdownAutoExporter(),
         launchAtLoginManager: LaunchAtLoginManaging = SystemLaunchAtLoginManager(),
         audioDuckingController: AudioDuckingManaging = AudioDuckingController(),
         dictationAudioRoutingController: DictationAudioRouting = DictationAudioRouteController()
@@ -375,6 +377,7 @@ final class MuesliController: NSObject {
             databaseURL: MuesliPaths.defaultDatabaseURL(appName: AppIdentity.supportDirectoryName)
         )
         self.meetingHookDispatcher = meetingHookDispatcher
+        self.meetingMarkdownAutoExporter = meetingMarkdownAutoExporter
         self.launchAtLoginCoordinator = LaunchAtLoginCoordinator(manager: launchAtLoginManager)
         self.audioDuckingController = audioDuckingController
         self.dictationAudioRoutingController = dictationAudioRoutingController
@@ -5370,7 +5373,21 @@ final class MuesliController: NSObject {
             completedAt: result.endTime,
             config: config
         )
+        dispatchMeetingMarkdownAutoExport(meetingID: persistenceResult.meetingID)
         return persistenceResult
+    }
+
+    private func dispatchMeetingMarkdownAutoExport(meetingID: Int64) {
+        guard config.autoExportMarkdownEnabled else { return }
+        do {
+            if let record = try dictationStore.meeting(id: meetingID) {
+                meetingMarkdownAutoExporter.exportIfConfigured(meeting: record, config: config)
+            } else {
+                meetingMarkdownAutoExporter.recordMeetingLookupFailure(meetingID: meetingID, error: nil)
+            }
+        } catch {
+            meetingMarkdownAutoExporter.recordMeetingLookupFailure(meetingID: meetingID, error: error)
+        }
     }
 
     private func persistMeetingRecordingIfNeeded(
