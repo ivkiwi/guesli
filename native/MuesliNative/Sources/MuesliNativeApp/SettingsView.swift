@@ -895,6 +895,19 @@ struct SettingsView: View {
                         controller.updateConfig { $0.meetingRecordingSavePolicy = policy }
                     }
                 }
+                if appState.config.meetingRecordingSavePolicy != .never {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Recording format") {
+                        settingsMenu(
+                            selection: appState.config.resolvedMeetingRecordingFileFormat.displayName,
+                            options: MeetingRecordingFileFormat.allCases.map(recordingFileFormatLabel(for:))
+                        ) { label in
+                            guard let format = recordingFileFormat(for: label) else { return }
+                            controller.updateConfig { $0.meetingRecordingFileFormat = format.rawValue }
+                        }
+                    }
+                    settingsDescription("M4A is recommended for smaller files. WAV is lossless and uses more storage.")
+                }
             }
 
             settingsSection("Auto Export") {
@@ -2430,6 +2443,18 @@ struct SettingsView: View {
             assertionFailure("Unexpected recording save label: \(label)")
         }
         return policy
+    }
+
+    private func recordingFileFormatLabel(for format: MeetingRecordingFileFormat) -> String {
+        format.displayName
+    }
+
+    private func recordingFileFormat(for label: String) -> MeetingRecordingFileFormat? {
+        let format = MeetingRecordingFileFormat.allCases.first { recordingFileFormatLabel(for: $0) == label }
+        if format == nil {
+            assertionFailure("Unexpected recording file format label: \(label)")
+        }
+        return format
     }
 
     private func scheduledMeetingLeadTimeLabel(for leadTime: ScheduledMeetingNotificationLeadTime) -> String {

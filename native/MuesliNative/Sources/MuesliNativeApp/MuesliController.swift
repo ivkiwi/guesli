@@ -5384,7 +5384,8 @@ final class MuesliController: NSObject {
                 from: retainedRecordingURL,
                 meetingTitle: result.title,
                 startedAt: result.startTime,
-                supportDirectory: AppIdentity.supportDirectoryURL
+                supportDirectory: AppIdentity.supportDirectoryURL,
+                fileFormat: config.resolvedMeetingRecordingFileFormat
             )
             return outputURL.path
         } catch {

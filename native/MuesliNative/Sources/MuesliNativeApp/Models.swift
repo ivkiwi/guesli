@@ -912,6 +912,7 @@ struct AppConfig: Codable {
     var showMeetingDetectionNotification: Bool = true
     var mutedMeetingDetectionAppBundleIDs: [String] = []
     var meetingRecordingSavePolicy: MeetingRecordingSavePolicy = .never
+    var meetingRecordingFileFormat: String = MeetingRecordingFileFormat.m4a.rawValue
     var darkMode: Bool = true
     var enableDoubleTapDictation: Bool = true
     var hotkeyTriggerThresholdMS: Int = HotkeyTriggerTiming.defaultThresholdMilliseconds
@@ -1011,6 +1012,7 @@ struct AppConfig: Codable {
         case showMeetingDetectionNotification = "show_meeting_detection_notification"
         case mutedMeetingDetectionAppBundleIDs = "muted_meeting_detection_app_bundle_ids"
         case meetingRecordingSavePolicy = "meeting_recording_save_policy"
+        case meetingRecordingFileFormat = "meeting_recording_file_format"
         case darkMode = "dark_mode"
         case enableDoubleTapDictation = "enable_double_tap_dictation"
         case hotkeyTriggerThresholdMS = "hotkey_trigger_threshold_ms"
@@ -1129,6 +1131,10 @@ struct AppConfig: Codable {
         showMeetingDetectionNotification = decodedShowMeetingDetectionNotification ?? defaults.showMeetingDetectionNotification
         mutedMeetingDetectionAppBundleIDs = (try? c.decode([String].self, forKey: .mutedMeetingDetectionAppBundleIDs)) ?? defaults.mutedMeetingDetectionAppBundleIDs
         meetingRecordingSavePolicy = (try? c.decode(MeetingRecordingSavePolicy.self, forKey: .meetingRecordingSavePolicy)) ?? defaults.meetingRecordingSavePolicy
+        let decodedMeetingRecordingFileFormat = (try? c.decode(String.self, forKey: .meetingRecordingFileFormat))
+            ?? defaults.meetingRecordingFileFormat
+        meetingRecordingFileFormat = MeetingRecordingFileFormat(rawValue: decodedMeetingRecordingFileFormat)?.rawValue
+            ?? defaults.meetingRecordingFileFormat
         darkMode = (try? c.decode(Bool.self, forKey: .darkMode)) ?? defaults.darkMode
         iCloudSyncEnabled = (try? c.decode(Bool.self, forKey: .iCloudSyncEnabled)) ?? defaults.iCloudSyncEnabled
         showIOSCompanionPrompt = (try? c.decode(Bool.self, forKey: .showIOSCompanionPrompt)) ?? defaults.showIOSCompanionPrompt
@@ -1242,6 +1248,10 @@ struct AppConfig: Codable {
 
     var resolvedAutoExportFileFormat: MeetingAutoExportFileFormat {
         MeetingAutoExportFileFormat.resolved(autoExportFileFormat)
+    }
+
+    var resolvedMeetingRecordingFileFormat: MeetingRecordingFileFormat {
+        MeetingRecordingFileFormat.resolved(meetingRecordingFileFormat)
     }
 }
 

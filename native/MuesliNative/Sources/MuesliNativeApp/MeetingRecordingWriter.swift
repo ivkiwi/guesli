@@ -1,5 +1,33 @@
+import AVFoundation
 import Foundation
 import os
+
+enum MeetingRecordingFileFormat: String, CaseIterable {
+    case m4a
+    case wav
+
+    var displayName: String {
+        switch self {
+        case .m4a:
+            return "M4A (AAC, smaller)"
+        case .wav:
+            return "WAV (lossless)"
+        }
+    }
+
+    var fileExtension: String {
+        switch self {
+        case .m4a:
+            return "m4a"
+        case .wav:
+            return "wav"
+        }
+    }
+
+    static func resolved(_ rawValue: String) -> MeetingRecordingFileFormat {
+        MeetingRecordingFileFormat(rawValue: rawValue) ?? .m4a
+    }
+}
 
 final class MeetingRecordingWriter {
     private struct State {
@@ -81,7 +109,8 @@ final class MeetingRecordingWriter {
         from tempURL: URL,
         meetingTitle: String,
         startedAt: Date,
-        supportDirectory: URL
+        supportDirectory: URL,
+        fileFormat: MeetingRecordingFileFormat = .m4a
     ) throws -> URL {
         let recordingsDirectory = supportDirectory
             .appendingPathComponent("meeting-recordings", isDirectory: true)
@@ -91,12 +120,23 @@ final class MeetingRecordingWriter {
         )
 
         let destinationURL = recordingsDirectory.appendingPathComponent(
-            "\(fileNamePrefix(for: startedAt, title: meetingTitle)).wav"
+            "\(fileNamePrefix(for: startedAt, title: meetingTitle)).\(fileFormat.fileExtension)"
         )
         if FileManager.default.fileExists(atPath: destinationURL.path) {
             try FileManager.default.removeItem(at: destinationURL)
         }
-        try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+        switch fileFormat {
+        case .m4a:
+            do {
+                try transcodeWAVToM4A(sourceURL: tempURL, destinationURL: destinationURL)
+                try FileManager.default.removeItem(at: tempURL)
+            } catch {
+                try? FileManager.default.removeItem(at: destinationURL)
+                throw error
+            }
+        case .wav:
+            try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+        }
         return destinationURL
     }
 
@@ -164,6 +204,37 @@ final class MeetingRecordingWriter {
         }
 
         return output
+    }
+
+    private static func transcodeWAVToM4A(sourceURL: URL, destinationURL: URL) throws {
+        let asset = AVURLAsset(url: sourceURL)
+        guard let exportSession = AVAssetExportSession(
+            asset: asset,
+            presetName: AVAssetExportPresetAppleM4A
+        ) else {
+            throw NSError(
+                domain: "MeetingRecordingWriter",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Could not create M4A export session for meeting recording."]
+            )
+        }
+
+        exportSession.outputURL = destinationURL
+        exportSession.outputFileType = .m4a
+
+        let semaphore = DispatchSemaphore(value: 0)
+        exportSession.exportAsynchronously {
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        guard exportSession.status == .completed else {
+            throw exportSession.error ?? NSError(
+                domain: "MeetingRecordingWriter",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Could not export meeting recording as M4A."]
+            )
+        }
     }
 
     private static func wavHeader(dataSize: UInt32) -> Data {

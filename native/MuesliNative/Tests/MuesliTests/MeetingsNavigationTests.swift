@@ -472,7 +472,10 @@ struct MeetingsNavigationTests {
             ),
             dictationStore: store
         )
-        controller.updateConfig { $0.meetingRecordingSavePolicy = .never }
+        controller.updateConfig {
+            $0.meetingRecordingSavePolicy = .never
+            $0.meetingRecordingFileFormat = MeetingRecordingFileFormat.wav.rawValue
+        }
 
         let retainedRecordingURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("retained-policy-drift-\(UUID().uuidString)")
