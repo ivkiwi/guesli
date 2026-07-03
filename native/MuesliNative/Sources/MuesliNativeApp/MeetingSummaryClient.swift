@@ -93,6 +93,7 @@ enum MeetingSummaryClient {
     private static let customLLMTitleTimeout: TimeInterval = 120
     private static let transcriptCleanupTimeout: TimeInterval = 120
     private static let transcriptCleanupChunkCharacterLimit = 24_000
+    private static let summaryTranscriptCharacterLimit = transcriptCleanupChunkCharacterLimit
 
     private static let titleInstructions = """
     Generate a short, descriptive meeting title (3-7 words) from these transcript excerpts. \
@@ -306,8 +307,34 @@ enum MeetingSummaryClient {
             prompt += "Protected written notes typed by the user during the meeting. Preserve these verbatim and place them where they belong in the summary:\n\(trimmedManualNotes)\n\n"
         }
 
-        prompt += "Raw transcript:\n\(transcript)"
+        prompt += "Raw transcript:\n\(summaryTranscriptForPrompt(transcript))"
         return prompt
+    }
+
+    static func summaryTranscriptForPrompt(
+        _ transcript: String,
+        maxCharacters: Int = summaryTranscriptCharacterLimit
+    ) -> String {
+        guard maxCharacters > 0 else { return "" }
+        let chunks = transcriptChunks(transcript, maxCharacters: maxCharacters)
+        guard let firstChunk = chunks.first else { return "" }
+        guard chunks.count > 1, let lastChunk = chunks.last else { return firstChunk }
+
+        let marker = "\n\n[Transcript truncated: middle omitted to fit \(maxCharacters)-character summary prompt budget.]\n\n"
+        let contentBudget = max(maxCharacters - marker.count, 0)
+        guard contentBudget > 0 else {
+            return String(marker.prefix(maxCharacters))
+        }
+
+        let openingBudget = contentBudget / 2
+        let closingBudget = contentBudget - openingBudget
+        let opening = String(firstChunk.prefix(openingBudget))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let closing = String(lastChunk.suffix(closingBudget))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return "\(opening)\(marker)\(closing)"
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func notesByRetainingManualNotes(generatedNotes: String, manualNotes: String?) -> String {

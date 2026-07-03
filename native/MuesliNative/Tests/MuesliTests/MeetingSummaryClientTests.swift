@@ -198,6 +198,35 @@ struct MeetingSummaryClientTests {
         #expect(prompt.contains("Raw transcript:\nTranscript body"))
     }
 
+    @Test("summary user prompt middle-truncates long transcripts")
+    func userPromptMiddleTruncatesLongTranscripts() {
+        let transcript = [
+            "OPENING-START " + String(repeating: "a", count: 12_000),
+            "MIDDLE-OMITTED " + String(repeating: "b", count: 12_000),
+            String(repeating: "c", count: 12_000) + " CLOSING-END",
+        ].joined(separator: "\n")
+
+        let boundedTranscript = MeetingSummaryClient.summaryTranscriptForPrompt(
+            transcript,
+            maxCharacters: 160
+        )
+
+        #expect(boundedTranscript.count <= 160)
+        #expect(boundedTranscript.contains("OPENING-START"))
+        #expect(boundedTranscript.contains("[Transcript truncated: middle omitted"))
+        #expect(!boundedTranscript.contains("MIDDLE-OMITTED"))
+        #expect(boundedTranscript.contains("CLOSING-END"))
+
+        let prompt = MeetingSummaryClient.summaryUserPrompt(
+            transcript: transcript,
+            meetingTitle: "Long Meeting"
+        )
+
+        #expect(prompt.contains("Raw transcript:\nOPENING-START"))
+        #expect(!prompt.contains("MIDDLE-OMITTED"))
+        #expect(prompt.contains("CLOSING-END"))
+    }
+
     @Test("summarize routes to OpenRouter when configured")
     func routesToOpenRouter() async throws {
         var config = AppConfig()
