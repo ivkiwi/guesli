@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import CoreAudio
+import CoreML
 @testable import MuesliNativeApp
 
 @Suite("StreamingDictationController")
@@ -826,6 +827,51 @@ struct Nemotron35StreamStateTests {
             transcriber: transcriber as NemotronStreamingTranscribing,
             chunkSamples: 35840
         )
+    }
+}
+
+@Suite("Nemotron RNNT shape guards")
+struct NemotronRNNTShapeGuardTests {
+
+    @Test("mel validation rejects wrong rank with descriptive error")
+    func melValidationRejectsWrongRank() throws {
+        let mel = try MLMultiArray(shape: [1, 128], dataType: .float32)
+
+        do {
+            _ = try nemotronValidateArray(
+                mel,
+                name: "mel",
+                dataType: .float32,
+                shape: [1, 128, nil],
+                failure: NemotronRNNTError.preprocessingFailed
+            )
+            Issue.record("Expected mel shape validation to throw")
+        } catch let error as NemotronRNNTError {
+            let description = error.localizedDescription
+            #expect(description.contains("mel"))
+            #expect(description.contains("expected shape [1, 128, *]"))
+            #expect(description.contains("got shape [1, 128]"))
+        }
+    }
+
+    @Test("encoded validation rejects mismatched encoder dimension")
+    func encodedValidationRejectsBadShape() throws {
+        let encoded = try MLMultiArray(shape: [1, 2, 3], dataType: .float32)
+
+        do {
+            _ = try nemotronValidateArray(
+                encoded,
+                name: "encoded",
+                dataType: .float32,
+                shape: [1, 4, nil]
+            )
+            Issue.record("Expected encoded shape validation to throw")
+        } catch let error as NemotronRNNTError {
+            let description = error.localizedDescription
+            #expect(description.contains("encoded"))
+            #expect(description.contains("dimension 1 expected 4"))
+            #expect(description.contains("got 2"))
+        }
     }
 }
 

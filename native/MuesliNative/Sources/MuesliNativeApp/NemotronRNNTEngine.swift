@@ -65,6 +65,55 @@ func nemotronZeroFill(_ array: MLMultiArray) {
     memset(ptr, 0, array.count * MemoryLayout<Float>.size)
 }
 
+func nemotronValidateArray(
+    _ array: MLMultiArray,
+    name: String,
+    dataType: MLMultiArrayDataType,
+    shape expectedShape: [Int?],
+    failure: (String) -> NemotronRNNTError = NemotronRNNTError.decodingFailed
+) throws -> (shape: [Int], strides: [Int]) {
+    let shape = array.shape.map(\.intValue)
+    let strides = array.strides.map(\.intValue)
+    let expected = "[" + expectedShape.map { $0.map(String.init) ?? "*" }.joined(separator: ", ") + "]"
+
+    guard array.dataType == dataType else {
+        throw failure("\(name) expected \(dataType), got \(array.dataType)")
+    }
+    guard shape.count == expectedShape.count else {
+        throw failure("\(name) expected shape \(expected), got shape \(shape)")
+    }
+    guard strides.count == shape.count else {
+        throw failure("\(name) shape rank \(shape.count) does not match strides rank \(strides.count)")
+    }
+
+    for index in expectedShape.indices {
+        guard shape[index] > 0 else {
+            throw failure("\(name) dimension \(index) must be positive, got \(shape[index]) in shape \(shape)")
+        }
+        if let expectedDimension = expectedShape[index], shape[index] != expectedDimension {
+            throw failure("\(name) dimension \(index) expected \(expectedDimension), got \(shape[index]) in shape \(shape)")
+        }
+    }
+
+    var maxOffset = 0
+    for (dimension, stride) in zip(shape, strides) where dimension > 1 {
+        guard stride > 0 else {
+            throw failure("\(name) stride must be positive for non-singleton dimensions, got strides \(strides)")
+        }
+        let (scaledOffset, multipliedOverflow) = (dimension - 1).multipliedReportingOverflow(by: stride)
+        let (newMaxOffset, addedOverflow) = maxOffset.addingReportingOverflow(scaledOffset)
+        guard !multipliedOverflow, !addedOverflow else {
+            throw failure("\(name) shape \(shape) and strides \(strides) overflow offset validation")
+        }
+        maxOffset = newMaxOffset
+    }
+    guard maxOffset < array.count else {
+        throw failure("\(name) shape \(shape) and strides \(strides) exceed backing count \(array.count)")
+    }
+
+    return (shape, strides)
+}
+
 /// Create a fresh streaming state with zero-initialized caches sized for `config`.
 func nemotronMakeStreamState(config: NemotronRNNTConfig) throws -> RNNTStreamState {
     let cacheChannel = try MLMultiArray(
@@ -141,16 +190,38 @@ func nemotronTranscribeChunk(
     }
 
     // 2. Pad/crop mel to totalMelFrames for the encoder
+    let melLayout = try nemotronValidateArray(
+        mel,
+        name: "mel",
+        dataType: .float32,
+        shape: [1, 128, nil],
+        failure: NemotronRNNTError.preprocessingFailed
+    )
+    guard melLayout.strides[2] == 1 else {
+        throw NemotronRNNTError.preprocessingFailed("mel frame stride must be 1 for row copy, got strides \(melLayout.strides)")
+    }
+    _ = try nemotronValidateArray(
+        melLength,
+        name: "mel_length",
+        dataType: .int32,
+        shape: [1],
+        failure: NemotronRNNTError.preprocessingFailed
+    )
     let actualMelFrames = melLength[0].intValue
     let totalMelFrames = config.totalMelFrames
+    guard (0...melLayout.shape[2]).contains(actualMelFrames) else {
+        throw NemotronRNNTError.preprocessingFailed(
+            "mel_length value \(actualMelFrames) outside valid range 0...\(melLayout.shape[2]) for mel shape \(melLayout.shape)"
+        )
+    }
     let encoderMel = try MLMultiArray(shape: [1, 128, NSNumber(value: totalMelFrames)], dataType: .float32)
     let melSrcPtr = mel.dataPointer.bindMemory(to: Float.self, capacity: mel.count)
     let melDstPtr = encoderMel.dataPointer.bindMemory(to: Float.self, capacity: encoderMel.count)
     memset(melDstPtr, 0, encoderMel.count * MemoryLayout<Float>.size)
 
-    let melFramesToCopy = min(mel.shape[2].intValue, totalMelFrames)
+    let melFramesToCopy = min(melLayout.shape[2], totalMelFrames)
     for bin in 0..<128 {
-        let srcOffset = bin * mel.shape[2].intValue
+        let srcOffset = bin * melLayout.strides[1]
         let dstOffset = bin * totalMelFrames
         memcpy(melDstPtr.advanced(by: dstOffset), melSrcPtr.advanced(by: srcOffset), melFramesToCopy * MemoryLayout<Float>.size)
     }
@@ -183,7 +254,24 @@ func nemotronTranscribeChunk(
     if let cl = encOutput.featureValue(for: "cache_len_out")?.multiArrayValue { state.cacheLen = cl }
 
     // 4. RNNT greedy decode over encoder frames
+    let encodedLayout = try nemotronValidateArray(
+        encoded,
+        name: "encoded",
+        dataType: .float32,
+        shape: [1, config.encoderDim, nil]
+    )
+    _ = try nemotronValidateArray(
+        encodedLength,
+        name: "encoded_length",
+        dataType: .int32,
+        shape: [1]
+    )
     let numFrames = encodedLength[0].intValue
+    guard (0...encodedLayout.shape[2]).contains(numFrames) else {
+        throw NemotronRNNTError.decodingFailed(
+            "encoded_length value \(numFrames) outside valid range 0...\(encodedLayout.shape[2]) for encoded shape \(encodedLayout.shape)"
+        )
+    }
     let encodedPtr = encoded.dataPointer.bindMemory(to: Float.self, capacity: encoded.count)
     let encoderDim = config.encoderDim
 
@@ -220,9 +308,10 @@ func nemotronTranscribeChunk(
             // Encoded is [1, encoderDim, numFrames]; access [0, d, t] via stride.
             let encFrame = try MLMultiArray(shape: [1, NSNumber(value: encoderDim), 1], dataType: .float32)
             let encFramePtr = encFrame.dataPointer.bindMemory(to: Float.self, capacity: encoderDim)
-            let encodedStride1 = encoded.strides[1].intValue
+            let encodedStride1 = encodedLayout.strides[1]
+            let encodedStride2 = encodedLayout.strides[2]
             for d in 0..<encoderDim {
-                encFramePtr[d] = encodedPtr[d * encodedStride1 + t]
+                encFramePtr[d] = encodedPtr[d * encodedStride1 + t * encodedStride2]
             }
 
             let jointInput = try MLDictionaryFeatureProvider(dictionary: [
@@ -233,6 +322,9 @@ func nemotronTranscribeChunk(
 
             guard let logits = jointOutput.featureValue(for: "logits")?.multiArrayValue else {
                 throw NemotronRNNTError.decodingFailed("No joint logits")
+            }
+            guard logits.dataType == .float32, logits.count > 0 else {
+                throw NemotronRNNTError.decodingFailed("logits expected non-empty float32 array, got \(logits.dataType) count \(logits.count)")
             }
 
             // Argmax
