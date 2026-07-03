@@ -198,8 +198,8 @@ struct ModelsView: View {
 
     private var cohereLanguageSelection: Binding<CohereTranscribeLanguage> {
         Binding(
-            get: { appState.config.resolvedCohereLanguage },
-            set: { controller.selectCohereLanguage($0) }
+            get: { appState.config.resolvedCohereLanguageDictation },
+            set: { controller.selectDictationCohereLanguage($0) }
         )
     }
 

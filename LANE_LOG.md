@@ -100,3 +100,59 @@
 - Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-summary` passed, 1210 tests in 131 suites.
 - Diff check: `git diff --check` passed.
 - Flaky note: `PasteController` and `StreamingVadController` passed in the full suite; no quiet rerun needed.
+## 2026-07-03 15:33 +03 - C1 imported audio transcript cleanup
+
+- Status: complete.
+- Change: imported audio now runs `MeetingTranscriptCleanupPipeline.cleanIfNeeded` after diarization and before title/summary/persist. Cleaned transcript feeds title generation, summary generation, stored `raw_transcript`, and import result.
+- Preservation: successful cleanup stores the pre-cleanup transcript in `raw_original_transcript`; cleanup failures keep raw transcript and store no original, matching live meeting fallback semantics.
+- Tests:
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings --filter AudioFileImportControllerTests` - passed, 16 tests.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings` - passed, 1208 tests / 131 suites.
+  - `git diff --check` - passed.
+- Deviations: `CODEX_PLAN.md` was not present in this worktree root; read-only C1 plan source came from sibling `../muesli/CODEX_PLAN.md`. No files outside this worktree were changed.
+
+## 2026-07-03 15:45 +03 - D3 single audio buffer on import
+
+- Status: complete.
+- Change: imported audio conversion now returns one reusable 16k mono sample buffer alongside the temporary WAV. Import transcription receives that buffer for sample-capable backends, diarization reuses it, and the buffer is released before cleanup/title/summary work.
+- Change: sample-capable meeting transcription paths now accept preloaded samples for Qwen3, Canary, Cohere, Nemotron, and long-file GigaAM/SenseVoice paths; URL-only and short URL-preserving paths still use the WAV URL.
+- Change: live meeting system-audio post-processing reuses a previously loaded full-session buffer across diarization, VAD health repair, and full-session fallback where available, then releases it before transcript reconciliation.
+- Tests:
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings --filter AudioFileImportControllerTests` - passed, 17 tests.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings` - passed, 1209 tests / 131 suites.
+  - `git diff --check` - passed.
+- Deviations: `CODEX_PLAN.md` was not present in this worktree root; read-only D3 plan source came from sibling `../muesli/CODEX_PLAN.md`. No files outside this worktree were changed.
+
+## 2026-07-03 15:56 +03 - C2 dictation cleanup credentials warning
+
+- Status: complete.
+- Change: dictation cleanup settings now say external providers reuse Meeting Summaries credentials/models and show inline status for OpenAI/OpenRouter/Custom LLM settings.
+- Change: missing or unsupported external cleanup configuration shows a warning state in Settings; runtime external cleanup failures log `[dictation-cleanup] ...`, update status/floating warning state, and keep the raw transcript instead of falling through to the local model.
+- Tests:
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings --filter ExternalTranscriptCleanupClientTests` - passed, 7 tests.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings` - passed, 1213 tests / 131 suites.
+  - `git diff --check` - passed.
+- Deviations: no new credential storage added; no files outside this worktree changed.
+
+## 2026-07-03 16:03 +03 - C7/C6 Cohere language split and config migration
+
+- Status: complete.
+- Change: split shared Cohere language config into `cohere_language_dictation` and `cohere_language_meetings`; legacy `cohere_language` decodes once into both new fields and is no longer emitted on save.
+- Change: dictation/model picker paths write/use dictation language; meeting/live/retranscribe/import paths write/use meeting language.
+- Change: legacy settings import now preserves split Cohere language keys plus meeting transcript cleanup enable/provider keys.
+- Tests:
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings --filter 'ConfigStoreTests|AppConfigTests'` - passed, 31 tests.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings` - passed, 1215 tests / 131 suites.
+  - `git diff --check` - passed.
+- Deviations: no auto-export config keys exist in this branch; no files outside this worktree changed.
+
+## 2026-07-03 16:09 +03 - PR206 configurable dictation paste shortcut
+
+- Status: complete.
+- Change: added `paste_shortcut` config with default `command_v`; dictation paste now uses the configured shortcut so users can select `⌘⇧V` for terminals/apps that remap `⌘V`.
+- Change: Settings > Dictation > Advanced exposes Paste shortcut; legacy Muesli settings import preserves the key for Guesli migration.
+- Tests:
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings --filter 'PasteControllerTests|AppConfigTests|ConfigStoreTests'` - passed, 45 tests.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings` - passed, 1218 tests / 131 suites.
+  - `git diff --check` - passed.
+- Deviations: no push; no files outside this worktree changed.

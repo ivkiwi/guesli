@@ -1001,19 +1001,40 @@ actor CanaryQwenTranscriber {
             CanaryProfilingLog.write("[canary-qwen] waiting for background warmup to finish before dictation...")
             await warmupTask.value
         }
-        guard let manager else { throw TranscriberError.notLoaded }
         let start = CFAbsoluteTimeGetCurrent()
         let converter = AudioConverter()
         let resampleStart = CFAbsoluteTimeGetCurrent()
         let samples = try converter.resampleAudioFile(wavURL)
         let resampleMs = (CFAbsoluteTimeGetCurrent() - resampleStart) * 1000
-        let inference = try await manager.transcribe(audioSamples: samples)
+        let inference = try await transcribeLoaded(audioSamples: samples)
         let processingTime = CFAbsoluteTimeGetCurrent() - start
         var profile = inference.profile
         profile.resampleMs = resampleMs
         profile.totalProcessingMs = processingTime * 1000
         CanaryProfilingLog.write(profile.logDescription(prefix: "[canary-qwen][dictation]"))
         return (inference.text, processingTime, profile)
+    }
+
+    func transcribe(audioSamples: [Float]) async throws -> (text: String, processingTime: Double, profile: CanaryProfilingSummary) {
+        try await loadModels()
+        if let warmupTask {
+            CanaryProfilingLog.write("[canary-qwen] waiting for background warmup to finish before dictation...")
+            await warmupTask.value
+        }
+        let start = CFAbsoluteTimeGetCurrent()
+        let inference = try await transcribeLoaded(audioSamples: audioSamples)
+        let processingTime = CFAbsoluteTimeGetCurrent() - start
+        var profile = inference.profile
+        profile.resampleMs = 0
+        profile.totalProcessingMs = processingTime * 1000
+        CanaryProfilingLog.write(profile.logDescription(prefix: "[canary-qwen][dictation]"))
+        return (inference.text, processingTime, profile)
+    }
+
+    private func transcribeLoaded(audioSamples: [Float]) async throws -> (text: String, profile: CanaryProfilingSummary) {
+        guard let manager else { throw TranscriberError.notLoaded }
+        let inference = try await manager.transcribe(audioSamples: audioSamples)
+        return (inference.text, inference.profile)
     }
 
     func shutdown() {

@@ -497,7 +497,8 @@ struct AppConfigTests {
         let config = AppConfig()
         #expect(config.sttBackend == BackendOption.gigaAMV3Russian.backend)
         #expect(config.sttModel == BackendOption.gigaAMV3Russian.model)
-        #expect(config.cohereLanguage == CohereTranscribeLanguage.defaultLanguage.rawValue)
+        #expect(config.cohereLanguageDictation == CohereTranscribeLanguage.defaultLanguage.rawValue)
+        #expect(config.cohereLanguageMeetings == CohereTranscribeLanguage.defaultLanguage.rawValue)
         #expect(config.meetingTranscriptionBackend == BackendOption.gigaAMV3Russian.backend)
         #expect(config.meetingTranscriptionModel == BackendOption.gigaAMV3Russian.model)
         #expect(config.meetingSummaryBackend == "chatgpt")
@@ -530,6 +531,7 @@ struct AppConfigTests {
         #expect(config.hotkeyTriggerThresholdMS == HotkeyTriggerTiming.defaultThresholdMilliseconds)
         #expect(config.computerUseHotkeyTriggerThresholdMS == HotkeyTriggerTiming.defaultThresholdMilliseconds)
         #expect(config.meetingRecordingHotkeyTriggerThresholdMS == HotkeyTriggerTiming.defaultMeetingThresholdMilliseconds)
+        #expect(config.pasteShortcut == .commandV)
         #expect(config.showFloatingIndicator == true)
         #expect(config.indicatorAnchor == .midTrailing)
         #expect(config.hasCompletedOnboarding == false)
@@ -560,7 +562,8 @@ struct AppConfigTests {
         config.userName = "Test User"
         config.hasCompletedOnboarding = true
         config.onboardingUseCase = OnboardingUseCase.dictationAndMeetings.rawValue
-        config.cohereLanguage = CohereTranscribeLanguage.german.rawValue
+        config.cohereLanguageDictation = CohereTranscribeLanguage.german.rawValue
+        config.cohereLanguageMeetings = CohereTranscribeLanguage.french.rawValue
         config.defaultMeetingTemplateID = "weekly-team-meeting"
         config.meetingRecordingSavePolicy = .always
         config.customMeetingTemplates = [
@@ -588,6 +591,7 @@ struct AppConfigTests {
         config.enableComputerUsePlanner = false
         config.computerUsePlannerModel = "gpt-5.4"
         config.computerUseTimeoutSeconds = 180
+        config.pasteShortcut = .commandShiftV
         config.hotkeyTriggerThresholdMS = 125
         config.computerUseHotkeyTriggerThresholdMS = 350
         config.meetingRecordingHotkeyTriggerThresholdMS = 900
@@ -616,7 +620,8 @@ struct AppConfigTests {
         #expect(decoded.userName == "Test User")
         #expect(decoded.hasCompletedOnboarding == true)
         #expect(decoded.resolvedOnboardingUseCase == .dictationAndMeetings)
-        #expect(decoded.cohereLanguage == CohereTranscribeLanguage.german.rawValue)
+        #expect(decoded.cohereLanguageDictation == CohereTranscribeLanguage.german.rawValue)
+        #expect(decoded.cohereLanguageMeetings == CohereTranscribeLanguage.french.rawValue)
         #expect(decoded.defaultMeetingTemplateID == "weekly-team-meeting")
         #expect(decoded.meetingRecordingSavePolicy == .always)
         #expect(decoded.customMeetingTemplates.count == 1)
@@ -643,6 +648,7 @@ struct AppConfigTests {
         #expect(decoded.enableComputerUsePlanner == false)
         #expect(decoded.computerUsePlannerModel == "gpt-5.4")
         #expect(decoded.computerUseTimeoutSeconds == 180)
+        #expect(decoded.pasteShortcut == .commandShiftV)
         #expect(decoded.hotkeyTriggerThresholdMS == 125)
         #expect(decoded.computerUseHotkeyTriggerThresholdMS == 350)
         #expect(decoded.meetingRecordingHotkeyTriggerThresholdMS == 900)
@@ -681,7 +687,10 @@ struct AppConfigTests {
         #expect(json["hotkey_trigger_threshold_ms"] != nil)
         #expect(json["computer_use_hotkey_trigger_threshold_ms"] != nil)
         #expect(json["meeting_recording_hotkey_trigger_threshold_ms"] != nil)
-        #expect(json["cohere_language"] != nil)
+        #expect(json["cohere_language"] == nil)
+        #expect(json["cohere_language_dictation"] != nil)
+        #expect(json["cohere_language_meetings"] != nil)
+        #expect(json["paste_shortcut"] != nil)
         #expect(json["meeting_transcription_backend"] != nil)
         #expect(json["meeting_transcription_model"] != nil)
         #expect(json["indicator_anchor"] != nil)
@@ -725,7 +734,9 @@ struct AppConfigTests {
 
         #expect(config.openAIAPIKey.isEmpty)
         #expect(config.showFloatingIndicator == true)
-        #expect(config.resolvedCohereLanguage == .english)
+        #expect(config.resolvedCohereLanguageDictation == .english)
+        #expect(config.resolvedCohereLanguageMeetings == .english)
+        #expect(config.pasteShortcut == .commandV)
         #expect(config.hasCompletedOnboarding == false)
         #expect(config.resolvedOnboardingUseCase == .dictation)
         #expect(config.defaultMeetingTemplateID == MeetingTemplates.autoID)
@@ -985,26 +996,47 @@ struct AppConfigTests {
     func unsupportedCohereLanguageFallsBackToEnglish() throws {
         let json = """
         {
-          "cohere_language": "xx"
+          "cohere_language_dictation": "xx",
+          "cohere_language_meetings": "yy"
         }
         """
         let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
 
-        #expect(config.cohereLanguage == CohereTranscribeLanguage.english.rawValue)
-        #expect(config.resolvedCohereLanguage == .english)
+        #expect(config.cohereLanguageDictation == CohereTranscribeLanguage.english.rawValue)
+        #expect(config.cohereLanguageMeetings == CohereTranscribeLanguage.english.rawValue)
+        #expect(config.resolvedCohereLanguageDictation == .english)
+        #expect(config.resolvedCohereLanguageMeetings == .english)
     }
 
     @Test("cohere language codes are normalized case-insensitively")
     func cohereLanguageCodesNormalizeCaseInsensitively() throws {
         let json = """
         {
-          "cohere_language": " Fr "
+          "cohere_language_dictation": " Fr ",
+          "cohere_language_meetings": " DE "
         }
         """
         let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
 
-        #expect(config.cohereLanguage == CohereTranscribeLanguage.french.rawValue)
-        #expect(config.resolvedCohereLanguage == .french)
+        #expect(config.cohereLanguageDictation == CohereTranscribeLanguage.french.rawValue)
+        #expect(config.cohereLanguageMeetings == CohereTranscribeLanguage.german.rawValue)
+        #expect(config.resolvedCohereLanguageDictation == .french)
+        #expect(config.resolvedCohereLanguageMeetings == .german)
+    }
+
+    @Test("legacy cohere language seeds dictation and meetings")
+    func legacyCohereLanguageSeedsDictationAndMeetings() throws {
+        let json = """
+        {
+          "cohere_language": "de"
+        }
+        """
+        let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+
+        #expect(config.cohereLanguageDictation == CohereTranscribeLanguage.german.rawValue)
+        #expect(config.cohereLanguageMeetings == CohereTranscribeLanguage.german.rawValue)
+        #expect(config.resolvedCohereLanguageDictation == .german)
+        #expect(config.resolvedCohereLanguageMeetings == .german)
     }
 
     @Test("meeting transcription falls back to dictation model when missing")

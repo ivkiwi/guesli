@@ -86,7 +86,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             rootView = OnboardingView(
                 controller: controller,
                 appState: controller.appState,
-                initialCohereLanguage: controller.config.resolvedCohereLanguage,
+                initialCohereLanguage: controller.config.resolvedCohereLanguageDictation,
                 initialUseCase: controller.config.resolvedOnboardingUseCase,
                 initialSummaryBackend: .chatGPT
             )

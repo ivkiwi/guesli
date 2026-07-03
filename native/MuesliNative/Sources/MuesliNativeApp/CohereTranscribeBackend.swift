@@ -1145,19 +1145,46 @@ actor CohereTranscribeTranscriber {
             CohereProfilingLog.write("[cohere] waiting for background warmup to finish before dictation...")
             await warmupTask.value
         }
-        guard let manager else { throw TranscriberError.notLoaded }
         let start = CFAbsoluteTimeGetCurrent()
         let converter = AudioConverter()
         let resampleStart = CFAbsoluteTimeGetCurrent()
         let samples = try converter.resampleAudioFile(wavURL)
         let resampleMs = (CFAbsoluteTimeGetCurrent() - resampleStart) * 1000
-        let inference = try await manager.transcribe(audioSamples: samples, language: language)
+        let inference = try await transcribeLoaded(audioSamples: samples, language: language)
         let processingTime = CFAbsoluteTimeGetCurrent() - start
         var profile = inference.profile
         profile.resampleMs = resampleMs
         profile.totalProcessingMs = processingTime * 1000
         CohereProfilingLog.write(profile.logDescription(prefix: "[cohere][dictation]"))
         return (inference.text, processingTime, profile)
+    }
+
+    func transcribe(
+        audioSamples: [Float],
+        language: CohereTranscribeLanguage = CohereTranscribeLanguage.defaultLanguage
+    ) async throws -> (text: String, processingTime: Double, profile: CohereProfilingSummary) {
+        try await loadModels()
+        if let warmupTask {
+            CohereProfilingLog.write("[cohere] waiting for background warmup to finish before dictation...")
+            await warmupTask.value
+        }
+        let start = CFAbsoluteTimeGetCurrent()
+        let inference = try await transcribeLoaded(audioSamples: audioSamples, language: language)
+        let processingTime = CFAbsoluteTimeGetCurrent() - start
+        var profile = inference.profile
+        profile.resampleMs = 0
+        profile.totalProcessingMs = processingTime * 1000
+        CohereProfilingLog.write(profile.logDescription(prefix: "[cohere][dictation]"))
+        return (inference.text, processingTime, profile)
+    }
+
+    private func transcribeLoaded(
+        audioSamples: [Float],
+        language: CohereTranscribeLanguage
+    ) async throws -> (text: String, profile: CohereProfilingSummary) {
+        guard let manager else { throw TranscriberError.notLoaded }
+        let inference = try await manager.transcribe(audioSamples: audioSamples, language: language)
+        return (inference.text, inference.profile)
     }
 
     func shutdown() {

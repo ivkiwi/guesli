@@ -88,6 +88,7 @@ final class AppState {
     var liveMeetingTranscriptOwnerID: Int64? = nil
     var activeMeetingAudioWarning: ActiveMeetingAudioWarning?
     var dictationState: DictationState = .idle
+    var lastTranscriptCleanupWarning: String?
     var isVoiceNoteRecording: Bool = false
     var isChatGPTAuthenticated: Bool = false
     var isGoogleCalendarAvailable: Bool = false

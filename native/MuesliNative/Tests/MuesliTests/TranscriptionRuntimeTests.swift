@@ -457,4 +457,62 @@ struct ExternalTranscriptCleanupClientTests {
             ) == "Ship the release."
         )
     }
+
+    @Test("reports missing OpenAI cleanup credentials")
+    func reportsMissingOpenAICleanupCredentials() throws {
+        var config = AppConfig()
+        config.transcriptCleanupProvider = TranscriptCleanupProviderOption.openAI.rawValue
+
+        let status = try #require(TranscriptCleanupCredentialStatus.dictationCleanup(
+            provider: .openAI,
+            config: config,
+            environment: [:]
+        ))
+
+        #expect(status.isWarning)
+        #expect(status.message.contains("Meeting Summaries OpenAI credentials"))
+        #expect(status.message.contains("key missing"))
+    }
+
+    @Test("reports configured OpenRouter cleanup credentials")
+    func reportsConfiguredOpenRouterCleanupCredentials() throws {
+        var config = AppConfig()
+        config.openRouterAPIKey = "sk-or-test"
+
+        let status = try #require(TranscriptCleanupCredentialStatus.dictationCleanup(
+            provider: .openRouter,
+            config: config,
+            environment: [:]
+        ))
+
+        #expect(!status.isWarning)
+        #expect(status.message.contains("Meeting Summaries OpenRouter credentials"))
+        #expect(status.message.contains("key present"))
+    }
+
+    @Test("warns when custom cleanup cannot use summary settings")
+    func warnsWhenCustomCleanupCannotUseSummarySettings() throws {
+        var config = AppConfig()
+        config.customLLMFormat = CustomLLMFormat.anthropic.rawValue
+
+        let status = try #require(TranscriptCleanupCredentialStatus.dictationCleanup(
+            provider: .customLLM,
+            config: config,
+            environment: [:]
+        ))
+
+        #expect(status.isWarning)
+        #expect(status.message.contains("OpenAI-compatible"))
+    }
+
+    @Test("formats external cleanup failure warning")
+    func formatsExternalCleanupFailureWarning() {
+        let warning = TranscriptCleanupFailureSurface.warning(
+            provider: .openAI,
+            error: TranscriptCleanupError.missingAPIKey("OpenAI")
+        )
+
+        #expect(warning.contains("OpenAI transcript cleanup failed; using raw transcript"))
+        #expect(warning.contains("needs an API key"))
+    }
 }

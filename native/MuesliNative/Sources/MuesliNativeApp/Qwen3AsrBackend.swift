@@ -45,11 +45,15 @@ actor Qwen3AsrTranscriber {
     /// Transcribe a WAV file URL.
     /// Returns the transcribed text (no token-level timings available).
     func transcribe(wavURL: URL) async throws -> (text: String, processingTime: Double) {
-        guard let manager else { throw TranscriberError.notLoaded }
-        let start = CFAbsoluteTimeGetCurrent()
         let converter = AudioConverter()
         let samples = try converter.resampleAudioFile(wavURL)
-        let text = try await manager.transcribe(audioSamples: samples)
+        return try await transcribe(audioSamples: samples)
+    }
+
+    func transcribe(audioSamples: [Float]) async throws -> (text: String, processingTime: Double) {
+        guard let manager else { throw TranscriberError.notLoaded }
+        let start = CFAbsoluteTimeGetCurrent()
+        let text = try await manager.transcribe(audioSamples: audioSamples)
         let processingTime = CFAbsoluteTimeGetCurrent() - start
         return (text, processingTime)
     }
