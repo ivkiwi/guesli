@@ -211,7 +211,7 @@ enum AudioFileImportController {
             at: wavURL,
             samples: audioSamples,
             backend: backend,
-            cohereLanguage: config.resolvedCohereLanguage
+            cohereLanguage: config.resolvedCohereLanguageMeetings
         )
         let rawTranscript = transcription.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawTranscript.isEmpty else {

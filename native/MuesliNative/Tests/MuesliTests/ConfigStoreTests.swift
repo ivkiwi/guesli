@@ -35,7 +35,8 @@ struct ConfigStoreTests {
         config.openAIModel = "gpt-5.4-pro"
         config.openRouterAPIKey = "sk-or-test-roundtrip"
         config.openRouterModel = "nvidia/nemotron-3-super-120b-a12b:free"
-        config.cohereLanguage = CohereTranscribeLanguage.german.rawValue
+        config.cohereLanguageDictation = CohereTranscribeLanguage.german.rawValue
+        config.cohereLanguageMeetings = CohereTranscribeLanguage.french.rawValue
         config.meetingSummaryBackend = "openrouter"
         store.save(config)
 
@@ -44,7 +45,8 @@ struct ConfigStoreTests {
         #expect(loaded.openAIModel == "gpt-5.4-pro")
         #expect(loaded.openRouterAPIKey == "sk-or-test-roundtrip")
         #expect(loaded.openRouterModel == "nvidia/nemotron-3-super-120b-a12b:free")
-        #expect(loaded.cohereLanguage == CohereTranscribeLanguage.german.rawValue)
+        #expect(loaded.cohereLanguageDictation == CohereTranscribeLanguage.german.rawValue)
+        #expect(loaded.cohereLanguageMeetings == CohereTranscribeLanguage.french.rawValue)
         #expect(loaded.meetingSummaryBackend == "openrouter")
 
         // Restore original
@@ -99,6 +101,10 @@ struct ConfigStoreTests {
         legacyConfig.defaultMeetingTemplateID = legacyTemplate.id
         legacyConfig.chatGPTModel = "gpt-5.5"
         legacyConfig.meetingRecordingSavePolicy = .always
+        legacyConfig.cohereLanguageDictation = CohereTranscribeLanguage.french.rawValue
+        legacyConfig.cohereLanguageMeetings = CohereTranscribeLanguage.german.rawValue
+        legacyConfig.enableMeetingTranscriptCleanup = true
+        legacyConfig.meetingTranscriptCleanupProvider = MeetingTranscriptCleanupProviderOption.chatGPT.rawValue
         legacyStore.save(legacyConfig)
         try Data("legacy auth".utf8).write(to: legacySupport.appendingPathComponent("chatgpt-auth.json"))
 
@@ -123,6 +129,10 @@ struct ConfigStoreTests {
         #expect(loaded.defaultMeetingTemplateID == legacyTemplate.id)
         #expect(loaded.chatGPTModel == "gpt-5.5")
         #expect(loaded.meetingRecordingSavePolicy == .always)
+        #expect(loaded.cohereLanguageDictation == CohereTranscribeLanguage.french.rawValue)
+        #expect(loaded.cohereLanguageMeetings == CohereTranscribeLanguage.german.rawValue)
+        #expect(loaded.enableMeetingTranscriptCleanup == true)
+        #expect(loaded.meetingTranscriptCleanupProvider == MeetingTranscriptCleanupProviderOption.chatGPT.rawValue)
         #expect(
             try Data(contentsOf: targetSupport.appendingPathComponent("chatgpt-auth.json"))
                 == Data("legacy auth".utf8)
@@ -140,5 +150,33 @@ struct ConfigStoreTests {
         targetStore.save(manuallyChanged)
 
         #expect(targetStore.load().userName == "Manual")
+    }
+
+    @Test("load imports legacy cleanup and cohere split settings")
+    func importsLegacyCleanupAndCohereSplitSettings() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("legacy-recent-settings-import-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let legacySupport = root.appendingPathComponent("Muesli", isDirectory: true)
+        let targetSupport = root.appendingPathComponent("Guesli", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacySupport, withIntermediateDirectories: true)
+        try Data(
+            """
+            {
+              "cohere_language": "fr",
+              "enable_meeting_transcript_cleanup": true,
+              "meeting_transcript_cleanup_provider": "chatgpt"
+            }
+            """.utf8
+        ).write(to: legacySupport.appendingPathComponent("config.json"))
+
+        let targetStore = ConfigStore(supportURL: targetSupport, legacySupportURL: legacySupport)
+        let loaded = targetStore.load()
+
+        #expect(loaded.cohereLanguageDictation == CohereTranscribeLanguage.french.rawValue)
+        #expect(loaded.cohereLanguageMeetings == CohereTranscribeLanguage.french.rawValue)
+        #expect(loaded.enableMeetingTranscriptCleanup == true)
+        #expect(loaded.meetingTranscriptCleanupProvider == MeetingTranscriptCleanupProviderOption.chatGPT.rawValue)
     }
 }

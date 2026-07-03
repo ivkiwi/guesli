@@ -458,7 +458,7 @@ final class MeetingSession {
                 let result = try await transcriptionCoordinator.transcribeMeetingChunk(
                     at: lastSystemChunkURL,
                     backend: currentBackend(),
-                    cohereLanguage: config.resolvedCohereLanguage
+                    cohereLanguage: config.resolvedCohereLanguageMeetings
                 )
                 let normalizedSegments = normalizeSystemTranscription(
                     result: result,
@@ -889,7 +889,7 @@ final class MeetingSession {
                 let result = try await self.transcriptionCoordinator.transcribeMeetingChunk(
                     at: chunkURL,
                     backend: backend,
-                    cohereLanguage: config.resolvedCohereLanguage
+                    cohereLanguage: config.resolvedCohereLanguageMeetings
                 )
                 if !result.text.isEmpty {
                     fputs("[meeting] system chunk transcribed: \"\(String(result.text.prefix(60)))...\"\n", stderr)
@@ -1089,7 +1089,7 @@ final class MeetingSession {
             let result = try await transcriptionCoordinator.transcribeMeetingChunk(
                 at: url,
                 backend: currentBackend(),
-                cohereLanguage: config.resolvedCohereLanguage
+                cohereLanguage: config.resolvedCohereLanguageMeetings
             )
             if !result.text.isEmpty {
                 fputs("[meeting] mic chunk transcribed (raw): \"\(String(result.text.prefix(60)))...\"\n", stderr)
@@ -1198,7 +1198,7 @@ final class MeetingSession {
                     let result = try await transcriptionCoordinator.transcribeMeeting(
                         at: segmentURL,
                         backend: currentBackend(),
-                        cohereLanguage: config.resolvedCohereLanguage
+                        cohereLanguage: config.resolvedCohereLanguageMeetings
                     )
                     repairedSegments.append(contentsOf: normalizeSystemTranscription(
                         result: result,
@@ -1232,7 +1232,7 @@ final class MeetingSession {
                 at: systemAudioURL,
                 samples: samples,
                 backend: currentBackend(),
-                cohereLanguage: config.resolvedCohereLanguage
+                cohereLanguage: config.resolvedCohereLanguageMeetings
             )
             return normalizeSystemTranscription(
                 result: result,

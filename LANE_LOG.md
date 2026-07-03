@@ -31,3 +31,15 @@
   - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings` - passed, 1213 tests / 131 suites.
   - `git diff --check` - passed.
 - Deviations: no new credential storage added; no files outside this worktree changed.
+
+## 2026-07-03 16:03 +03 - C7/C6 Cohere language split and config migration
+
+- Status: complete.
+- Change: split shared Cohere language config into `cohere_language_dictation` and `cohere_language_meetings`; legacy `cohere_language` decodes once into both new fields and is no longer emitted on save.
+- Change: dictation/model picker paths write/use dictation language; meeting/live/retranscribe/import paths write/use meeting language.
+- Change: legacy settings import now preserves split Cohere language keys plus meeting transcript cleanup enable/provider keys.
+- Tests:
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings --filter 'ConfigStoreTests|AppConfigTests'` - passed, 31 tests.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings` - passed, 1215 tests / 131 suites.
+  - `git diff --check` - passed.
+- Deviations: no auto-export config keys exist in this branch; no files outside this worktree changed.

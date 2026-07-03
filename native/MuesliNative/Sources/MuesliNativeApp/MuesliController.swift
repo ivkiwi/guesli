@@ -1707,9 +1707,15 @@ final class MuesliController: NSObject {
         }
     }
 
-    func selectCohereLanguage(_ language: CohereTranscribeLanguage) {
+    func selectDictationCohereLanguage(_ language: CohereTranscribeLanguage) {
         updateConfig {
-            $0.cohereLanguage = language.rawValue
+            $0.cohereLanguageDictation = language.rawValue
+        }
+    }
+
+    func selectMeetingCohereLanguage(_ language: CohereTranscribeLanguage) {
+        updateConfig {
+            $0.cohereLanguageMeetings = language.rawValue
         }
     }
 
@@ -3074,7 +3080,8 @@ final class MuesliController: NSObject {
             config.userName = userName
             config.sttBackend = backend.backend
             config.sttModel = backend.model
-            config.cohereLanguage = cohereLanguage.rawValue
+            config.cohereLanguageDictation = cohereLanguage.rawValue
+            config.cohereLanguageMeetings = cohereLanguage.rawValue
             config.meetingTranscriptionBackend = backend.backend
             config.meetingTranscriptionModel = backend.model
             config.dictationHotkey = hotkey
@@ -3203,7 +3210,7 @@ final class MuesliController: NSObject {
             userName: config.userName,
             selectedBackendKey: config.sttBackend,
             selectedModelKey: config.sttModel,
-            selectedCohereLanguageCode: config.cohereLanguage,
+            selectedCohereLanguageCode: config.cohereLanguageDictation,
             hotkeyKeyCode: config.dictationHotkey.keyCode,
             hotkeyLabel: config.dictationHotkey.label,
             systemAudioRequested: false,
@@ -3475,7 +3482,7 @@ final class MuesliController: NSObject {
                 let transcription = try await self.transcriptionCoordinator.transcribeMeeting(
                     at: transcriptionWAVURL,
                     backend: backend,
-                    cohereLanguage: self.config.resolvedCohereLanguage
+                    cohereLanguage: self.config.resolvedCohereLanguageMeetings
                 )
                 let rawTranscript = transcription.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !rawTranscript.isEmpty else {
@@ -6166,7 +6173,7 @@ final class MuesliController: NSObject {
                 let result = try await self.transcriptionCoordinator.transcribeDictation(
                     at: wavURL,
                     backend: self.selectedBackend,
-                    cohereLanguage: self.config.resolvedCohereLanguage,
+                    cohereLanguage: self.config.resolvedCohereLanguageDictation,
                     enablePostProcessor: false,
                     customWords: self.serializedCustomWords(),
                     appContext: nil
@@ -7102,7 +7109,9 @@ final class MuesliController: NSObject {
         let isTestMode = isDictationTestMode
         let outputMode = currentDictationOutputMode
         let transcriptionBackend = isTestMode ? (dictationTestBackend ?? selectedBackend) : selectedBackend
-        let transcriptionLanguage = isTestMode ? (dictationTestCohereLanguage ?? config.resolvedCohereLanguage) : config.resolvedCohereLanguage
+        let transcriptionLanguage = isTestMode
+            ? (dictationTestCohereLanguage ?? config.resolvedCohereLanguageDictation)
+            : config.resolvedCohereLanguageDictation
         let capturedContext = capturedDictationContext
         let promptContext = capturedContext.map { DictationContextCapture.formatForPrompt($0) }
         let correctionTargetApp = capturedDictationCorrectionTargetApp

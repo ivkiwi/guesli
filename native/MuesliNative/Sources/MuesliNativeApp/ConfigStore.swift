@@ -145,7 +145,8 @@ final class ConfigStore {
             config.dictationInputDeviceUID = legacy.dictationInputDeviceUID
             importedFields.append("dictation_input_device_uid")
         }
-        importValue("cohere_language", \.cohereLanguage)
+        importValue("cohere_language_dictation", \.cohereLanguageDictation)
+        importValue("cohere_language_meetings", \.cohereLanguageMeetings)
         importValue("nemotron35_language", \.nemotron35Language)
 
         if config.preferredMeetingBrowserBundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -256,6 +257,8 @@ final class ConfigStore {
 
         importValue("enable_post_processor", \.enablePostProcessor)
         importValue("transcript_cleanup_provider", \.transcriptCleanupProvider)
+        importValue("enable_meeting_transcript_cleanup", \.enableMeetingTranscriptCleanup)
+        importValue("meeting_transcript_cleanup_provider", \.meetingTranscriptCleanupProvider)
         importValue("active_post_processor_id", \.activePostProcessorId)
         importValue("post_processor_system_prompt", \.postProcessorSystemPrompt)
         importValue("enable_screen_context", \.enableScreenContext)

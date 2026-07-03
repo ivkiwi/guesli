@@ -944,7 +944,9 @@ struct AppConfig: Codable {
     var sttBackend: String = BackendOption.gigaAMV3Russian.backend
     var sttModel: String = BackendOption.gigaAMV3Russian.model
     var dictationInputDeviceUID: String? = nil
-    var cohereLanguage: String = CohereTranscribeLanguage.defaultLanguage.rawValue
+    var cohereLanguageDictation: String = CohereTranscribeLanguage.defaultLanguage.rawValue
+    var cohereLanguageMeetings: String = CohereTranscribeLanguage.defaultLanguage.rawValue
+    private var legacyCohereLanguage: String? = nil
     var nemotron35Language: String = Nemotron35Language.defaultLanguage.rawValue
     var meetingTranscriptionBackend: String = BackendOption.gigaAMV3Russian.backend
     var meetingTranscriptionModel: String = BackendOption.gigaAMV3Russian.model
@@ -1041,7 +1043,9 @@ struct AppConfig: Codable {
         case sttBackend = "stt_backend"
         case sttModel = "stt_model"
         case dictationInputDeviceUID = "dictation_input_device_uid"
-        case cohereLanguage = "cohere_language"
+        case legacyCohereLanguage = "cohere_language"
+        case cohereLanguageDictation = "cohere_language_dictation"
+        case cohereLanguageMeetings = "cohere_language_meetings"
         case nemotron35Language = "nemotron35_language"
         case meetingTranscriptionBackend = "meeting_transcription_backend"
         case meetingTranscriptionModel = "meeting_transcription_model"
@@ -1145,7 +1149,15 @@ struct AppConfig: Codable {
         sttBackend = (try? c.decode(String.self, forKey: .sttBackend)) ?? defaults.sttBackend
         sttModel = (try? c.decode(String.self, forKey: .sttModel)) ?? defaults.sttModel
         dictationInputDeviceUID = try? c.decode(String.self, forKey: .dictationInputDeviceUID)
-        cohereLanguage = CohereTranscribeLanguage.resolvedCode(try? c.decode(String.self, forKey: .cohereLanguage))
+        let legacyCohereLanguage = try? c.decode(String.self, forKey: .legacyCohereLanguage)
+        let cohereLanguageDictationRaw = c.contains(.cohereLanguageDictation)
+            ? (try? c.decode(String.self, forKey: .cohereLanguageDictation))
+            : legacyCohereLanguage
+        let cohereLanguageMeetingsRaw = c.contains(.cohereLanguageMeetings)
+            ? (try? c.decode(String.self, forKey: .cohereLanguageMeetings))
+            : legacyCohereLanguage
+        cohereLanguageDictation = CohereTranscribeLanguage.resolvedCode(cohereLanguageDictationRaw)
+        cohereLanguageMeetings = CohereTranscribeLanguage.resolvedCode(cohereLanguageMeetingsRaw)
         nemotron35Language = Nemotron35Language.resolvedCode(try? c.decode(String.self, forKey: .nemotron35Language))
         meetingTranscriptionBackend = (try? c.decode(String.self, forKey: .meetingTranscriptionBackend)) ?? sttBackend
         meetingTranscriptionModel = (try? c.decode(String.self, forKey: .meetingTranscriptionModel)) ?? sttModel
@@ -1264,8 +1276,12 @@ struct AppConfig: Codable {
         contributionBuyMeCoffeeClicked = (try? c.decode(Bool.self, forKey: .contributionBuyMeCoffeeClicked)) ?? defaults.contributionBuyMeCoffeeClicked
     }
 
-    var resolvedCohereLanguage: CohereTranscribeLanguage {
-        CohereTranscribeLanguage.resolved(cohereLanguage)
+    var resolvedCohereLanguageDictation: CohereTranscribeLanguage {
+        CohereTranscribeLanguage.resolved(cohereLanguageDictation)
+    }
+
+    var resolvedCohereLanguageMeetings: CohereTranscribeLanguage {
+        CohereTranscribeLanguage.resolved(cohereLanguageMeetings)
     }
 
     var resolvedNemotron35Language: Nemotron35Language {
