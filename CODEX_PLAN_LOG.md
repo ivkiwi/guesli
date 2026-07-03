@@ -4,8 +4,8 @@
 
 - Status: in progress.
 - Integration branch: `codex/integration`.
-- Completed: pre-flight crashfix absorption, A3 SenseVoice chunking, A4 model download temp-file leak.
-- Current next item: A5.
+- Completed: pre-flight crashfix absorption, A3 SenseVoice chunking, A4 model download temp-file leak, A5 Nemotron RNNT shape guards.
+- Current next item: B1 upstream PR #268.
 
 ## Journal
 
@@ -40,3 +40,14 @@
 - Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-download-temp-cleanup-wt` passed, 1202 tests.
 - Diff check: `git diff --check` passed.
 - Notes: used explicit `/private/tmp/muesli-spm-download-temp-cleanup-wt` scratch path; no package-local `.build`.
+
+### A5: Nemotron RNNT shape guards
+
+- Status: complete on `codex/nemotron-shape-guards`; merged `codex/integration` via `fd57b5a6` so A4 log/code is included.
+- What changed: RNNT CoreML array reads now validate data type, rank, dimensions, positive strides, and backing-count bounds before using unsafe pointers for mel, mel_length, encoded, encoded_length, and logits.
+- Why: corrupt or skewed compiled Nemotron models should produce descriptive preprocessing/decoding errors instead of trapping on bad MLMultiArray shape/stride assumptions.
+- Tests added: `NemotronRNNTShapeGuardTests` covers wrong-rank mel output and mismatched encoder dimension errors.
+- Targeted tests: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-nemotron-shape-guards --filter NemotronRNNTShapeGuardTests` passed, 2 Swift Testing tests; XCTest bridge executed 0 tests.
+- Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-nemotron-shape-guards` failed, 1204 tests in 131 suites with 3 issues on the requested run. A quiet diagnostic rerun failed with 4 issues in existing full-suite tests: `StreamingVadControllerTests.swift:70`, `StreamingVadControllerTests.swift:139`, `PasteControllerTests.swift:103`, and `PasteControllerTests.swift:115`.
+- Diff check: `git diff --check` passed.
+- Notes: used explicit `/private/tmp/muesli-spm-nemotron-shape-guards` scratch path; no package-local `.build`, main, remotes, or code edits after merge.
