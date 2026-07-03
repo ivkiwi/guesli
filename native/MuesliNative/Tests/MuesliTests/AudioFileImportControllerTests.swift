@@ -91,6 +91,23 @@ struct AudioFileImportControllerTests {
         #expect(file.fileFormat.commonFormat == .pcmFormatInt16)
     }
 
+    @Test("prepareAudioForImport returns reusable samples with converted WAV")
+    func prepareAudioForImportReturnsReusableSamples() async throws {
+        let sourceURL = try createTestAudioFile(duration: 1.0, sampleRate: 44100, channels: 2)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let prepared = try await AudioFileImportController.prepareAudioForImport(sourceURL: sourceURL)
+        defer { try? FileManager.default.removeItem(at: prepared.wavURL) }
+
+        #expect(!prepared.samples.isEmpty)
+        #expect(abs(Double(prepared.samples.count) / 16_000 - prepared.duration) < 0.2)
+
+        let file = try AVAudioFile(forReading: prepared.wavURL)
+        #expect(file.fileFormat.sampleRate == 16000)
+        #expect(file.fileFormat.channelCount == 1)
+        #expect(file.fileFormat.commonFormat == .pcmFormatInt16)
+    }
+
     @Test("convertToWAV handles short audio clips")
     func convertToWAVHandlesShortAudio() async throws {
         let sourceURL = try createTestAudioFile(duration: 0.5, sampleRate: 44100, channels: 1)
