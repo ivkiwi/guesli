@@ -10,3 +10,12 @@
 - Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller` passed, 1210 tests; no PasteController/StreamingVadController flake rerun needed.
 - Hygiene: `git diff --check` passed.
 - Note: `CODEX_PLAN.md` was absent in this worktree root; B2 scope was confirmed from user prompt plus read-only sibling plan at `../muesli/CODEX_PLAN.md`.
+
+## 2026-07-03 - C3 cancel starting-now timers from prompt actions
+
+- Branch/worktree: `codex/lane-controller` in `/Users/kiwi/Projects/muesli-lane-controller`.
+- What changed: scheduled meeting prompt `Record` and `Join & Record` actions now cancel their pending `Meeting starting now` timer through `cancelMeetingStartingNowTimer(notificationKey:)`, matching existing `Join Only` and dismiss behavior.
+- Why: if recording ends before the scheduled event start, or Join & Record fails to reach recording, the old timer could still fire a redundant stale starting-now prompt.
+- Targeted tests: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller --filter 'MeetingNotificationController|GoogleCalendarTests'` passed, 44 tests.
+- Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-controller` passed, 1211 tests; no PasteController/StreamingVadController flake rerun needed.
+- Hygiene: `git diff --check` passed.

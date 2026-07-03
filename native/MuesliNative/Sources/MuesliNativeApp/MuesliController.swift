@@ -7409,6 +7409,7 @@ final class MuesliController: NSObject {
             onStartRecording: { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.startForegroundMeetingRecording(
                     title: title,
                     calendarEventID: event.id,
@@ -7420,6 +7421,7 @@ final class MuesliController: NSObject {
             onJoinAndRecord: meetingURL != nil ? { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.joinAndRecord(title: title, meetingURL: meetingURL!, endDate: calendarEndDate, calendarEventID: event.id)
             } : nil,
             onJoinOnly: meetingURL != nil ? { [weak self] in
