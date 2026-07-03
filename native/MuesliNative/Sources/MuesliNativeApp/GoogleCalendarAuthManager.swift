@@ -43,6 +43,10 @@ final class GoogleCalendarAuthManager {
         AppIdentity.supportDirectoryURL.appendingPathComponent("google-calendar-auth.json")
     }
 
+    private var tokenStore: AuthTokenFileStore {
+        AuthTokenFileStore(primaryURL: tokenFileURL, logPrefix: "google-cal")
+    }
+
     private init() {
         credentials = GoogleCalendarCredentials.load()
     }
@@ -72,7 +76,7 @@ final class GoogleCalendarAuthManager {
             codeVerifier: verifier,
             credentials: credentials
         )
-        saveTokens(tokens)
+        saveTokens(tokens, reason: "save")
         fputs("[google-cal] signed in successfully\n", stderr)
     }
 
@@ -102,7 +106,7 @@ final class GoogleCalendarAuthManager {
                 refreshToken: refreshToken,
                 credentials: credentials
             )
-            saveTokens(tokens)
+            saveTokens(tokens, reason: "save")
             return tokens.accessToken
         }
 
@@ -369,36 +373,24 @@ final class GoogleCalendarAuthManager {
 
     // MARK: - File-based Token Storage
 
-    private func saveTokens(_ tokens: TokenResponse) {
+    private func saveTokens(_ tokens: TokenResponse, reason: String) {
         let dict: [String: String] = [
             "access_token": tokens.accessToken,
             "refresh_token": tokens.refreshToken,
             "expires_at": String(format: "%.0f", tokens.expiresAtMs),
         ]
         do {
-            let dir = tokenFileURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let data = try JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted)
-            try data.write(to: tokenFileURL, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenFileURL.path)
-            var fileURL = tokenFileURL
-            var resourceValues = URLResourceValues()
-            resourceValues.isExcludedFromBackup = true
-            try fileURL.setResourceValues(resourceValues)
+            try tokenStore.save(dict, reason: reason)
         } catch {
-            fputs("[google-cal] failed to save tokens: \(error)\n", stderr)
+            fputs("[google-cal] failed to save tokens reason=\(reason) error=\(error)\n", stderr)
         }
     }
 
     private func tokenRead(key: String) -> String? {
-        guard let data = try? Data(contentsOf: tokenFileURL),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
-            return nil
-        }
-        return dict[key]
+        tokenStore.load()?[key]
     }
 
     private func deleteTokens() {
-        try? FileManager.default.removeItem(at: tokenFileURL)
+        tokenStore.signOut()
     }
 }

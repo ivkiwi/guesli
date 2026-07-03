@@ -185,4 +185,38 @@ struct ConfigStoreTests {
         #expect(loaded.enableMeetingTranscriptCleanup == true)
         #expect(loaded.meetingTranscriptCleanupProvider == MeetingTranscriptCleanupProviderOption.chatGPT.rawValue)
     }
+
+    @Test("legacy auth import does not clobber recoverable current backup")
+    func legacyAuthImportSkipsRecoverableBackup() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("legacy-auth-backup-skip-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let legacySupport = root.appendingPathComponent("Muesli", isDirectory: true)
+        let targetSupport = root.appendingPathComponent("Guesli", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacySupport, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: targetSupport, withIntermediateDirectories: true)
+
+        try authData(accessToken: "legacy").write(to: legacySupport.appendingPathComponent("chatgpt-auth.json"))
+        let primaryURL = targetSupport.appendingPathComponent("chatgpt-auth.json")
+        let backupURL = AuthTokenFileStore.backupURL(for: primaryURL)
+        try authData(accessToken: "current").write(to: backupURL)
+
+        let targetStore = ConfigStore(supportURL: targetSupport, legacySupportURL: legacySupport)
+        _ = targetStore.load()
+
+        #expect(!FileManager.default.fileExists(atPath: primaryURL.path))
+        let backupTokensOrNil = try tokens(at: backupURL)
+        let backupTokens = try #require(backupTokensOrNil)
+        #expect(backupTokens["access_token"] == "current")
+    }
+
+    private func authData(accessToken: String) throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["access_token": accessToken], options: .prettyPrinted)
+    }
+
+    private func tokens(at url: URL) throws -> [String: String]? {
+        let data = try Data(contentsOf: url)
+        return try JSONSerialization.jsonObject(with: data) as? [String: String]
+    }
 }

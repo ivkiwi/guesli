@@ -41,6 +41,10 @@ final class ChatGPTAuthManager {
         AppIdentity.supportDirectoryURL.appendingPathComponent("chatgpt-auth.json")
     }
 
+    private var tokenStore: AuthTokenFileStore {
+        AuthTokenFileStore(primaryURL: tokenFileURL, logPrefix: "chatgpt-auth")
+    }
+
     private init() {
         // Migrate from legacy keychain storage to file
         migrateFromKeychain()
@@ -56,7 +60,7 @@ final class ChatGPTAuthManager {
         let (verifier, challenge) = generatePKCE()
         let code = try await startCallbackServerAndOpenBrowser(codeChallenge: challenge)
         let tokens = try await exchangeCodeForTokens(code: code, codeVerifier: verifier)
-        saveTokens(tokens)
+        saveTokens(tokens, reason: "save")
         fputs("[chatgpt-auth] signed in successfully\n", stderr)
     }
 
@@ -88,7 +92,7 @@ final class ChatGPTAuthManager {
                 throw ChatGPTAuthError.notAuthenticated
             }
             let tokens = try await refreshAccessToken(refreshToken: refreshToken)
-            saveTokens(tokens)
+            saveTokens(tokens, reason: "save")
             return (tokens.accessToken, tokens.accountId)
         }
 
@@ -379,7 +383,7 @@ final class ChatGPTAuthManager {
 
     // MARK: - File-based Token Storage
 
-    private func saveTokens(_ tokens: TokenResponse) {
+    private func saveTokens(_ tokens: TokenResponse, reason: String) {
         let dict: [String: String] = [
             "access_token": tokens.accessToken,
             "refresh_token": tokens.refreshToken,
@@ -387,42 +391,25 @@ final class ChatGPTAuthManager {
             "account_id": tokens.accountId,
         ]
         do {
-            let dir = tokenFileURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let data = try JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted)
-            try data.write(to: tokenFileURL, options: .atomic)
-            try Self.secureTokenFilePermissions(at: tokenFileURL)
-            var resourceValues = URLResourceValues()
-            resourceValues.isExcludedFromBackup = true
-            var fileURL = tokenFileURL
-            try fileURL.setResourceValues(resourceValues)
+            try tokenStore.save(dict, reason: reason)
         } catch {
-            fputs("[chatgpt-auth] failed to save tokens: \(error)\n", stderr)
+            fputs("[chatgpt-auth] failed to save tokens reason=\(reason) error=\(error)\n", stderr)
         }
     }
 
     private func tokenRead(key: String) -> String? {
-        try? Self.secureTokenFilePermissions(at: tokenFileURL)
-        guard let data = try? Data(contentsOf: tokenFileURL),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
-            return nil
-        }
-        return dict[key]
+        tokenStore.load()?[key]
     }
 
     nonisolated static func secureTokenFilePermissions(
         at url: URL,
         fileManager: FileManager = .default
     ) throws {
-        guard fileManager.fileExists(atPath: url.path) else { return }
-        let attributes = try fileManager.attributesOfItem(atPath: url.path)
-        let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
-        guard permissions != 0o600 else { return }
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try AuthTokenFileStore.secureFilePermissions(at: url, fileManager: fileManager)
     }
 
     private func deleteTokens() {
-        try? FileManager.default.removeItem(at: tokenFileURL)
+        tokenStore.signOut()
     }
 
     // MARK: - Keychain Migration
@@ -430,8 +417,8 @@ final class ChatGPTAuthManager {
     private static let keychainService = "com.muesli.app.chatgpt-auth"
 
     private func migrateFromKeychain() {
-        // If file already exists, no migration needed
-        guard !FileManager.default.fileExists(atPath: tokenFileURL.path) else { return }
+        // If file or backup already exists, no migration needed
+        guard !AuthTokenFileStore.hasRecoverableTokenFile(primaryURL: tokenFileURL) else { return }
 
         // Try reading from legacy keychain
         guard let accessToken = keychainReadLegacy(account: "access_token") else { return }
@@ -445,13 +432,13 @@ final class ChatGPTAuthManager {
             expiresAtMs: Double(expiresAt) ?? 0,
             accountId: accountId
         )
-        saveTokens(tokens)
+        saveTokens(tokens, reason: "migrate")
 
         // Clean up keychain entries
         for account in ["access_token", "refresh_token", "expires_at", "account_id"] {
             keychainDeleteLegacy(account: account)
         }
-        fputs("[chatgpt-auth] migrated tokens from keychain to file\n", stderr)
+        fputs("[chatgpt-auth] migrated tokens from keychain to file reason=migrate\n", stderr)
     }
 
     private func keychainReadLegacy(account: String) -> String? {

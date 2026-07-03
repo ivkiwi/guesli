@@ -46,6 +46,31 @@ struct GoogleCalendarTests {
         #expect(verified == true)
     }
 
+    @Test("Google Calendar token store writes backup and soft-delete marker")
+    func googleCalendarTokenStoreBackupAndSoftDelete() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("google-calendar-auth-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = AuthTokenFileStore(
+            primaryURL: root.appendingPathComponent("google-calendar-auth.json"),
+            logPrefix: "google-cal",
+            logger: { _ in }
+        )
+
+        try store.save([
+            "access_token": "access",
+            "refresh_token": "refresh",
+            "expires_at": "4102444800000",
+        ], reason: "save")
+        store.signOut()
+
+        #expect(!FileManager.default.fileExists(atPath: store.primaryURL.path))
+        #expect(!FileManager.default.fileExists(atPath: store.backupURL.path))
+        #expect(store.signedOutURL.lastPathComponent == "google-calendar-auth.signed-out.json")
+        #expect(FileManager.default.fileExists(atPath: store.signedOutURL.path))
+    }
+
     // MARK: - Event JSON parsing
 
     @Test("parses timed event from Google Calendar API response")

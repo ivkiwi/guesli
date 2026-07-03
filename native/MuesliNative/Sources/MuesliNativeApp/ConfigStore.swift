@@ -356,13 +356,20 @@ final class ConfigStore {
             let sourceURL = legacySupportURL.appendingPathComponent(fileName)
             let destinationURL = supportURL.appendingPathComponent(fileName)
             guard fileManager.fileExists(atPath: sourceURL.path) else { continue }
+            guard !AuthTokenFileStore.hasRecoverableTokenFile(primaryURL: destinationURL, fileManager: fileManager) else {
+                continue
+            }
             guard !fileManager.fileExists(atPath: destinationURL.path) else { continue }
             do {
-                try fileManager.copyItem(at: sourceURL, to: destinationURL)
-                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destinationURL.path)
+                let data = try Data(contentsOf: sourceURL)
+                try AuthTokenFileStore(
+                    primaryURL: destinationURL,
+                    logPrefix: "config-store",
+                    fileManager: fileManager
+                ).save(data, reason: "migrate")
                 copiedFiles.append(fileName)
             } catch {
-                fputs("[config-store] failed to import legacy \(fileName): \(error)\n", stderr)
+                fputs("[config-store] failed to import legacy \(fileName) reason=migrate error=\(error)\n", stderr)
             }
         }
         return copiedFiles

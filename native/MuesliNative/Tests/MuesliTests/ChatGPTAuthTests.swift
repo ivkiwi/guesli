@@ -219,7 +219,73 @@ struct ChatGPTAuthTests {
         #expect(permissions.intValue & 0o777 == 0o600)
     }
 
+    @Test("token store saves primary and backup with owner-only permissions")
+    func tokenStoreSaveLoadRoundTripWithBackup() throws {
+        let root = try makeTokenTestDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let logs = TestLogSink()
+        let store = makeTokenStore(root: root, logs: logs)
+
+        try store.save(Self.sampleTokens, reason: "save")
+        let loaded = try #require(store.load())
+
+        #expect(loaded["access_token"] == "access")
+        #expect(loaded["refresh_token"] == "refresh")
+        #expect(FileManager.default.fileExists(atPath: store.primaryURL.path))
+        #expect(FileManager.default.fileExists(atPath: store.backupURL.path))
+        #expect(try permissions(at: store.primaryURL) == 0o600)
+        #expect(try permissions(at: store.backupURL) == 0o600)
+        #expect(logs.lines.contains("[chatgpt-auth] wrote chatgpt-auth.json reason=save"))
+        #expect(logs.lines.contains("[chatgpt-auth] wrote chatgpt-auth.backup.json reason=save"))
+    }
+
+    @Test("token store restores primary from backup and logs restore")
+    func tokenStoreRestoresPrimaryFromBackup() throws {
+        let root = try makeTokenTestDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let logs = TestLogSink()
+        let store = makeTokenStore(root: root, logs: logs)
+        try store.save(Self.sampleTokens, reason: "save")
+        try FileManager.default.removeItem(at: store.primaryURL)
+        logs.lines.removeAll()
+
+        let loaded = try #require(store.load())
+
+        #expect(loaded["access_token"] == "access")
+        #expect(FileManager.default.fileExists(atPath: store.primaryURL.path))
+        #expect(logs.lines.contains("[chatgpt-auth] restored tokens from backup reason=restore"))
+    }
+
+    @Test("token store sign-out removes primary and backup and leaves marker")
+    func tokenStoreSignOutLeavesSignedOutMarker() throws {
+        let root = try makeTokenTestDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let logs = TestLogSink()
+        let store = makeTokenStore(root: root, logs: logs)
+        try store.save(Self.sampleTokens, reason: "save")
+        logs.lines.removeAll()
+
+        store.signOut()
+
+        #expect(!FileManager.default.fileExists(atPath: store.primaryURL.path))
+        #expect(!FileManager.default.fileExists(atPath: store.backupURL.path))
+        #expect(FileManager.default.fileExists(atPath: store.signedOutURL.path))
+        #expect(store.load() == nil)
+        let signedOutTokensOrNil = try tokens(at: store.signedOutURL)
+        let signedOutTokens = try #require(signedOutTokensOrNil)
+        #expect(signedOutTokens["access_token"] == "access")
+        #expect(logs.lines.contains("[chatgpt-auth] renamed chatgpt-auth.json to chatgpt-auth.signed-out.json reason=sign-out"))
+        #expect(logs.lines.contains("[chatgpt-auth] deleted chatgpt-auth.backup.json reason=sign-out"))
+    }
+
     // MARK: - Helpers
+
+    private static let sampleTokens = [
+        "access_token": "access",
+        "refresh_token": "refresh",
+        "expires_at": "4102444800000",
+        "account_id": "acct",
+    ]
 
     /// Build a fake JWT with the given JSON payload (header and signature are dummy values).
     private func makeJWT(payload: String) -> String {
@@ -227,5 +293,39 @@ struct ChatGPTAuthTests {
         let body = Data(payload.utf8).base64URLEncoded()
         let signature = "fake_signature"
         return "\(header).\(body).\(signature)"
+    }
+
+    private func makeTokenTestDirectory() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatgpt-auth-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private func makeTokenStore(root: URL, logs: TestLogSink) -> AuthTokenFileStore {
+        AuthTokenFileStore(
+            primaryURL: root.appendingPathComponent("chatgpt-auth.json"),
+            logPrefix: "chatgpt-auth",
+            logger: { logs.append($0) }
+        )
+    }
+
+    private func permissions(at url: URL) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
+        return permissions.intValue & 0o777
+    }
+
+    private func tokens(at url: URL) throws -> [String: String]? {
+        let data = try Data(contentsOf: url)
+        return try JSONSerialization.jsonObject(with: data) as? [String: String]
+    }
+
+    private final class TestLogSink {
+        var lines: [String] = []
+
+        func append(_ line: String) {
+            lines.append(line)
+        }
     }
 }

@@ -9,19 +9,34 @@ import MuesliCore
 struct ChatGPTTokenStorageTests {
 
     @Test("isAuthenticated returns false when no token file exists")
-    @MainActor
-    func notAuthenticatedByDefault() {
-        // Shared singleton may have tokens from a prior test or real usage,
-        // so just verify the property is accessible and returns a Bool
-        let auth = ChatGPTAuthManager.shared
-        let _ = auth.isAuthenticated  // Should not crash
+    func notAuthenticatedByDefault() throws {
+        let root = try makeTokenTestDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        #expect(makeTokenStore(root: root).load() == nil)
     }
 
     @Test("signOut does not crash even when not signed in")
-    @MainActor
-    func signOutSafe() {
-        let auth = ChatGPTAuthManager.shared
-        auth.signOut()  // Should not crash
+    func signOutSafe() throws {
+        let root = try makeTokenTestDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        makeTokenStore(root: root).signOut()
+    }
+
+    private func makeTokenTestDirectory() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatgpt-token-storage-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private func makeTokenStore(root: URL) -> AuthTokenFileStore {
+        AuthTokenFileStore(
+            primaryURL: root.appendingPathComponent("chatgpt-auth.json"),
+            logPrefix: "chatgpt-auth",
+            logger: { _ in }
+        )
     }
 }
 
