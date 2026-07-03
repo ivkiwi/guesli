@@ -46,7 +46,7 @@ struct TranscriptCleanupSettings: Equatable, Sendable {
         self.init(
             provider: TranscriptCleanupProviderOption.resolved(config.transcriptCleanupProvider),
             systemPrompt: config.postProcessorSystemPrompt,
-            chatGPTModel: config.chatGPTModel,
+            chatGPTModel: config.resolvedChatGPTDictationCleanupModel,
             openAIAPIKey: config.openAIAPIKey,
             openAIModel: config.openAIModel,
             openRouterAPIKey: config.openRouterAPIKey,
@@ -162,6 +162,7 @@ enum ExternalTranscriptCleanupClient {
     private static let defaultOpenAIModel = "gpt-5.4-mini"
     private static let defaultOpenRouterModel = "stepfun/step-3.5-flash:free"
     private static let defaultCustomModel = "local-model"
+    private static let chatGPTTimeout: TimeInterval = 10
     private static let timeout: TimeInterval = 120
     private static let defaultChatGPTRequest: ChatGPTTranscriptCleanupRequest = { systemPrompt, userPrompt, model, timeout in
         try await MeetingSummaryClient.callWHAM(
@@ -185,8 +186,11 @@ enum ExternalTranscriptCleanupClient {
             guard let raw = try await chatGPTRequest(
                 settings.systemPrompt,
                 userPrompt(text: text, appContext: appContext),
-                MeetingSummaryClient.resolvedChatGPTModel(settings.chatGPTModel),
-                timeout
+                AppConfig.resolvedChatGPTModel(
+                    settings.chatGPTModel,
+                    defaultModel: AppConfig.defaultChatGPTDictationCleanupModel
+                ),
+                chatGPTTimeout
             ) else {
                 throw TranscriptCleanupError.emptyResponse(settings.provider.label)
             }

@@ -23,6 +23,8 @@ struct ConfigStoreTests {
         // Hotkey may have been customized by user — just verify it loaded
         #expect(HotkeyConfig.label(for: config.dictationHotkey.keyCode) != nil)
         #expect(!config.sttBackend.isEmpty)
+        #expect(config.resolvedChatGPTDictationCleanupModel == AppConfig.defaultChatGPTDictationCleanupModel)
+        #expect(config.resolvedChatGPTMeetingCleanupModel == AppConfig.defaultChatGPTMeetingCleanupModel)
     }
 
     @Test("save and load round-trip")
@@ -35,6 +37,8 @@ struct ConfigStoreTests {
         config.openAIModel = "gpt-5.4-pro"
         config.openRouterAPIKey = "sk-or-test-roundtrip"
         config.openRouterModel = "nvidia/nemotron-3-super-120b-a12b:free"
+        config.chatGPTDictationCleanupModel = "gpt-dictation-roundtrip"
+        config.chatGPTMeetingCleanupModel = "gpt-meeting-roundtrip"
         config.cohereLanguageDictation = CohereTranscribeLanguage.german.rawValue
         config.cohereLanguageMeetings = CohereTranscribeLanguage.french.rawValue
         config.meetingSummaryBackend = "openrouter"
@@ -45,6 +49,8 @@ struct ConfigStoreTests {
         #expect(loaded.openAIModel == "gpt-5.4-pro")
         #expect(loaded.openRouterAPIKey == "sk-or-test-roundtrip")
         #expect(loaded.openRouterModel == "nvidia/nemotron-3-super-120b-a12b:free")
+        #expect(loaded.chatGPTDictationCleanupModel == "gpt-dictation-roundtrip")
+        #expect(loaded.chatGPTMeetingCleanupModel == "gpt-meeting-roundtrip")
         #expect(loaded.cohereLanguageDictation == CohereTranscribeLanguage.german.rawValue)
         #expect(loaded.cohereLanguageMeetings == CohereTranscribeLanguage.french.rawValue)
         #expect(loaded.meetingSummaryBackend == "openrouter")
@@ -100,6 +106,8 @@ struct ConfigStoreTests {
         legacyConfig.customMeetingTemplates = [legacyTemplate]
         legacyConfig.defaultMeetingTemplateID = legacyTemplate.id
         legacyConfig.chatGPTModel = "gpt-5.5"
+        legacyConfig.chatGPTDictationCleanupModel = "gpt-legacy-dictation"
+        legacyConfig.chatGPTMeetingCleanupModel = "gpt-legacy-meeting"
         legacyConfig.meetingRecordingSavePolicy = .always
         legacyConfig.meetingRecordingFileFormat = MeetingRecordingFileFormat.wav.rawValue
         legacyConfig.cohereLanguageDictation = CohereTranscribeLanguage.french.rawValue
@@ -129,6 +137,8 @@ struct ConfigStoreTests {
         #expect(loaded.customMeetingTemplates == [legacyTemplate])
         #expect(loaded.defaultMeetingTemplateID == legacyTemplate.id)
         #expect(loaded.chatGPTModel == "gpt-5.5")
+        #expect(loaded.chatGPTDictationCleanupModel == "gpt-legacy-dictation")
+        #expect(loaded.chatGPTMeetingCleanupModel == "gpt-legacy-meeting")
         #expect(loaded.meetingRecordingSavePolicy == .always)
         #expect(loaded.meetingRecordingFileFormat == MeetingRecordingFileFormat.wav.rawValue)
         #expect(loaded.cohereLanguageDictation == CohereTranscribeLanguage.french.rawValue)
@@ -170,7 +180,9 @@ struct ConfigStoreTests {
               "paste_shortcut": "command_shift_v",
               "transcript_cleanup_provider": "chatgpt",
               "enable_meeting_transcript_cleanup": true,
-              "meeting_transcript_cleanup_provider": "chatgpt"
+              "meeting_transcript_cleanup_provider": "chatgpt",
+              "chatgpt_dictation_cleanup_model": "gpt-json-dictation",
+              "chatgpt_meeting_cleanup_model": "gpt-json-meeting"
             }
             """.utf8
         ).write(to: legacySupport.appendingPathComponent("config.json"))
@@ -184,6 +196,8 @@ struct ConfigStoreTests {
         #expect(loaded.transcriptCleanupProvider == TranscriptCleanupProviderOption.chatGPT.rawValue)
         #expect(loaded.enableMeetingTranscriptCleanup == true)
         #expect(loaded.meetingTranscriptCleanupProvider == MeetingTranscriptCleanupProviderOption.chatGPT.rawValue)
+        #expect(loaded.chatGPTDictationCleanupModel == "gpt-json-dictation")
+        #expect(loaded.chatGPTMeetingCleanupModel == "gpt-json-meeting")
     }
 
     @Test("legacy auth import does not clobber recoverable current backup")

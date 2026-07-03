@@ -16,6 +16,23 @@ private struct ThrowingMeetingTranscriptCleaner: MeetingTranscriptCleaning {
     }
 }
 
+private struct MeetingChatGPTCleanupRequestCall: Sendable {
+    let model: String
+    let timeout: TimeInterval
+}
+
+private actor MeetingChatGPTCleanupRequestRecorder {
+    private var call: MeetingChatGPTCleanupRequestCall?
+
+    func record(model: String, timeout: TimeInterval) {
+        call = MeetingChatGPTCleanupRequestCall(model: model, timeout: timeout)
+    }
+
+    func recordedCall() -> MeetingChatGPTCleanupRequestCall? {
+        call
+    }
+}
+
 @Suite("Meeting transcript cleanup pipeline")
 struct MeetingTranscriptCleanupTests {
     @Test("successful cleanup preserves original transcript")
@@ -67,5 +84,45 @@ struct MeetingTranscriptCleanupTests {
 
         #expect(result.transcript == "[00:00:01] Speaker 1: raw words")
         #expect(result.originalTranscript == nil)
+    }
+
+    @Test("ChatGPT meeting cleanup uses meeting cleanup model")
+    func chatGPTMeetingCleanupUsesMeetingCleanupModel() async throws {
+        let recorder = MeetingChatGPTCleanupRequestRecorder()
+        var config = AppConfig()
+        config.chatGPTModel = "gpt-summary"
+        config.chatGPTMeetingCleanupModel = "gpt-meeting-cleanup"
+
+        let cleaned = try await MeetingSummaryClient.cleanupMeetingTranscriptWithChatGPT(
+            transcript: "[00:00:01] Speaker 1: um hello",
+            config: config,
+            chatGPTRequest: { _, _, model, timeout in
+                await recorder.record(model: model, timeout: timeout)
+                return "[00:00:01] Speaker 1: Hello."
+            }
+        )
+
+        let call = await recorder.recordedCall()
+        #expect(cleaned == "[00:00:01] Speaker 1: Hello.")
+        #expect(call?.model == "gpt-meeting-cleanup")
+        #expect(call?.timeout == 120)
+    }
+
+    @Test("ChatGPT meeting cleanup defaults to quality model")
+    func chatGPTMeetingCleanupDefaultsToQualityModel() async throws {
+        let recorder = MeetingChatGPTCleanupRequestRecorder()
+
+        _ = try await MeetingSummaryClient.cleanupMeetingTranscriptWithChatGPT(
+            transcript: "[00:00:01] Speaker 1: hello",
+            config: AppConfig(),
+            chatGPTRequest: { _, _, model, timeout in
+                await recorder.record(model: model, timeout: timeout)
+                return "[00:00:01] Speaker 1: Hello."
+            }
+        )
+
+        let call = await recorder.recordedCall()
+        #expect(call?.model == AppConfig.defaultChatGPTMeetingCleanupModel)
+        #expect(call?.timeout == 120)
     }
 }

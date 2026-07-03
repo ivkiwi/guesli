@@ -633,6 +633,17 @@ struct SettingsView: View {
                     }
                 }
                 if appState.config.enablePostProcessor,
+                   selectedTranscriptCleanupProvider == .chatGPT {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Cleanup model") {
+                        settingsModelMenu(
+                            currentModel: appState.config.chatGPTDictationCleanupModel,
+                            presets: SummaryModelPreset.chatGPTModels,
+                            defaultModel: AppConfig.defaultChatGPTDictationCleanupModel
+                        ) { val in controller.setChatGPTDictationCleanupModel(val) }
+                    }
+                }
+                if appState.config.enablePostProcessor,
                    let status = transcriptCleanupCredentialStatus {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Cleanup credentials") {
@@ -810,6 +821,16 @@ struct SettingsView: View {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Cleanup account", controlWidth: meetingControlWidth) {
                         chatGPTAccountControl
+                    }
+                }
+                if appState.config.enableMeetingTranscriptCleanup {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Cleanup model", controlWidth: meetingControlWidth) {
+                        settingsModelMenu(
+                            currentModel: appState.config.chatGPTMeetingCleanupModel,
+                            presets: SummaryModelPreset.chatGPTModels,
+                            defaultModel: AppConfig.defaultChatGPTMeetingCleanupModel
+                        ) { val in controller.updateConfig { $0.chatGPTMeetingCleanupModel = val } }
                     }
                 }
                 Divider().background(MuesliTheme.surfaceBorder)
@@ -2526,9 +2547,20 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func settingsModelMenu(currentModel: String, presets: [SummaryModelPreset], onChange: @escaping (String) -> Void) -> some View {
-        let menuPresets = SummaryModelPreset.menuPresets(presets, currentModel: currentModel)
-        let effectiveModel = currentModel.isEmpty ? (presets.first?.id ?? "") : currentModel
+    private func settingsModelMenu(
+        currentModel: String,
+        presets: [SummaryModelPreset],
+        defaultModel: String? = nil,
+        onChange: @escaping (String) -> Void
+    ) -> some View {
+        let defaultId = defaultModel ?? presets.first?.id ?? ""
+        let menuPresets = relabeledPresets(
+            SummaryModelPreset.menuPresets(presets, currentModel: currentModel),
+            defaultModel: defaultModel
+        )
+        let effectiveModel = currentModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? defaultId
+            : currentModel
         let selectedLabel = menuPresets.first(where: { $0.id == effectiveModel })?.label ?? menuPresets.first?.label ?? ""
         FixedWidthPopUp(
             selection: selectedLabel,
@@ -2536,10 +2568,21 @@ struct SettingsView: View {
             onSelectIndex: { index in
                 guard index >= 0 && index < menuPresets.count else { return }
                 let selectedId = menuPresets[index].id
-                onChange(selectedId == presets.first?.id ? "" : selectedId)
+                onChange(selectedId == defaultId ? "" : selectedId)
             }
         )
         .frame(height: 24)
+    }
+
+    private func relabeledPresets(_ presets: [SummaryModelPreset], defaultModel: String?) -> [SummaryModelPreset] {
+        guard let defaultModel else { return presets }
+        return presets.map { preset in
+            var label = preset.label.replacingOccurrences(of: " (default)", with: "")
+            if preset.id == defaultModel {
+                label += " (default)"
+            }
+            return SummaryModelPreset(id: preset.id, label: label)
+        }
     }
 
     @ViewBuilder

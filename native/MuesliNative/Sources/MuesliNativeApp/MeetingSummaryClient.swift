@@ -95,8 +95,12 @@ enum MeetingSummaryClient {
     private static let transcriptCleanupChunkCharacterLimit = 24_000
     private static let summaryTranscriptCharacterLimit = transcriptCleanupChunkCharacterLimit
 
+    static func resolvedChatGPTModel(_ rawValue: String, defaultModel: String) -> String {
+        AppConfig.resolvedChatGPTModel(rawValue, defaultModel: defaultModel)
+    }
+
     static func resolvedChatGPTModel(_ rawValue: String) -> String {
-        rawValue.isEmpty ? defaultChatGPTModel : rawValue
+        resolvedChatGPTModel(rawValue, defaultModel: defaultChatGPTModel)
     }
 
     private static let titleInstructions = """
@@ -495,7 +499,15 @@ enum MeetingSummaryClient {
 
     static func cleanupMeetingTranscriptWithChatGPT(
         transcript: String,
-        config: AppConfig
+        config: AppConfig,
+        chatGPTRequest: ChatGPTTranscriptCleanupRequest = { systemPrompt, userPrompt, model, timeout in
+            try await callWHAM(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                model: model,
+                timeout: timeout
+            )
+        }
     ) async throws -> String {
         let chunks = transcriptChunks(
             transcript,
@@ -503,7 +515,7 @@ enum MeetingSummaryClient {
         )
         guard !chunks.isEmpty else { return "" }
 
-        let model = resolvedChatGPTModel(config.chatGPTModel)
+        let model = config.resolvedChatGPTMeetingCleanupModel
         var cleanedChunks: [String] = []
         cleanedChunks.reserveCapacity(chunks.count)
 
@@ -520,11 +532,11 @@ enum MeetingSummaryClient {
                 """
             }
 
-            guard let cleaned = try await callWHAM(
-                systemPrompt: transcriptCleanupInstructions,
-                userPrompt: userPrompt,
-                model: model,
-                timeout: transcriptCleanupTimeout
+            guard let cleaned = try await chatGPTRequest(
+                transcriptCleanupInstructions,
+                userPrompt,
+                model,
+                transcriptCleanupTimeout
             ), !cleaned.isEmpty else {
                 throw MeetingSummaryError.emptyResponse(backend: "ChatGPT")
             }

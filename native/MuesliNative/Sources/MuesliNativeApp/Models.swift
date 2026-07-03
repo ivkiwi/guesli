@@ -935,6 +935,9 @@ enum MeetingTranscriptCleanupProviderOption: String, Codable, CaseIterable, Send
 }
 
 struct AppConfig: Codable {
+    static let defaultChatGPTDictationCleanupModel = "gpt-5.4-nano"
+    static let defaultChatGPTMeetingCleanupModel = "gpt-5.5"
+
     var dictationHotkey: HotkeyConfig = .default
     var computerUseHotkey: HotkeyConfig = .computerUseDefault
     var enableComputerUseHotkey: Bool = false
@@ -984,6 +987,8 @@ struct AppConfig: Codable {
     var openAIModel: String = ""
     var openRouterModel: String = ""
     var chatGPTModel: String = ""
+    var chatGPTDictationCleanupModel: String = ""
+    var chatGPTMeetingCleanupModel: String = ""
     var meetingSummaryRetryCount: Int = MeetingSummaryRetryPolicy.defaultRetryCount
     var ollamaURL: String = "http://localhost:11434"
     var ollamaModel: String = "qwen3.5"
@@ -1090,6 +1095,8 @@ struct AppConfig: Codable {
         case openAIModel = "openai_model"
         case openRouterModel = "openrouter_model"
         case chatGPTModel = "chatgpt_model"
+        case chatGPTDictationCleanupModel = "chatgpt_dictation_cleanup_model"
+        case chatGPTMeetingCleanupModel = "chatgpt_meeting_cleanup_model"
         case meetingSummaryRetryCount = "meeting_summary_retry_count"
         case ollamaURL = "ollama_url"
         case ollamaModel = "ollama_model"
@@ -1233,6 +1240,8 @@ struct AppConfig: Codable {
         openAIModel = (try? c.decode(String.self, forKey: .openAIModel)) ?? defaults.openAIModel
         openRouterModel = (try? c.decode(String.self, forKey: .openRouterModel)) ?? defaults.openRouterModel
         chatGPTModel = (try? c.decode(String.self, forKey: .chatGPTModel)) ?? defaults.chatGPTModel
+        chatGPTDictationCleanupModel = (try? c.decode(String.self, forKey: .chatGPTDictationCleanupModel)) ?? defaults.chatGPTDictationCleanupModel
+        chatGPTMeetingCleanupModel = (try? c.decode(String.self, forKey: .chatGPTMeetingCleanupModel)) ?? defaults.chatGPTMeetingCleanupModel
         meetingSummaryRetryCount = MeetingSummaryRetryPolicy.clampedRetryCount(
             (try? c.decode(Int.self, forKey: .meetingSummaryRetryCount)) ?? defaults.meetingSummaryRetryCount
         )
@@ -1336,6 +1345,25 @@ struct AppConfig: Codable {
 
     var resolvedMeetingTranscriptCleanupProvider: MeetingTranscriptCleanupProviderOption {
         MeetingTranscriptCleanupProviderOption.resolved(meetingTranscriptCleanupProvider)
+    }
+
+    var resolvedChatGPTDictationCleanupModel: String {
+        Self.resolvedChatGPTModel(
+            chatGPTDictationCleanupModel,
+            defaultModel: Self.defaultChatGPTDictationCleanupModel
+        )
+    }
+
+    var resolvedChatGPTMeetingCleanupModel: String {
+        Self.resolvedChatGPTModel(
+            chatGPTMeetingCleanupModel,
+            defaultModel: Self.defaultChatGPTMeetingCleanupModel
+        )
+    }
+
+    static func resolvedChatGPTModel(_ rawValue: String, defaultModel: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultModel : trimmed
     }
 }
 

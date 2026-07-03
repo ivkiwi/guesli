@@ -102,11 +102,12 @@ struct TranscriptionCoordinatorTests {
             await recorder.record(text: text, appContext: appContext, settings: settings)
             return "Ship the release."
         })
-        await coordinator.setTranscriptCleanupSettings(TranscriptCleanupSettings(
-            provider: .chatGPT,
-            systemPrompt: "Clean dictation",
-            chatGPTModel: "gpt-test"
-        ))
+        var config = AppConfig()
+        config.transcriptCleanupProvider = TranscriptCleanupProviderOption.chatGPT.rawValue
+        config.postProcessorSystemPrompt = "Clean dictation"
+        config.chatGPTModel = "gpt-summary"
+        config.chatGPTDictationCleanupModel = "gpt-dictation"
+        await coordinator.setTranscriptCleanupSettings(TranscriptCleanupSettings(config: config))
 
         let result = await coordinator.postProcessDictationIfNeeded(
             SpeechTranscriptionResult(text: "um ship the release", segments: [
@@ -124,13 +125,29 @@ struct TranscriptionCoordinatorTests {
         #expect(call?.appContext == "Release notes")
         #expect(call?.settings.provider == .chatGPT)
         #expect(call?.settings.systemPrompt == "Clean dictation")
-        #expect(call?.settings.chatGPTModel == "gpt-test")
+        #expect(call?.settings.chatGPTModel == "gpt-dictation")
     }
 
     @Test("falls back when external dictation cleanup fails")
     func fallsBackWhenExternalDictationCleanupFails() async {
         let coordinator = TranscriptionCoordinator(externalTranscriptCleanup: { _, _, _ in
             throw TranscriptCleanupError.emptyResponse("ChatGPT (subscription)")
+        })
+        await coordinator.setTranscriptCleanupSettings(TranscriptCleanupSettings(provider: .chatGPT))
+
+        let result = await coordinator.postProcessDictationIfNeeded(
+            SpeechTranscriptionResult(text: "raw dictation", segments: []),
+            backend: .whisper,
+            enabled: true
+        )
+
+        #expect(result == nil)
+    }
+
+    @Test("falls back when ChatGPT dictation cleanup times out")
+    func fallsBackWhenChatGPTDictationCleanupTimesOut() async {
+        let coordinator = TranscriptionCoordinator(externalTranscriptCleanup: { _, _, _ in
+            throw URLError(.timedOut)
         })
         await coordinator.setTranscriptCleanupSettings(TranscriptCleanupSettings(provider: .chatGPT))
 
@@ -552,7 +569,30 @@ struct ExternalTranscriptCleanupClientTests {
         #expect(call?.userPrompt.contains("App context:\nRelease notes") == true)
         #expect(call?.userPrompt.contains("Raw transcript:\num ship it") == true)
         #expect(call?.model == "gpt-test")
-        #expect(call?.timeout == 120)
+        #expect(call?.timeout == 10)
+    }
+
+    @Test("defaults ChatGPT dictation cleanup to nano model")
+    func defaultsChatGPTDictationCleanupToNanoModel() async throws {
+        let recorder = ChatGPTCleanupRequestRecorder(response: "Ship it.")
+        _ = try await ExternalTranscriptCleanupClient.cleanup(
+            "ship it",
+            appContext: nil,
+            settings: TranscriptCleanupSettings(provider: .chatGPT),
+            chatGPTRequest: { systemPrompt, userPrompt, model, timeout in
+                await recorder.record(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    model: model,
+                    timeout: timeout
+                )
+                return recorder.response
+            }
+        )
+
+        let call = await recorder.recordedCall()
+        #expect(call?.model == AppConfig.defaultChatGPTDictationCleanupModel)
+        #expect(call?.timeout == 10)
     }
 
     @Test("reports missing OpenAI cleanup credentials")

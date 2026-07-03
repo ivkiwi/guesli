@@ -196,6 +196,8 @@ final class ConfigStore {
         importNonEmptyStringIfCurrentEmpty("openai_model", \.openAIModel)
         importNonEmptyStringIfCurrentEmpty("openrouter_model", \.openRouterModel)
         importNonEmptyStringIfCurrentEmpty("chatgpt_model", \.chatGPTModel)
+        importNonEmptyStringIfCurrentEmpty("chatgpt_dictation_cleanup_model", \.chatGPTDictationCleanupModel)
+        importNonEmptyStringIfCurrentEmpty("chatgpt_meeting_cleanup_model", \.chatGPTMeetingCleanupModel)
         importValue("ollama_url", \.ollamaURL)
         importNonEmptyStringIfCurrentEmpty("ollama_model", \.ollamaModel)
         importValue("lmstudio_url", \.lmStudioURL)

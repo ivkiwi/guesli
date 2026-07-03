@@ -1132,6 +1132,7 @@ final class MuesliController: NSObject {
         let previousEnableDictionaryCorrectionPrompts = config.enableDictionaryCorrectionPrompts
         let previousEnablePostProcessor = config.enablePostProcessor
         let previousTranscriptCleanupProvider = config.transcriptCleanupProvider
+        let previousChatGPTDictationCleanupModel = config.chatGPTDictationCleanupModel
         let previousOpenAIAPIKey = config.openAIAPIKey
         let previousOpenAIModel = config.openAIModel
         let previousOpenRouterAPIKey = config.openRouterAPIKey
@@ -1188,6 +1189,7 @@ final class MuesliController: NSObject {
         appState.isChatGPTAuthenticated = chatGPTAuth.isAuthenticated
         if previousEnablePostProcessor != config.enablePostProcessor
             || previousTranscriptCleanupProvider != config.transcriptCleanupProvider
+            || previousChatGPTDictationCleanupModel != config.chatGPTDictationCleanupModel
             || previousOpenAIAPIKey != config.openAIAPIKey
             || previousOpenAIModel != config.openAIModel
             || previousOpenRouterAPIKey != config.openRouterAPIKey
@@ -1862,6 +1864,11 @@ final class MuesliController: NSObject {
         if provider == .local, config.enablePostProcessor {
             _ = normalizePostProcessorSelectionForAvailability()
         }
+        preloadExperimentalTranscriptionFeatures()
+    }
+
+    func setChatGPTDictationCleanupModel(_ model: String) {
+        updateConfig { $0.chatGPTDictationCleanupModel = model }
         preloadExperimentalTranscriptionFeatures()
     }
 
