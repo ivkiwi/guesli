@@ -20,3 +20,14 @@
   - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings` - passed, 1209 tests / 131 suites.
   - `git diff --check` - passed.
 - Deviations: `CODEX_PLAN.md` was not present in this worktree root; read-only D3 plan source came from sibling `../muesli/CODEX_PLAN.md`. No files outside this worktree were changed.
+
+## 2026-07-03 15:56 +03 - C2 dictation cleanup credentials warning
+
+- Status: complete.
+- Change: dictation cleanup settings now say external providers reuse Meeting Summaries credentials/models and show inline status for OpenAI/OpenRouter/Custom LLM settings.
+- Change: missing or unsupported external cleanup configuration shows a warning state in Settings; runtime external cleanup failures log `[dictation-cleanup] ...`, update status/floating warning state, and keep the raw transcript instead of falling through to the local model.
+- Tests:
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings --filter ExternalTranscriptCleanupClientTests` - passed, 7 tests.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings` - passed, 1213 tests / 131 suites.
+  - `git diff --check` - passed.
+- Deviations: no new credential storage added; no files outside this worktree changed.

@@ -112,6 +112,15 @@ struct SettingsView: View {
     private let meetingControlWidth: CGFloat = 275
     private let iOSCompanionURL = IPhoneBridgeLinks.installURL
     private let screenContextGrantIntentTimeout: TimeInterval = 15 * 60
+    private var selectedTranscriptCleanupProvider: TranscriptCleanupProviderOption {
+        TranscriptCleanupProviderOption.resolved(appState.config.transcriptCleanupProvider)
+    }
+    private var transcriptCleanupCredentialStatus: TranscriptCleanupCredentialStatus? {
+        TranscriptCleanupCredentialStatus.dictationCleanup(
+            provider: selectedTranscriptCleanupProvider,
+            config: appState.config
+        )
+    }
     private let meetingDetectionAppOptions: [MeetingDetectionAppOption] = [
         MeetingDetectionAppOption(bundleID: "com.google.Chrome", name: "Chrome", icon: "globe"),
         MeetingDetectionAppOption(bundleID: "company.thebrowser.Browser", name: "Arc", icon: "globe"),
@@ -593,8 +602,13 @@ struct SettingsView: View {
                 }
                 if appState.config.enablePostProcessor {
                     Divider().background(MuesliTheme.surfaceBorder)
-                    settingsRow("Cleanup provider") {
-                        let provider = TranscriptCleanupProviderOption.resolved(appState.config.transcriptCleanupProvider)
+                    settingsRow(
+                        "Cleanup provider",
+                        description: selectedTranscriptCleanupProvider == .local
+                            ? "Runs on the downloaded local cleanup model."
+                            : "External cleanup uses credentials and models from Meeting Summaries."
+                    ) {
+                        let provider = selectedTranscriptCleanupProvider
                         settingsMenu(
                             selection: provider.label,
                             options: TranscriptCleanupProviderOption.allCases.map(\.label)
@@ -605,8 +619,22 @@ struct SettingsView: View {
                         }
                     }
                 }
+                if appState.config.enablePostProcessor,
+                   let status = transcriptCleanupCredentialStatus {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Cleanup credentials") {
+                        transcriptCleanupStatusView(status)
+                    }
+                }
+                if appState.config.enablePostProcessor,
+                   let warning = appState.lastTranscriptCleanupWarning {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Last cleanup warning") {
+                        transcriptCleanupWarningView(warning)
+                    }
+                }
                 if appState.config.enablePostProcessor
-                    && TranscriptCleanupProviderOption.resolved(appState.config.transcriptCleanupProvider) == .local
+                    && selectedTranscriptCleanupProvider == .local
                     && !downloadedPostProcOptions.isEmpty {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Cleanup model") {
@@ -623,7 +651,7 @@ struct SettingsView: View {
                         }
                     }
                 } else if appState.config.enablePostProcessor
-                    && TranscriptCleanupProviderOption.resolved(appState.config.transcriptCleanupProvider) == .local {
+                    && selectedTranscriptCleanupProvider == .local {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Cleanup model") {
                         Text("Download a cleanup model in Models")
@@ -2391,6 +2419,43 @@ struct SettingsView: View {
                 .foregroundStyle(key.isEmpty ? MuesliTheme.textTertiary : MuesliTheme.success)
         }
         .frame(minHeight: 20)
+    }
+
+    @ViewBuilder
+    private func transcriptCleanupStatusView(_ status: TranscriptCleanupCredentialStatus) -> some View {
+        let tint = status.isWarning ? MuesliTheme.transcribing : MuesliTheme.success
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Spacer(minLength: 0)
+            Circle()
+                .fill(tint)
+                .frame(width: 6, height: 6)
+            Text(status.message)
+                .font(.system(size: 11))
+                .foregroundStyle(tint)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(width: controlWidth, alignment: .trailing)
+        .frame(minHeight: 24)
+    }
+
+    @ViewBuilder
+    private func transcriptCleanupWarningView(_ warning: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Spacer(minLength: 0)
+            Circle()
+                .fill(MuesliTheme.transcribing)
+                .frame(width: 6, height: 6)
+            Text(warning)
+                .font(.system(size: 11))
+                .foregroundStyle(MuesliTheme.transcribing)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(width: controlWidth, alignment: .trailing)
+        .frame(minHeight: 24)
     }
 
     @ViewBuilder

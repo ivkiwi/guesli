@@ -401,6 +401,12 @@ final class MuesliController: NSObject {
         self.indicator = FloatingIndicatorController(configStore: configStore)
         ComputerUseCursorOverlay.shared.attachIndicator(self.indicator)
         super.init()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.transcriptionCoordinator.setTranscriptCleanupWarningHandler { [weak self] warning in
+                self?.presentTranscriptCleanupWarning(warning)
+            }
+        }
         dictationAudioSessionManager.onEvent = { [weak self] event in
             Task { @MainActor [weak self] in
                 self?.handleDictationAudioSessionEvent(event)
@@ -834,6 +840,15 @@ final class MuesliController: NSObject {
         }
     }
 
+    @MainActor
+    private func presentTranscriptCleanupWarning(_ warning: String?) {
+        appState.lastTranscriptCleanupWarning = warning
+        guard let warning else { return }
+        statusBarController?.setStatus(warning)
+        statusBarController?.refresh()
+        indicator.showWarning("AI cleanup failed", icon: "!", duration: 3.0)
+    }
+
     func refreshUI() {
         statusBarController?.setStatus("Idle")
         statusBarController?.refresh()
@@ -1035,6 +1050,16 @@ final class MuesliController: NSObject {
         let previousComputerUseHotkeyTriggerThresholdMS = config.computerUseHotkeyTriggerThresholdMS
         let previousMeetingRecordingHotkeyTriggerThresholdMS = config.meetingRecordingHotkeyTriggerThresholdMS
         let previousEnableDictionaryCorrectionPrompts = config.enableDictionaryCorrectionPrompts
+        let previousEnablePostProcessor = config.enablePostProcessor
+        let previousTranscriptCleanupProvider = config.transcriptCleanupProvider
+        let previousOpenAIAPIKey = config.openAIAPIKey
+        let previousOpenAIModel = config.openAIModel
+        let previousOpenRouterAPIKey = config.openRouterAPIKey
+        let previousOpenRouterModel = config.openRouterModel
+        let previousCustomLLMURL = config.customLLMURL
+        let previousCustomLLMAPIKey = config.customLLMAPIKey
+        let previousCustomLLMModel = config.customLLMModel
+        let previousCustomLLMFormat = config.customLLMFormat
         mutate(&config)
         if previousEnableDictionaryCorrectionPrompts, !config.enableDictionaryCorrectionPrompts {
             dictationCorrectionMonitor.cancel()
@@ -1081,6 +1106,18 @@ final class MuesliController: NSObject {
         appState.selectedMeetingSummaryBackend = selectedMeetingSummaryBackend
         appState.config = config
         appState.isChatGPTAuthenticated = chatGPTAuth.isAuthenticated
+        if previousEnablePostProcessor != config.enablePostProcessor
+            || previousTranscriptCleanupProvider != config.transcriptCleanupProvider
+            || previousOpenAIAPIKey != config.openAIAPIKey
+            || previousOpenAIModel != config.openAIModel
+            || previousOpenRouterAPIKey != config.openRouterAPIKey
+            || previousOpenRouterModel != config.openRouterModel
+            || previousCustomLLMURL != config.customLLMURL
+            || previousCustomLLMAPIKey != config.customLLMAPIKey
+            || previousCustomLLMModel != config.customLLMModel
+            || previousCustomLLMFormat != config.customLLMFormat {
+            appState.lastTranscriptCleanupWarning = nil
+        }
         syncCalendarMonitor()
         syncMeetingDetectionMonitor()
         updateMeetingNotificationVisibility()

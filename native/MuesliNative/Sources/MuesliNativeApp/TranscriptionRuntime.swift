@@ -91,6 +91,7 @@ actor TranscriptionCoordinator {
     private var postProcessorSystemPrompt: String = PostProcessorOption.defaultSystemPrompt
     private var postProcessorModelId: String = PostProcessorOption.defaultOption.id
     private var transcriptCleanupSettings = TranscriptCleanupSettings()
+    private var transcriptCleanupWarningHandler: (@MainActor (String?) -> Void)?
 
     @available(macOS 15, *)
     private var qwen3PostProcessor: Qwen3PostProcessor {
@@ -116,6 +117,10 @@ actor TranscriptionCoordinator {
     func setTranscriptCleanupSettings(_ settings: TranscriptCleanupSettings) async {
         transcriptCleanupSettings = settings
         postProcessorSystemPrompt = settings.systemPrompt
+    }
+
+    func setTranscriptCleanupWarningHandler(_ handler: (@MainActor (String?) -> Void)?) {
+        transcriptCleanupWarningHandler = handler
     }
 
     private struct PostProcPairLogEntry: Encodable {
@@ -456,6 +461,7 @@ actor TranscriptionCoordinator {
                 let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
                 Qwen3PostProcessorLogging.logVerbose("External transcript cleanup applied via \(transcriptCleanupSettings.provider.label) to \(backend.label) in \(String(format: "%.1f", elapsedMs))ms (chars=\(trimmed.count))")
                 Qwen3PostProcessorLogging.logVerbose("External transcript cleanup final output: \(trimmed)")
+                await transcriptCleanupWarningHandler?(nil)
                 logPostProcPair(
                     raw: result.text,
                     processed: trimmed,
@@ -468,7 +474,14 @@ actor TranscriptionCoordinator {
                     segments: Qwen3PostProcessorLogging.isVerboseEnabled && !trimmed.isEmpty ? result.segments : []
                 )
             } catch {
+                let warning = TranscriptCleanupFailureSurface.warning(
+                    provider: transcriptCleanupSettings.provider,
+                    error: error
+                )
+                fputs("[dictation-cleanup] \(warning)\n", stderr)
+                await transcriptCleanupWarningHandler?(warning)
                 Qwen3PostProcessorLogging.logVerbose("External transcript cleanup failed, falling back: \(error)")
+                return nil
             }
         }
 

@@ -52,6 +52,61 @@ struct TranscriptCleanupSettings: Equatable, Sendable {
     }
 }
 
+struct TranscriptCleanupCredentialStatus: Equatable, Sendable {
+    let message: String
+    let isWarning: Bool
+
+    static func dictationCleanup(
+        provider: TranscriptCleanupProviderOption,
+        config: AppConfig,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Self? {
+        switch provider {
+        case .local:
+            return nil
+        case .openAI:
+            let hasConfiguredKey = hasValue(config.openAIAPIKey)
+            let hasEnvironmentKey = hasValue(environment["OPENAI_API_KEY"] ?? "")
+            return Self(
+                message: "Uses Meeting Summaries OpenAI credentials: \(keyStatus(hasConfiguredKey: hasConfiguredKey, hasEnvironmentKey: hasEnvironmentKey)).",
+                isWarning: !hasConfiguredKey && !hasEnvironmentKey
+            )
+        case .openRouter:
+            let hasConfiguredKey = hasValue(config.openRouterAPIKey)
+            let hasEnvironmentKey = hasValue(environment["OPENROUTER_API_KEY"] ?? "")
+            return Self(
+                message: "Uses Meeting Summaries OpenRouter credentials: \(keyStatus(hasConfiguredKey: hasConfiguredKey, hasEnvironmentKey: hasEnvironmentKey)).",
+                isWarning: !hasConfiguredKey && !hasEnvironmentKey
+            )
+        case .customLLM:
+            let format = CustomLLMFormat(rawValue: config.customLLMFormat) ?? .openAI
+            guard format == .openAI else {
+                return Self(
+                    message: "Dictation cleanup only supports Meeting Summaries Custom LLM in OpenAI-compatible mode.",
+                    isWarning: true
+                )
+            }
+            let hasEndpoint = hasValue(config.customLLMURL)
+            let hasKey = hasValue(config.customLLMAPIKey)
+            let settingsStatus = hasEndpoint || hasKey ? "settings present" : "no custom settings; default local endpoint"
+            return Self(
+                message: "Uses Meeting Summaries Custom LLM credentials: \(settingsStatus), \(hasKey ? "key present" : "key optional").",
+                isWarning: !hasEndpoint && !hasKey
+            )
+        }
+    }
+
+    private static func keyStatus(hasConfiguredKey: Bool, hasEnvironmentKey: Bool) -> String {
+        if hasConfiguredKey { return "key present" }
+        if hasEnvironmentKey { return "environment key present" }
+        return "key missing"
+    }
+
+    private static func hasValue(_ value: String) -> Bool {
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 enum TranscriptCleanupError: LocalizedError {
     case missingAPIKey(String)
     case unsupportedCustomFormat(String)
@@ -76,6 +131,13 @@ enum TranscriptCleanupError: LocalizedError {
         case let .rejectedOutput(provider):
             return "\(provider) transcript cleanup output was rejected as unsafe."
         }
+    }
+}
+
+enum TranscriptCleanupFailureSurface {
+    static func warning(provider: TranscriptCleanupProviderOption, error: Error) -> String {
+        let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        return "\(provider.label) transcript cleanup failed; using raw transcript. \(reason)"
     }
 }
 
