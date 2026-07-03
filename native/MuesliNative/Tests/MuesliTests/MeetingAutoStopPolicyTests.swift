@@ -138,6 +138,44 @@ struct MeetingAutoStopPolicyTests {
         #expect(source.hasObservedCandidate)
     }
 
+    @Test("manual start origin does not track meeting signal loss")
+    func manualStartOriginDoesNotTrackMeetingSignalLoss() {
+        let explicitSource = MeetingAutoStopSource(candidate: googleMeetCandidate())
+        let recentSource = MeetingAutoStopSource(candidate: teamsCandidate())
+
+        let resolvedSource = MeetingRecordingStartOrigin.manual.signalLossSource(
+            explicitSource: explicitSource,
+            recentSource: recentSource
+        )
+
+        #expect(!MeetingRecordingStartOrigin.manual.enablesMeetingAutoStop)
+        #expect(MeetingRecordingStartOrigin.manual.signalLossResponse == .none)
+        #expect(resolvedSource == nil)
+        #expect(MeetingRecordingStartOrigin.manual.signalLossSource(
+            explicitSource: nil,
+            recentSource: recentSource
+        ) == nil)
+    }
+
+    @Test("source-backed start origins can auto-stop after warning")
+    func sourceBackedStartOriginsCanAutoStopAfterWarning() {
+        let explicitSource = MeetingAutoStopSource(candidate: googleMeetCandidate())
+        let recentSource = MeetingAutoStopSource(candidate: teamsCandidate())
+        let origins: [MeetingRecordingStartOrigin] = [
+            .detectedPrompt,
+            .calendarAutoRecord,
+            .scheduledMeetingPrompt,
+            .joinAndRecord,
+        ]
+
+        for origin in origins {
+            #expect(origin.enablesMeetingAutoStop)
+            #expect(origin.signalLossResponse == .autoStopAfterWarning)
+            #expect(origin.signalLossSource(explicitSource: explicitSource, recentSource: recentSource) == explicitSource)
+            #expect(origin.signalLossSource(explicitSource: nil, recentSource: recentSource) == recentSource)
+        }
+    }
+
     @Test("tracker waits for a recording-time observation before auto-stopping")
     func trackerWaitsForRecordingTimeObservationBeforeAutoStopping() {
         var tracker = MeetingAutoStopTracker()
@@ -245,6 +283,21 @@ struct MeetingAutoStopPolicyTests {
             sourceBundleID: "com.google.Chrome",
             sourcePID: 1234,
             suppressionID: "browser:com.google.Chrome:session:1800000000"
+        )
+    }
+
+    private func teamsCandidate() -> MeetingCandidate {
+        MeetingCandidate(
+            id: "app:com.microsoft.teams2:session:1800000000",
+            platform: .teams,
+            appName: "Teams",
+            url: nil,
+            evidence: [.audioInputProcess, .dedicatedApp],
+            startedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            meetingTitle: nil,
+            sourceBundleID: "com.microsoft.teams2",
+            sourcePID: 4321,
+            suppressionID: "app:com.microsoft.teams2:session:1800000000"
         )
     }
 }

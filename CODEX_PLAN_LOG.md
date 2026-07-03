@@ -2,11 +2,11 @@
 
 ## Summary
 
-- Status: in progress.
+- Status: B1 complete.
 - Integration branch: `codex/integration`.
-- Completed: pre-flight, A3, A4.
+- Completed: pre-flight, A3, A4, B1.
 - Held/Skipped: A5 Nemotron RNNT shape guards.
-- Current next item: B1 upstream PR #268.
+- Current next item: merge-review B1 into `codex/integration`.
 
 ## Journal
 
@@ -50,3 +50,15 @@
 - Evidence: targeted `NemotronRNNTShapeGuardTests` passed 2 tests; `git diff --check` passed; full suite failed on the requested run with 1204 tests, 131 suites, and 3 issues.
 - Quiet diagnostic rerun: existing failures at `StreamingVadControllerTests.swift:70`, `StreamingVadControllerTests.swift:139`, `PasteControllerTests.swift:103`, and `PasteControllerTests.swift:115`.
 - Integration probe retry: SwiftPM manifest `sandbox-exec` failed with `Operation not permitted`.
+
+### B1: upstream PR #268 meeting auto-stop
+
+- Status: complete on `codex/auto-stop-pr268`.
+- Upstream commits applied in order with `git cherry-pick -x`: `b6ae39b9756e12e2b7510758590cf510908aee9e`, `812316af1995ebf55f8360e3d8ca7dd211de79b1`, `a40bd72b8f257edc50f72ff7ab1995ebc88bf4f6`, `c8520ad9f8166f986a5cffd31ea7e6a0105e3126`.
+- What changed: meeting auto-stop now distinguishes manual starts from source-backed starts, warns before auto-stopping source-backed meetings, clears the warning when the source returns, and disables signal-loss tracking for manual starts.
+- Why: manual recordings should not be stopped because recent meeting activity disappeared; detected, scheduled, auto-recorded, and Join & Record meetings still need source-loss handling.
+- Conflict resolution: first cherry-pick conflicted only in `MuesliController.swift`; resolution preserved local participant-candidate and delayed Join & Record flow, added `.joinAndRecord` at the actual delayed recording start, and did not import upstream parent resume-meeting context absent from this branch.
+- Targeted tests: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-auto-stop-pr268 --filter MeetingAutoStopPolicy` passed, 15 Swift Testing tests.
+- Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-auto-stop-pr268` passed, 1204 Swift Testing tests.
+- Diff check: `git diff --check` and `git diff --check codex/integration..HEAD` passed.
+- Deviations: no SwiftPM manifest sandbox retry needed; only `/private/tmp/muesli-spm-auto-stop-pr268` scratch path used; no app build/install/package-local `.build`; no push.
