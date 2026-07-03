@@ -1,5 +1,17 @@
 # LANE_LOG
 
+## 2026-07-03 - D2 PDF export off main thread
+
+- Status: complete on `codex/lane-summary`.
+- AppKit check: Apple thread-safety guidance marks `NSView` descendants as main-thread-only and `NSAttributedString` as generally thread-safe, so the PDF path no longer uses `NSTextView`/`NSPrintOperation`.
+- What changed: manual export now presents `NSSavePanel` on main, then builds Markdown, attributed text, pagination, and PDF bytes on a user-initiated background queue. `MeetingMarkdownAutoExporter` reuses the same off-main shared writer instead of wrapping it in `MainActor.run`.
+- PDF renderer: replaced synchronous print operation with Core Text pagination into a `CGContext` PDF, preserving the manual attributed-string builder and avoiding `NSAttributedString(html:)`.
+- Targeted tests:
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-summary --filter MeetingExporterTests` passed, 24 tests.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-summary --filter 'MeetingExporterTests|MeetingMarkdownAutoExporterTests'` passed, 36 tests.
+- Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-summary` passed, 1225 tests in 132 suites.
+- Flaky note: `PasteController` and `StreamingVadController` passed in the full suite; no quiet rerun needed.
+
 ## 2026-07-03 - B4 upstream meeting auto-export
 
 - Status: complete on `codex/lane-summary`.

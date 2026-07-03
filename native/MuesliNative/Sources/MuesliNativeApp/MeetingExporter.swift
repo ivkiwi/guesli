@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import UniformTypeIdentifiers
 import MuesliCore
 
@@ -53,7 +54,6 @@ struct MeetingExporter {
 
     static func export(meeting: MeetingRecord, content: MeetingExportContent) {
         DispatchQueue.main.async {
-            let markdown = buildMarkdown(meeting: meeting, content: content)
             let filename = suggestedFilename(meeting: meeting, content: content)
 
             let panel = NSSavePanel()
@@ -66,14 +66,9 @@ struct MeetingExporter {
 
             presentSavePanel(panel) { url in
                 if formatPicker.selectedFormat == .pdf {
-                    do {
-                        try writePDF(attributed: buildAttributedString(from: markdown), to: url)
-                        NSWorkspace.shared.open(url)
-                    } catch {
-                        showError("Export Failed", error.localizedDescription)
-                    }
+                    writePDF(meeting: meeting, content: content, to: url)
                 } else {
-                    writeMarkdown(markdown, to: url)
+                    writeMarkdown(meeting: meeting, content: content, to: url)
                 }
             }
         }
@@ -130,10 +125,24 @@ struct MeetingExporter {
 
     // MARK: - Write files
 
-    private static func writeMarkdown(_ text: String, to url: URL) {
+    private static func writeMarkdown(meeting: MeetingRecord, content: MeetingExportContent, to url: URL) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
+                let text = buildMarkdown(meeting: meeting, content: content)
                 try text.write(to: url, atomically: true, encoding: .utf8)
+                DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+            } catch {
+                DispatchQueue.main.async { showError("Export Failed", error.localizedDescription) }
+            }
+        }
+    }
+
+    private static func writePDF(meeting: MeetingRecord, content: MeetingExportContent, to url: URL) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let markdown = buildMarkdown(meeting: meeting, content: content)
+                let attributed = buildAttributedString(from: markdown)
+                try writePDF(attributed: attributed, to: url)
                 DispatchQueue.main.async { NSWorkspace.shared.open(url) }
             } catch {
                 DispatchQueue.main.async { showError("Export Failed", error.localizedDescription) }
@@ -146,37 +155,42 @@ struct MeetingExporter {
         let pageHeight: CGFloat = 792
         let margin: CGFloat = 72       // 1 inch
         let contentWidth = pageWidth - margin * 2
+        let contentHeight = pageHeight - margin * 2
+        var mediaBox = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
 
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: pageHeight - margin * 2))
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.maxSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainerInset = .zero
-        textView.textStorage?.setAttributedString(attributed)
-
-        let printInfo = NSPrintInfo()
-        printInfo.paperSize = NSSize(width: pageWidth, height: pageHeight)
-        printInfo.topMargin = margin
-        printInfo.bottomMargin = margin
-        printInfo.leftMargin = margin
-        printInfo.rightMargin = margin
-        printInfo.horizontalPagination = .fit
-        printInfo.verticalPagination = .automatic
-        printInfo.isHorizontallyCentered = false
-        printInfo.isVerticallyCentered = false
-        printInfo.jobDisposition = .save
-        printInfo.dictionary().setValue(url, forKey: NSPrintInfo.AttributeKey.jobSavingURL.rawValue)
-
-        let printOp = NSPrintOperation(view: textView, printInfo: printInfo)
-        printOp.showsPrintPanel = false
-        printOp.showsProgressPanel = false
-
-        guard printOp.run() else {
+        guard let consumer = CGDataConsumer(url: url as CFURL),
+              let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
             throw CocoaError(.fileWriteUnknown)
         }
+
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed)
+        var range = CFRange(location: 0, length: 0)
+        let length = attributed.length
+
+        repeat {
+            context.beginPDFPage(nil)
+            context.saveGState()
+            context.textMatrix = .identity
+            context.translateBy(x: 0, y: pageHeight)
+            context.scaleBy(x: 1, y: -1)
+
+            let path = CGMutablePath()
+            path.addRect(CGRect(x: margin, y: margin, width: contentWidth, height: contentHeight))
+            let frame = CTFramesetterCreateFrame(framesetter, range, path, nil)
+            CTFrameDraw(frame, context)
+
+            context.restoreGState()
+            context.endPDFPage()
+
+            if length == 0 { break }
+            let visible = CTFrameGetVisibleStringRange(frame)
+            guard visible.length > 0 else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            range.location += visible.length
+        } while range.location < length
+
+        context.closePDF()
     }
 
     // MARK: - Save panel
