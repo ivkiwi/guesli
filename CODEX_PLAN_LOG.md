@@ -4,8 +4,8 @@
 
 - Status: in progress.
 - Integration branch: `codex/integration`.
-- Completed: pre-flight crashfix absorption, A3 SenseVoice chunking.
-- Current next item: A4 model download temp-file leak.
+- Completed: pre-flight crashfix absorption, A3 SenseVoice chunking, A4 model download temp-file leak.
+- Current next item: A5.
 
 ## Journal
 
@@ -30,3 +30,13 @@
 - Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-codex` passed, 1200 tests.
 - Diff check: `git diff --check` passed.
 - Notes: no temp files, no checkout edits, no package-local `.build`.
+
+### A4: model download temp-file leak
+
+- Status: complete on `codex/download-temp-cleanup-wt`.
+- What changed: downloaded temp files now move through a cleanup helper that removes the temp file whenever the destination move fails, while leaving the successful destination move intact.
+- Tests added: `DownloadUtils` covers failed move deletes temp and successful move creates destination/removes temp.
+- Targeted tests: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-download-temp-cleanup-wt --filter DownloadUtils` passed, 2 tests.
+- Full suite: `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-download-temp-cleanup-wt` passed, 1202 tests.
+- Diff check: `git diff --check` passed.
+- Notes: used explicit `/private/tmp/muesli-spm-download-temp-cleanup-wt` scratch path; no package-local `.build`.

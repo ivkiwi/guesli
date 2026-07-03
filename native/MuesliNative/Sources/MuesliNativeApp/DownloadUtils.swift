@@ -42,8 +42,7 @@ func downloadWithRetry(
                 try? FileManager.default.removeItem(at: tempURL)
                 throw DownloadError.httpError(code, url.lastPathComponent)
             }
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: tempURL, to: destination)
+            try moveDownloadedTemporaryFile(tempURL, to: destination)
             return
         } catch is CancellationError {
             throw CancellationError()
@@ -55,6 +54,19 @@ func downloadWithRetry(
         NSLocalizedDescriptionKey: "No download attempts were made",
     ])
     throw DownloadError.retriesExhausted(url.lastPathComponent, underlying)
+}
+
+func moveDownloadedTemporaryFile(_ tempURL: URL, to destination: URL) throws {
+    var movedToDestination = false
+    defer {
+        if !movedToDestination {
+            try? FileManager.default.removeItem(at: tempURL)
+        }
+    }
+
+    try? FileManager.default.removeItem(at: destination)
+    try FileManager.default.moveItem(at: tempURL, to: destination)
+    movedToDestination = true
 }
 
 private func downloadTemporaryFile(
