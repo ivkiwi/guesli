@@ -929,11 +929,11 @@ final class MeetingSession {
 
     private func prepareRealtimeAudioPipeline(vadManager: VadManager?) throws {
         rawMicChunkRecorder = try PCMChunkRecorder(
-            directoryName: "muesli-meeting-mic-chunks",
+            directoryName: AppTemporaryDirectories.meetingMicChunks,
             overlapSampleCount: liveChunkingConfiguration.overlapSampleCount
         )
         systemChunkRecorder = try PCMChunkRecorder(
-            directoryName: "muesli-meeting-system-chunks",
+            directoryName: AppTemporaryDirectories.meetingSystemChunks,
             overlapSampleCount: liveChunkingConfiguration.overlapSampleCount
         )
         configureRealtimeAudioCallbacks(vadManager: vadManager)

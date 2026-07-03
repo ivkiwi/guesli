@@ -92,6 +92,8 @@ private struct RecordingWaveformData: Equatable {
 }
 
 enum RecordingWaveformCacheFiles {
+    static let staleCacheAge: TimeInterval = 30 * 24 * 60 * 60
+
     static func cacheURL(
         for url: URL,
         supportDirectory: URL = AppIdentity.supportDirectoryURL,
@@ -122,6 +124,58 @@ enum RecordingWaveformCacheFiles {
         try fileManager.removeItem(at: url)
     }
 
+    static func removeAllCachedWaveforms(
+        supportDirectory: URL = AppIdentity.supportDirectoryURL,
+        fileManager: FileManager = .default
+    ) throws {
+        let directory = cacheDirectory(supportDirectory: supportDirectory)
+        guard fileManager.fileExists(atPath: directory.path) else { return }
+        try fileManager.removeItem(at: directory)
+    }
+
+    @discardableResult
+    static func sweepStaleCachedWaveforms(
+        supportDirectory: URL = AppIdentity.supportDirectoryURL,
+        fileManager: FileManager = .default,
+        now: Date = Date(),
+        maximumAge: TimeInterval = staleCacheAge,
+        logger: ((String) -> Void)? = { fputs("\($0)\n", stderr) }
+    ) -> Int {
+        let directory = cacheDirectory(supportDirectory: supportDirectory)
+        let cutoff = now.addingTimeInterval(-max(0, maximumAge))
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return 0
+        }
+
+        var removed = 0
+        for entry in entries where entry.pathExtension.lowercased() == "mwf" && isOlder(entry, than: cutoff) {
+            do {
+                try fileManager.removeItem(at: entry)
+                removed += 1
+            } catch {
+                continue
+            }
+        }
+        if removed > 0 {
+            logger?(
+                "[muesli-native] cleaned up \(removed) stale waveform cache item\(removed == 1 ? "" : "s")"
+            )
+        }
+        return removed
+    }
+
+    static func cacheDirectory(supportDirectory: URL = AppIdentity.supportDirectoryURL) -> URL {
+        supportDirectory.appendingPathComponent("waveform-cache", isDirectory: true)
+    }
+
+    static func markCachedWaveformUsed(at url: URL, fileManager: FileManager = .default, now: Date = Date()) {
+        try? fileManager.setAttributes([.modificationDate: now], ofItemAtPath: url.path)
+    }
+
     private static func cacheKey(for url: URL, fileManager: FileManager) throws -> String {
         let attributes = try fileManager.attributesOfItem(atPath: url.path)
         let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
@@ -135,13 +189,21 @@ enum RecordingWaveformCacheFiles {
         fileManager: FileManager,
         createDirectory: Bool
     ) throws -> URL {
-        let directory = supportDirectory.appendingPathComponent("waveform-cache", isDirectory: true)
+        let directory = cacheDirectory(supportDirectory: supportDirectory)
         if createDirectory {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }
         let digest = SHA256.hash(data: Data(cacheKey.utf8))
         let filename = digest.map { String(format: "%02x", $0) }.joined() + ".mwf"
         return directory.appendingPathComponent(filename)
+    }
+
+    private static func isOlder(_ url: URL, than cutoff: Date) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey]),
+              let date = values.contentModificationDate ?? values.creationDate else {
+            return false
+        }
+        return date < cutoff
     }
 }
 
@@ -165,6 +227,7 @@ private actor RecordingWaveformCache {
         if let data = try? Data(contentsOf: cacheURL),
            let cached = RecordingWaveformData.decodeCacheData(data) {
             memory[cacheKey] = cached
+            RecordingWaveformCacheFiles.markCachedWaveformUsed(at: cacheURL, fileManager: fileManager)
             return cached
         }
 

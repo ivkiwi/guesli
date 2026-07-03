@@ -14,7 +14,7 @@ final class MeetingRecordingWriter {
 
     init() throws {
         let tempDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("muesli-meeting-recordings", isDirectory: true)
+            .appendingPathComponent(AppTemporaryDirectories.meetingRecordings, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
         let fileURL = tempDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
         FileManager.default.createFile(atPath: fileURL.path, contents: nil)

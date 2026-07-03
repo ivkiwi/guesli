@@ -180,6 +180,46 @@ struct MeetingNotificationControllerTests {
         #expect(autoRecordCandidates.map(\.id) == ["started"])
     }
 
+    @Test("Auto-record claims recently started meetings within the catch-up window")
+    func autoRecordClaimsRecentlyStartedMeetingsWithinCatchUpWindow() {
+        let now = Date(timeIntervalSinceReferenceDate: 4_000)
+        let meetingURL = URL(string: "https://meet.google.com/abc-defg-hij")!
+        let justStarted = unifiedCalendarEvent(id: "just", startDate: now.addingTimeInterval(-30), meetingURL: meetingURL)
+        let recentlyStarted = unifiedCalendarEvent(id: "recent", startDate: now.addingTimeInterval(-4 * 60), meetingURL: meetingURL)
+        let longAgo = unifiedCalendarEvent(id: "old", startDate: now.addingTimeInterval(-6 * 60), meetingURL: meetingURL)
+        let future = unifiedCalendarEvent(id: "future", startDate: now.addingTimeInterval(60), meetingURL: meetingURL)
+        let noLink = unifiedCalendarEvent(id: "no-link", startDate: now.addingTimeInterval(-30), meetingURL: nil)
+
+        let candidates = ScheduledMeetingNotificationPolicy.autoRecordCandidates(
+            from: [longAgo, future, recentlyStarted, justStarted, noLink],
+            now: now,
+            hiddenEventIDs: []
+        )
+
+        #expect(candidates.map(\.id) == ["recent", "just"])
+    }
+
+    @Test("Auto-record wake candidates are upcoming joinable events within the horizon")
+    func autoRecordWakeCandidatesAreUpcomingJoinableWithinHorizon() {
+        let now = Date(timeIntervalSinceReferenceDate: 5_000)
+        let meetingURL = URL(string: "https://teams.microsoft.com/l/meetup-join/abc")!
+        let soon = unifiedCalendarEvent(id: "soon", startDate: now.addingTimeInterval(5 * 60), meetingURL: meetingURL)
+        let later = unifiedCalendarEvent(id: "later", startDate: now.addingTimeInterval(3 * 60 * 60), meetingURL: meetingURL)
+        let started = unifiedCalendarEvent(id: "started", startDate: now.addingTimeInterval(-30), meetingURL: meetingURL)
+        let beyondHorizon = unifiedCalendarEvent(id: "beyond", startDate: now.addingTimeInterval(20 * 60 * 60), meetingURL: meetingURL)
+        let noLink = unifiedCalendarEvent(id: "no-link", startDate: now.addingTimeInterval(10 * 60), meetingURL: nil)
+        let hidden = unifiedCalendarEvent(id: "hidden", startDate: now.addingTimeInterval(8 * 60), meetingURL: meetingURL)
+        let allDay = unifiedCalendarEvent(id: "all-day", startDate: now.addingTimeInterval(8 * 60), isAllDay: true, meetingURL: meetingURL)
+
+        let candidates = ScheduledMeetingNotificationPolicy.autoRecordWakeCandidates(
+            from: [later, soon, started, beyondHorizon, noLink, hidden, allDay],
+            now: now,
+            hiddenEventIDs: ["hidden"]
+        )
+
+        #expect(candidates.map(\.id) == ["soon", "later"])
+    }
+
     @Test("Starting now scheduled prompts require a join link")
     func startingNowScheduledPromptsRequireJoinLink() {
         #expect(ScheduledMeetingNotificationPolicy.shouldShowStartingNowPrompt(
@@ -230,6 +270,30 @@ struct MeetingNotificationControllerTests {
         ) == nil)
     }
 
+    @Test("Scheduled prompt user actions cancel starting-now timers")
+    func scheduledPromptUserActionsCancelStartingNowTimers() throws {
+        let source = try muesliControllerSource()
+        let scheduledPrompt = try sourceSection(
+            in: source,
+            from: "private func handleUpcomingMeeting",
+            to: "private func cancelMeetingStartingNowTimer"
+        )
+        let cancelCall = "self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)"
+        let startRecording = try sourceSection(in: scheduledPrompt, from: "onStartRecording:", to: "onJoinAndRecord:")
+        let joinAndRecord = try sourceSection(in: scheduledPrompt, from: "onJoinAndRecord:", to: "onJoinOnly:")
+        let joinOnly = try sourceSection(in: scheduledPrompt, from: "onJoinOnly:", to: "onDismiss:")
+        let dismiss = try sourceSection(in: scheduledPrompt, from: "onDismiss:", to: "onClose:")
+
+        #expect(try index(of: cancelCall, in: startRecording) <
+            index(of: "self.startForegroundMeetingRecording", in: startRecording))
+        #expect(try index(of: cancelCall, in: joinAndRecord) <
+            index(of: "self.joinAndRecord", in: joinAndRecord))
+        #expect(try index(of: cancelCall, in: joinOnly) <
+            index(of: "self.joinOnly", in: joinOnly))
+        #expect(try index(of: cancelCall, in: dismiss) <
+            index(of: "self.meetingMonitor.suppress", in: dismiss))
+    }
+
     private func unifiedCalendarEvent(
         id: String,
         startDate: Date,
@@ -245,5 +309,41 @@ struct MeetingNotificationControllerTests {
             source: .eventKit,
             meetingURL: meetingURL
         )
+    }
+
+    private func muesliControllerSource() throws -> String {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let packageRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let controllerURL = packageRoot
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("MuesliNativeApp")
+            .appendingPathComponent("MuesliController.swift")
+        return try String(contentsOf: controllerURL, encoding: .utf8)
+    }
+
+    private func sourceSection(in source: String, from start: String, to end: String) throws -> String {
+        guard let startRange = source.range(of: start),
+              let endRange = source[startRange.upperBound...].range(of: end) else {
+            throw TestFailure("Could not find source section from \(start) to \(end)")
+        }
+        return String(source[startRange.lowerBound..<endRange.lowerBound])
+    }
+
+    private func index(of needle: String, in haystack: String) throws -> String.Index {
+        guard let range = haystack.range(of: needle) else {
+            throw TestFailure("Could not find \(needle)")
+        }
+        return range.lowerBound
+    }
+}
+
+private struct TestFailure: Error, CustomStringConvertible {
+    let description: String
+
+    init(_ description: String) {
+        self.description = description
     }
 }

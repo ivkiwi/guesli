@@ -58,7 +58,7 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SystemAudioCapturing,
 
         // Create output WAV file
         let outputDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("muesli-system-audio", isDirectory: true)
+            .appendingPathComponent(AppTemporaryDirectories.systemAudio, isDirectory: true)
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         let url = outputDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
         FileManager.default.createFile(atPath: url.path, contents: nil)

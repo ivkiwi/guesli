@@ -91,8 +91,8 @@ final class AppScopedDictationRecorder: DictationAudioRecording {
 
     init(
         recorder: StreamingDictationRecording = FallbackStreamingDictationRecorder(
-            primary: AudioQueueInputRecorder(directoryName: "muesli-native-dictation"),
-            fallback: StreamingMicRecorder(directoryName: "muesli-native-dictation")
+            primary: AudioQueueInputRecorder(directoryName: AppTemporaryDirectories.nativeDictation),
+            fallback: StreamingMicRecorder(directoryName: AppTemporaryDirectories.nativeDictation)
         ),
         prepareQueue: DispatchQueue = DispatchQueue(label: "com.muesli.app-scoped-dictation-recorder-prepare"),
         recorderQueue: DispatchQueue = DispatchQueue(label: "com.muesli.app-scoped-dictation-recorder-child"),

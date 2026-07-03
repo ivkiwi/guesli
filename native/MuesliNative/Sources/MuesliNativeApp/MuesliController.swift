@@ -259,6 +259,8 @@ final class MuesliController: NSObject {
     private var meetingStartingNowTimers = [String: Timer]()
     private var notifiedUpcomingEventIDs = Set<String>()
     private var autoRecordedCalendarEventIDs = Set<String>()
+    private var autoRecordTimers = [String: Timer]()
+    private var autoRecordWakeActivity: NSObjectProtocol?
     private var meetingFeatureMonitorsAllowed = false
     private var meetingDetectionMonitorStarted = false
 
@@ -440,14 +442,9 @@ final class MuesliController: NSObject {
         syncLaunchAtLoginConfigWithSystem()
         reconcilePendingDictionaryCorrectionAccessibilityEnable()
 
-        // Clean up leftover audio temp files from previous sessions.
-        cleanupTemporaryDirectory(
-            named: "muesli-system-audio",
-            logDescription: "leftover temp audio files"
-        )
-        cleanupTemporaryDirectory(
-            named: "muesli-meeting-recordings",
-            logDescription: "leftover temp meeting recording files"
+        AppTemporaryDirectories.sweepAtLaunch()
+        RecordingWaveformCacheFiles.sweepStaleCachedWaveforms(
+            supportDirectory: configStore.supportDirectory()
         )
 
         hotkeyMonitor.onArm = { [weak self] in self?.handleArm() }
@@ -766,6 +763,7 @@ final class MuesliController: NSObject {
         meetingStartingNowTimers.removeAll()
         notifiedUpcomingEventIDs.removeAll()
         autoRecordedCalendarEventIDs.removeAll()
+        cancelAllAutoRecordWakes()
         meetingFeatureMonitorsAllowed = false
         disarmMeetingAutoStop()
         meetingMonitor.stop()
@@ -1083,6 +1081,7 @@ final class MuesliController: NSObject {
         appState.isChatGPTAuthenticated = chatGPTAuth.isAuthenticated
         syncCalendarMonitor()
         syncMeetingDetectionMonitor()
+        syncAutoRecordWakes()
         updateMeetingNotificationVisibility()
         syncDictationRecorderWarmup(intent: .idlePrewarm(.configChange))
         if !wasICloudSyncEnabled && config.iCloudSyncEnabled {
@@ -1988,6 +1987,7 @@ final class MuesliController: NSObject {
         }
 
         appState.upcomingCalendarEvents = ekEvents
+        syncAutoRecordWakes()
 
         // Prune hidden IDs only when the widest supported window still cannot see the event.
         observedEventIDs.formUnion(ekEvents.map(\.id))
@@ -2182,6 +2182,100 @@ final class MuesliController: NSObject {
         "\(id)|\(Int(startDate.timeIntervalSince1970))"
     }
 
+    @discardableResult
+    private func autoRecordEventIfNeeded(_ event: UnifiedCalendarEvent) -> Bool {
+        let key = notificationKey(id: event.id, startDate: event.startDate)
+        guard !autoRecordedCalendarEventIDs.contains(key) else { return false }
+        guard !isMeetingRecording(), !isStartingMeetingRecording else { return false }
+        autoRecordedCalendarEventIDs.insert(key)
+        startMeetingRecording(
+            title: event.title,
+            calendarEventID: event.id,
+            openDocument: true,
+            endDate: event.endDate,
+            autoStopSource: event.meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) },
+            startOrigin: .calendarAutoRecord
+        )
+        return true
+    }
+
+    private func syncAutoRecordWakes() {
+        guard meetingFeatureMonitorsAllowed, config.autoRecordMeetings else {
+            cancelAllAutoRecordWakes()
+            return
+        }
+
+        let now = Date()
+        let candidates = ScheduledMeetingNotificationPolicy.autoRecordWakeCandidates(
+            from: appState.upcomingCalendarEvents,
+            now: now,
+            hiddenEventIDs: appState.hiddenCalendarEventIDs
+        )
+
+        var liveKeys = Set<String>()
+        for event in candidates {
+            let key = notificationKey(id: event.id, startDate: event.startDate)
+            liveKeys.insert(key)
+            guard !autoRecordedCalendarEventIDs.contains(key), autoRecordTimers[key] == nil else { continue }
+
+            let eventID = event.id
+            let startDate = event.startDate
+            autoRecordTimers[key] = Timer.scheduledTimer(withTimeInterval: max(event.startDate.timeIntervalSince(now), 0), repeats: false) { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.autoRecordTimers.removeValue(forKey: key)
+                    self.fireAutoRecordWake(eventID: eventID, startDate: startDate)
+                    self.updateAutoRecordWakeActivity()
+                }
+            }
+        }
+
+        let staleKeys = autoRecordTimers.keys.filter { !liveKeys.contains($0) }
+        for key in staleKeys {
+            autoRecordTimers.removeValue(forKey: key)?.invalidate()
+        }
+
+        updateAutoRecordWakeActivity()
+    }
+
+    private func fireAutoRecordWake(eventID: String, startDate: Date) {
+        guard config.autoRecordMeetings,
+              !isMeetingRecording(),
+              !isStartingMeetingRecording,
+              let event = ScheduledMeetingNotificationPolicy.startingNowCandidate(
+                from: appState.upcomingCalendarEvents,
+                eventID: eventID,
+                startDate: startDate,
+                hiddenEventIDs: appState.hiddenCalendarEventIDs
+              ),
+              ScheduledMeetingNotificationPolicy.shouldAutoRecordNow(
+                for: event,
+                now: Date(),
+                hiddenEventIDs: appState.hiddenCalendarEventIDs
+              ) else { return }
+        autoRecordEventIfNeeded(event)
+    }
+
+    private func cancelAllAutoRecordWakes() {
+        autoRecordTimers.values.forEach { $0.invalidate() }
+        autoRecordTimers.removeAll()
+        updateAutoRecordWakeActivity()
+    }
+
+    private func updateAutoRecordWakeActivity() {
+        if autoRecordTimers.isEmpty {
+            if let activity = autoRecordWakeActivity {
+                ProcessInfo.processInfo.endActivity(activity)
+                autoRecordWakeActivity = nil
+            }
+        } else if autoRecordWakeActivity == nil {
+            autoRecordWakeActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep],
+                reason: "Waiting to auto-record scheduled meetings"
+            )
+        }
+    }
+
     private func checkUpcomingCalendarNotifications() {
         guard !isMeetingRecording(),
               !isStartingMeetingRecording else { return }
@@ -2208,19 +2302,7 @@ final class MuesliController: NSObject {
                 now: now,
                 hiddenEventIDs: appState.hiddenCalendarEventIDs
             )
-            for event in autoRecordCandidates {
-                let key = notificationKey(id: event.id, startDate: event.startDate)
-                guard !autoRecordedCalendarEventIDs.contains(key) else { continue }
-                autoRecordedCalendarEventIDs.insert(key)
-
-                startMeetingRecording(
-                    title: event.title,
-                    calendarEventID: event.id,
-                    openDocument: true,
-                    endDate: event.endDate,
-                    autoStopSource: event.meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) },
-                    startOrigin: .calendarAutoRecord
-                )
+            for event in autoRecordCandidates where autoRecordEventIfNeeded(event) {
                 return
             }
         }
@@ -3948,11 +4030,12 @@ final class MuesliController: NSObject {
         }
 
         do {
+            try clearSavedMeetingWaveformCache()
             try clearSavedMeetingRecordingsDirectory()
         } catch {
             presentErrorAlert(
                 title: "Couldn't Clear Meeting History",
-                message: "Saved meeting recordings could not be deleted, so meeting history was left in place. \(error.localizedDescription)"
+                message: "Saved meeting audio files could not be deleted, so meeting history was left in place. \(error.localizedDescription)"
             )
             return
         }
@@ -5429,31 +5512,19 @@ final class MuesliController: NSObject {
         }
     }
 
-    private func cleanupTemporaryDirectory(named directoryName: String, logDescription: String) {
-        let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(directoryName)
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: nil
-        ) else {
-            return
-        }
-
-        for file in files {
-            try? FileManager.default.removeItem(at: file)
-        }
-
-        if !files.isEmpty {
-            fputs("[muesli-native] cleaned up \(files.count) \(logDescription)\n", stderr)
-        }
-    }
-
     private func clearSavedMeetingRecordingsDirectory() throws {
         let recordingsDirectory = MeetingRecordingStorage.directory(
             config: config,
-            supportDirectory: AppIdentity.supportDirectoryURL
+            supportDirectory: configStore.supportDirectory()
         )
         guard FileManager.default.fileExists(atPath: recordingsDirectory.path) else { return }
         try FileManager.default.removeItem(at: recordingsDirectory)
+    }
+
+    private func clearSavedMeetingWaveformCache() throws {
+        try RecordingWaveformCacheFiles.removeAllCachedWaveforms(
+            supportDirectory: configStore.supportDirectory()
+        )
     }
 
     private func deleteSavedMeetingRecording(at path: String) throws {
@@ -7322,6 +7393,7 @@ final class MuesliController: NSObject {
             onStartRecording: { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.startForegroundMeetingRecording(
                     title: title,
                     calendarEventID: event.id,
@@ -7333,6 +7405,7 @@ final class MuesliController: NSObject {
             onJoinAndRecord: meetingURL != nil ? { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.joinAndRecord(title: title, meetingURL: meetingURL!, endDate: calendarEndDate, calendarEventID: event.id)
             } : nil,
             onJoinOnly: meetingURL != nil ? { [weak self] in

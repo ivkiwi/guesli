@@ -4,7 +4,6 @@ import MuesliCore
 
 enum MeetingRecordingStorage {
     private static let defaultDirectoryName = "meeting-recordings"
-    private static let temporaryDecodeDirectoryName = "guesli-retranscription"
 
     static func defaultDirectory(supportDirectory: URL = AppIdentity.supportDirectoryURL) -> URL {
         supportDirectory.appendingPathComponent(defaultDirectoryName, isDirectory: true)
@@ -67,19 +66,6 @@ enum MeetingRecordingStorage {
     static func temporaryWAVForTranscription(from savedRecordingURL: URL) async throws -> URL {
         let (wavURL, _) = try await AudioFileImportController.convertToWAV(sourceURL: savedRecordingURL)
         return wavURL
-    }
-
-    static func cleanupTemporaryTranscriptionFiles() {
-        let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(temporaryDecodeDirectoryName)
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: nil
-        ) else {
-            return
-        }
-        for file in files {
-            try? FileManager.default.removeItem(at: file)
-        }
     }
 
     @discardableResult
