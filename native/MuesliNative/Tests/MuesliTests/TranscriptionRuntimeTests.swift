@@ -239,6 +239,47 @@ struct GigaAMV3FileChunkingTests {
     }
 }
 
+@Suite("SenseVoiceFileChunking")
+struct SenseVoiceFileChunkingTests {
+
+    @Test("short files use one passthrough window")
+    func shortFilesUseOnePassthroughWindow() {
+        let sampleCount = 15 * SenseVoiceFileChunking.sampleRate
+        #expect(SenseVoiceFileChunking.windows(sampleCount: sampleCount) == [0..<sampleCount])
+        #expect(!SenseVoiceFileChunking.shouldChunk(sampleCount: sampleCount))
+    }
+
+    @Test("long files use 15 second windows with 2 second overlap")
+    func longFilesUseOverlappingWindows() {
+        let sampleRate = SenseVoiceFileChunking.sampleRate
+        let sampleCount = 46 * sampleRate
+        let windows = SenseVoiceFileChunking.windows(sampleCount: sampleCount)
+
+        #expect(windows == [
+            0..<(15 * sampleRate),
+            (13 * sampleRate)..<(28 * sampleRate),
+            (26 * sampleRate)..<(41 * sampleRate),
+            (39 * sampleRate)..<(46 * sampleRate),
+        ])
+    }
+
+    @Test("empty audio produces no windows")
+    func emptyAudioProducesNoWindows() {
+        #expect(SenseVoiceFileChunking.windows(sampleCount: 0).isEmpty)
+    }
+
+    @Test("merge deduplicates overlap")
+    func mergeDeduplicatesOverlap() {
+        let result = SenseVoiceFileChunking.mergeTranscripts([
+            "alpha beta gamma delta epsilon",
+            "gamma delta epsilon zeta eta",
+            "epsilon zeta eta theta iota",
+        ])
+
+        #expect(result == "alpha beta gamma delta epsilon zeta eta theta iota")
+    }
+}
+
 @Suite("TranscriptionEngineArtifactsFilter")
 struct TranscriptionEngineArtifactsFilterTests {
 
