@@ -81,13 +81,15 @@ final class MeetingRecordingWriter {
         from tempURL: URL,
         meetingTitle: String,
         startedAt: Date,
-        supportDirectory: URL
+        supportDirectory: URL,
+        fileFormat: MeetingRecordingFileFormat = .m4a
     ) throws -> URL {
         try MeetingRecordingStorage.persistTemporaryRecording(
             from: tempURL,
             meetingTitle: meetingTitle,
             startedAt: startedAt,
-            destinationDirectory: MeetingRecordingStorage.defaultDirectory(supportDirectory: supportDirectory)
+            destinationDirectory: MeetingRecordingStorage.defaultDirectory(supportDirectory: supportDirectory),
+            fileFormat: fileFormat
         )
     }
 

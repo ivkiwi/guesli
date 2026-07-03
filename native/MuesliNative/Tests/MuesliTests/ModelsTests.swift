@@ -504,6 +504,8 @@ struct AppConfigTests {
         #expect(config.meetingSummaryBackend == "chatgpt")
         #expect(config.defaultMeetingTemplateID == MeetingTemplates.autoID)
         #expect(config.meetingRecordingSavePolicy == .never)
+        #expect(config.meetingRecordingFileFormat == MeetingRecordingFileFormat.m4a.rawValue)
+        #expect(config.resolvedMeetingRecordingFileFormat == .m4a)
         #expect(config.showScheduledMeetingNotifications == true)
         #expect(config.scheduledMeetingNotificationLeadTime == .atStart)
         #expect(config.showMeetingDetectionNotification == true)
@@ -566,6 +568,7 @@ struct AppConfigTests {
         config.cohereLanguageMeetings = CohereTranscribeLanguage.french.rawValue
         config.defaultMeetingTemplateID = "weekly-team-meeting"
         config.meetingRecordingSavePolicy = .always
+        config.meetingRecordingFileFormat = MeetingRecordingFileFormat.wav.rawValue
         config.customMeetingTemplates = [
             CustomMeetingTemplate(
                 id: "tmpl_123",
@@ -624,6 +627,8 @@ struct AppConfigTests {
         #expect(decoded.cohereLanguageMeetings == CohereTranscribeLanguage.french.rawValue)
         #expect(decoded.defaultMeetingTemplateID == "weekly-team-meeting")
         #expect(decoded.meetingRecordingSavePolicy == .always)
+        #expect(decoded.meetingRecordingFileFormat == MeetingRecordingFileFormat.wav.rawValue)
+        #expect(decoded.resolvedMeetingRecordingFileFormat == .wav)
         #expect(decoded.customMeetingTemplates.count == 1)
         #expect(decoded.customMeetingTemplates.first?.name == "Customer Follow-Up")
         #expect(decoded.customMeetingTemplates.first?.icon == "dollarsign.circle")
@@ -700,6 +705,7 @@ struct AppConfigTests {
         #expect(json["default_meeting_template_id"] != nil)
         #expect(json["meeting_recording_save_policy"] != nil)
         #expect(json["meeting_recording_folder_path"] != nil)
+        #expect(json["meeting_recording_file_format"] != nil)
         #expect(json["show_scheduled_meeting_notifications"] != nil)
         #expect(json["show_meeting_detection_notification"] != nil)
         #expect(json["muted_meeting_detection_app_bundle_ids"] != nil)
@@ -743,6 +749,8 @@ struct AppConfigTests {
         #expect(config.upcomingMeetingsDayCount == UpcomingMeetingsWindow.threeDays.dayCount)
         #expect(config.hiddenCalendarEventSourceHints.isEmpty)
         #expect(config.meetingRecordingSavePolicy == .never)
+        #expect(config.meetingRecordingFileFormat == MeetingRecordingFileFormat.m4a.rawValue)
+        #expect(config.resolvedMeetingRecordingFileFormat == .m4a)
         #expect(config.showScheduledMeetingNotifications == true)
         #expect(config.showMeetingDetectionNotification == true)
         #expect(config.mutedMeetingDetectionAppBundleIDs.isEmpty)
@@ -789,6 +797,17 @@ struct AppConfigTests {
 
         #expect(negativeConfig.meetingSummaryRetryCount == 0)
         #expect(excessiveConfig.meetingSummaryRetryCount == MeetingSummaryRetryPolicy.maximumRetryCount)
+    }
+
+    @Test("meeting recording file format falls back to m4a on decode")
+    func meetingRecordingFileFormatFallsBackOnDecode() throws {
+        let config = try JSONDecoder().decode(
+            AppConfig.self,
+            from: Data(#"{"meeting_recording_file_format": "flac"}"#.utf8)
+        )
+
+        #expect(config.meetingRecordingFileFormat == MeetingRecordingFileFormat.m4a.rawValue)
+        #expect(config.resolvedMeetingRecordingFileFormat == .m4a)
     }
 
     @Test("legacy completed onboarding enables meetings when use case is missing")

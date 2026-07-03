@@ -963,6 +963,7 @@ struct AppConfig: Codable {
     var mutedMeetingDetectionAppBundleIDs: [String] = []
     var meetingRecordingSavePolicy: MeetingRecordingSavePolicy = .never
     var meetingRecordingFolderPath: String = ""
+    var meetingRecordingFileFormat: String = MeetingRecordingFileFormat.m4a.rawValue
     var darkMode: Bool = true
     var enableDoubleTapDictation: Bool = true
     var pasteShortcut: PasteShortcut = .commandV
@@ -1068,6 +1069,7 @@ struct AppConfig: Codable {
         case mutedMeetingDetectionAppBundleIDs = "muted_meeting_detection_app_bundle_ids"
         case meetingRecordingSavePolicy = "meeting_recording_save_policy"
         case meetingRecordingFolderPath = "meeting_recording_folder_path"
+        case meetingRecordingFileFormat = "meeting_recording_file_format"
         case darkMode = "dark_mode"
         case enableDoubleTapDictation = "enable_double_tap_dictation"
         case pasteShortcut = "paste_shortcut"
@@ -1198,6 +1200,9 @@ struct AppConfig: Codable {
         mutedMeetingDetectionAppBundleIDs = (try? c.decode([String].self, forKey: .mutedMeetingDetectionAppBundleIDs)) ?? defaults.mutedMeetingDetectionAppBundleIDs
         meetingRecordingSavePolicy = (try? c.decode(MeetingRecordingSavePolicy.self, forKey: .meetingRecordingSavePolicy)) ?? defaults.meetingRecordingSavePolicy
         meetingRecordingFolderPath = (try? c.decode(String.self, forKey: .meetingRecordingFolderPath)) ?? defaults.meetingRecordingFolderPath
+        meetingRecordingFileFormat = MeetingRecordingFileFormat
+            .resolved(try? c.decode(String.self, forKey: .meetingRecordingFileFormat))
+            .rawValue
         darkMode = (try? c.decode(Bool.self, forKey: .darkMode)) ?? defaults.darkMode
         iCloudSyncEnabled = (try? c.decode(Bool.self, forKey: .iCloudSyncEnabled)) ?? defaults.iCloudSyncEnabled
         showIOSCompanionPrompt = (try? c.decode(Bool.self, forKey: .showIOSCompanionPrompt)) ?? defaults.showIOSCompanionPrompt
@@ -1320,6 +1325,10 @@ struct AppConfig: Codable {
 
     var resolvedAutoExportFileFormat: MeetingAutoExportFileFormat {
         MeetingAutoExportFileFormat.resolved(autoExportFileFormat)
+    }
+
+    var resolvedMeetingRecordingFileFormat: MeetingRecordingFileFormat {
+        MeetingRecordingFileFormat.resolved(meetingRecordingFileFormat)
     }
 
     var resolvedMeetingTranscriptCleanupProvider: MeetingTranscriptCleanupProviderOption {

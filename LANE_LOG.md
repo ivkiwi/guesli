@@ -156,3 +156,17 @@
   - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings` - passed, 1218 tests / 131 suites.
   - `git diff --check` - passed.
 - Deviations: no push; no files outside this worktree changed.
+
+## 2026-07-03 16:22 +03 - B3 compact meeting recording format
+
+- Status: complete on `codex/integration`.
+- Source: fetched `origin` and reconciled upstream commits `5fb26a83`, `066989c3`, `e43de4b3`.
+- Change: added `meeting_recording_file_format` with default `m4a`, Settings > Recording format, and legacy settings import for the key.
+- Change: kept the fork's `MeetingRecordingStorage` m4a encoder and legacy WAV migration; added selected WAV output without importing upstream's separate `AVAssetExportSession` pipeline.
+- Change: live meeting completion now prepares recording save off the MainActor before DB persistence; imported-audio retained recording save also uses the async storage helper.
+- Tests:
+  - `git diff --check` - passed.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-codex --filter 'MeetingRecordingWriterTests|MeetingsNavigationTests|AppConfigTests|ConfigStoreTests|MeetingHookIntegrationTests|AudioFileImportControllerTests'` - passed, 101 tests.
+  - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-codex` - passed, 1248 tests / 134 suites.
+- Flaky note: `PasteController` and `StreamingVadController` passed in the full suite; no quiet rerun needed.
+- Deviations: no push; pre-existing untracked `CODEX_PLAN.md` left untouched.

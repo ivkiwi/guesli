@@ -101,6 +101,7 @@ struct ConfigStoreTests {
         legacyConfig.defaultMeetingTemplateID = legacyTemplate.id
         legacyConfig.chatGPTModel = "gpt-5.5"
         legacyConfig.meetingRecordingSavePolicy = .always
+        legacyConfig.meetingRecordingFileFormat = MeetingRecordingFileFormat.wav.rawValue
         legacyConfig.cohereLanguageDictation = CohereTranscribeLanguage.french.rawValue
         legacyConfig.cohereLanguageMeetings = CohereTranscribeLanguage.german.rawValue
         legacyConfig.enableMeetingTranscriptCleanup = true
@@ -129,6 +130,7 @@ struct ConfigStoreTests {
         #expect(loaded.defaultMeetingTemplateID == legacyTemplate.id)
         #expect(loaded.chatGPTModel == "gpt-5.5")
         #expect(loaded.meetingRecordingSavePolicy == .always)
+        #expect(loaded.meetingRecordingFileFormat == MeetingRecordingFileFormat.wav.rawValue)
         #expect(loaded.cohereLanguageDictation == CohereTranscribeLanguage.french.rawValue)
         #expect(loaded.cohereLanguageMeetings == CohereTranscribeLanguage.german.rawValue)
         #expect(loaded.enableMeetingTranscriptCleanup == true)

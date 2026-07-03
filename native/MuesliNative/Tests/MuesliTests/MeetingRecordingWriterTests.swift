@@ -65,6 +65,27 @@ struct MeetingRecordingWriterTests {
         #expect(try audioDuration(from: savedURL) > 0)
     }
 
+    @Test("persistTemporaryRecording keeps WAV when selected")
+    func persistTemporaryRecordingKeepsWAVWhenSelected() throws {
+        let writer = try MeetingRecordingWriter()
+        writer.appendSystem([1200, -800, 400])
+        let tempURL = try #require(writer.stop())
+        let supportDirectory = makeTemporaryDirectory()
+        let startedAt = Date(timeIntervalSince1970: 1_711_000_000)
+
+        let savedURL = try MeetingRecordingWriter.persistTemporaryRecording(
+            from: tempURL,
+            meetingTitle: "Weekly Product Sync",
+            startedAt: startedAt,
+            supportDirectory: supportDirectory,
+            fileFormat: .wav
+        )
+
+        #expect(FileManager.default.fileExists(atPath: tempURL.path) == false)
+        #expect(savedURL.pathExtension == "wav")
+        #expect(try readMonoPCM16WAVSamples(from: savedURL) == [1200, -800, 400])
+    }
+
     @Test("saved m4a decodes to temporary wav for retranscription")
     func savedM4ADecodesToTemporaryWAVForRetranscription() async throws {
         let writer = try MeetingRecordingWriter()

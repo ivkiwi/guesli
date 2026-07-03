@@ -170,6 +170,7 @@ final class ConfigStore {
         )
         importValue("meeting_recording_save_policy", \.meetingRecordingSavePolicy)
         importNonEmptyStringIfCurrentEmpty("meeting_recording_folder_path", \.meetingRecordingFolderPath)
+        importValue("meeting_recording_file_format", \.meetingRecordingFileFormat)
 
         importValue("dark_mode", \.darkMode)
         importValue("enable_double_tap_dictation", \.enableDoubleTapDictation)

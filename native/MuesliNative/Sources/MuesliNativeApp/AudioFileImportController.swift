@@ -304,7 +304,7 @@ enum AudioFileImportController {
         let now = Date()
         let startTime = now.addingTimeInterval(-duration)
         // Persist the converted WAV as compressed retained audio so retranscription works.
-        let savedRecordingPath = try MeetingRecordingStorage.persistTemporaryRecording(
+        let savedRecordingPath = try await MeetingRecordingStorage.persistTemporaryRecordingAsync(
             from: wavURL,
             meetingTitle: generatedTitle,
             startedAt: startTime,

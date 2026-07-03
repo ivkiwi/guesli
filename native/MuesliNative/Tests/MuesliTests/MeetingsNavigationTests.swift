@@ -478,7 +478,11 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
-        let persistenceResult = try controller.persistCompletedMeetingResult(result)
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(for: result)
+        let persistenceResult = try controller.persistCompletedMeetingResult(
+            result,
+            preparedRecordingSave: preparedRecordingSave
+        )
 
         #expect(persistenceResult.recordingSaveError != nil)
         let storedMeeting = try store.meeting(id: persistenceResult.meetingID)
@@ -510,9 +514,13 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(
+            for: result,
+            saveDecision: false
+        )
         let persistenceResult = try controller.persistCompletedMeetingResult(
             result,
-            recordingSaveDecision: false
+            preparedRecordingSave: preparedRecordingSave
         )
 
         let storedMeeting = try store.meeting(id: persistenceResult.meetingID)
@@ -525,7 +533,10 @@ struct MeetingsNavigationTests {
     func persistCompletedMeetingResultHonorsExplicitRecordingSaveDecisionAfterPolicyDrift() async throws {
         let store = try makeStore()
         let controller = makeController(dictationStore: store)
-        controller.updateConfig { $0.meetingRecordingSavePolicy = .never }
+        controller.updateConfig {
+            $0.meetingRecordingSavePolicy = .never
+            $0.meetingRecordingFileFormat = MeetingRecordingFileFormat.wav.rawValue
+        }
 
         let retainedRecordingURL = try makeRetainedRecordingURL()
 
@@ -544,15 +555,19 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(
+            for: result,
+            saveDecision: true
+        )
         let persistenceResult = try controller.persistCompletedMeetingResult(
             result,
-            recordingSaveDecision: true
+            preparedRecordingSave: preparedRecordingSave
         )
 
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
         let savedRecordingPath = try #require(storedMeeting.savedRecordingPath)
         #expect(FileManager.default.fileExists(atPath: savedRecordingPath))
-        #expect(URL(fileURLWithPath: savedRecordingPath).pathExtension == "m4a")
+        #expect(URL(fileURLWithPath: savedRecordingPath).pathExtension == "wav")
         #expect(FileManager.default.fileExists(atPath: retainedRecordingURL.path) == false)
     }
 
@@ -583,7 +598,11 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
-        let persistenceResult = try controller.persistCompletedMeetingResult(result)
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(for: result)
+        let persistenceResult = try controller.persistCompletedMeetingResult(
+            result,
+            preparedRecordingSave: preparedRecordingSave
+        )
 
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
         let savedRecordingPath = try #require(storedMeeting.savedRecordingPath)
@@ -615,7 +634,11 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
-        let persistenceResult = try controller.persistCompletedMeetingResult(result)
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(for: result)
+        let persistenceResult = try controller.persistCompletedMeetingResult(
+            result,
+            preparedRecordingSave: preparedRecordingSave
+        )
 
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
         #expect(storedMeeting.savedRecordingPath == nil)
@@ -643,9 +666,13 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(
+            for: result,
+            saveDecision: true
+        )
         let persistenceResult = try controller.persistCompletedMeetingResult(
             result,
-            recordingSaveDecision: true
+            preparedRecordingSave: preparedRecordingSave
         )
 
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
@@ -676,7 +703,11 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
-        _ = try controller.persistCompletedMeetingResult(result, existingMeetingID: liveID)
+        _ = try controller.persistCompletedMeetingResult(
+            result,
+            existingMeetingID: liveID,
+            preparedRecordingSave: .none
+        )
 
         let storedMeeting = try #require(try store.meeting(id: liveID))
         #expect(storedMeeting.title == "Investor Follow-up")
@@ -706,7 +737,11 @@ struct MeetingsNavigationTests {
             templateSnapshot: MeetingTemplates.auto.snapshot
         )
 
-        _ = try controller.persistCompletedMeetingResult(result, existingMeetingID: liveID)
+        _ = try controller.persistCompletedMeetingResult(
+            result,
+            existingMeetingID: liveID,
+            preparedRecordingSave: .none
+        )
 
         let storedMeeting = try #require(try store.meeting(id: liveID))
         #expect(storedMeeting.title == "Status Bar Stop Title")

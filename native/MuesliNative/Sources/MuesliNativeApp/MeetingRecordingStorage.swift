@@ -2,6 +2,36 @@ import AVFoundation
 import Foundation
 import MuesliCore
 
+enum MeetingRecordingFileFormat: String, CaseIterable, Sendable {
+    case m4a
+    case wav
+
+    var displayName: String {
+        switch self {
+        case .m4a:
+            return "M4A (AAC, smaller)"
+        case .wav:
+            return "WAV (lossless)"
+        }
+    }
+
+    var fileExtension: String {
+        switch self {
+        case .m4a:
+            return "m4a"
+        case .wav:
+            return "wav"
+        }
+    }
+
+    static func resolved(_ rawValue: String?) -> MeetingRecordingFileFormat {
+        guard let rawValue, let format = MeetingRecordingFileFormat(rawValue: rawValue) else {
+            return .m4a
+        }
+        return format
+    }
+}
+
 enum MeetingRecordingStorage {
     private static let defaultDirectoryName = "meeting-recordings"
 
@@ -31,7 +61,8 @@ enum MeetingRecordingStorage {
             from: tempWAVURL,
             meetingTitle: meetingTitle,
             startedAt: startedAt,
-            destinationDirectory: directory(config: config, supportDirectory: supportDirectory)
+            destinationDirectory: directory(config: config, supportDirectory: supportDirectory),
+            fileFormat: config.resolvedMeetingRecordingFileFormat
         )
     }
 
@@ -39,7 +70,8 @@ enum MeetingRecordingStorage {
         from tempWAVURL: URL,
         meetingTitle: String,
         startedAt: Date,
-        destinationDirectory: URL
+        destinationDirectory: URL,
+        fileFormat: MeetingRecordingFileFormat = .m4a
     ) throws -> URL {
         try FileManager.default.createDirectory(
             at: destinationDirectory,
@@ -47,10 +79,15 @@ enum MeetingRecordingStorage {
         )
 
         let destinationURL = destinationDirectory.appendingPathComponent(
-            "\(fileNamePrefix(for: startedAt, title: meetingTitle)).m4a"
+            "\(fileNamePrefix(for: startedAt, title: meetingTitle)).\(fileFormat.fileExtension)"
         )
         if FileManager.default.fileExists(atPath: destinationURL.path) {
             try FileManager.default.removeItem(at: destinationURL)
+        }
+
+        if fileFormat == .wav {
+            try FileManager.default.moveItem(at: tempWAVURL, to: destinationURL)
+            return destinationURL
         }
 
         do {
@@ -61,6 +98,40 @@ enum MeetingRecordingStorage {
             try? FileManager.default.removeItem(at: destinationURL)
             throw error
         }
+    }
+
+    static func persistTemporaryRecordingAsync(
+        from tempWAVURL: URL,
+        meetingTitle: String,
+        startedAt: Date,
+        config: AppConfig,
+        supportDirectory: URL = AppIdentity.supportDirectoryURL
+    ) async throws -> URL {
+        try await persistTemporaryRecordingAsync(
+            from: tempWAVURL,
+            meetingTitle: meetingTitle,
+            startedAt: startedAt,
+            destinationDirectory: directory(config: config, supportDirectory: supportDirectory),
+            fileFormat: config.resolvedMeetingRecordingFileFormat
+        )
+    }
+
+    static func persistTemporaryRecordingAsync(
+        from tempWAVURL: URL,
+        meetingTitle: String,
+        startedAt: Date,
+        destinationDirectory: URL,
+        fileFormat: MeetingRecordingFileFormat = .m4a
+    ) async throws -> URL {
+        try await Task.detached(priority: .utility) {
+            try persistTemporaryRecording(
+                from: tempWAVURL,
+                meetingTitle: meetingTitle,
+                startedAt: startedAt,
+                destinationDirectory: destinationDirectory,
+                fileFormat: fileFormat
+            )
+        }.value
     }
 
     static func temporaryWAVForTranscription(from savedRecordingURL: URL) async throws -> URL {
