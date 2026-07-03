@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import MuesliCore
 import Testing
 @testable import MuesliNativeApp
 
@@ -85,11 +86,81 @@ struct MeetingRecordingWriterTests {
         #expect(try readMonoPCM16WAVSamples(from: wavURL).isEmpty == false)
     }
 
+    @Test("legacy wav migration encodes referenced recordings and removes orphan stubs")
+    func legacyWAVMigrationEncodesAndDeletesOrphanStubs() throws {
+        let store = try makeStore()
+        let recordingsDirectory = makeTemporaryDirectory()
+        let legacyWAVURL = recordingsDirectory.appendingPathComponent("legacy.wav")
+        let orphanStubURL = recordingsDirectory.appendingPathComponent("orphan.wav")
+        let referencedStubURL = recordingsDirectory.appendingPathComponent("referenced-stub.wav")
+        let writer = try MeetingRecordingWriter()
+        writer.appendSystem(Array(repeating: 1200, count: 16_000))
+        let tempWAVURL = try #require(writer.stop())
+        try FileManager.default.moveItem(at: tempWAVURL, to: legacyWAVURL)
+        try Data([0]).write(to: orphanStubURL)
+        try Data([1]).write(to: referencedStubURL)
+
+        let now = Date(timeIntervalSince1970: 1_711_000_000)
+        let migratedID = try store.insertMeeting(
+            title: "Legacy",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "legacy",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: legacyWAVURL.path
+        )
+        try store.insertMeeting(
+            title: "Referenced Stub",
+            calendarEventID: nil,
+            startTime: now.addingTimeInterval(120),
+            endTime: now.addingTimeInterval(180),
+            rawTranscript: "stub",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: referencedStubURL.path
+        )
+
+        let summary = try MeetingRecordingStorage.migrateLegacyWAVRecordings(
+            store: store,
+            recordingsDirectory: recordingsDirectory
+        )
+
+        let migrated = try #require(try store.meeting(id: migratedID))
+        let migratedPath = try #require(migrated.savedRecordingPath)
+        #expect(summary.migrated == 1)
+        #expect(summary.deletedOrphanStubs == 1)
+        #expect(migratedPath.hasSuffix(".m4a"))
+        #expect(FileManager.default.fileExists(atPath: migratedPath))
+        #expect(FileManager.default.fileExists(atPath: legacyWAVURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: orphanStubURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: referencedStubURL.path))
+
+        let secondSummary = try MeetingRecordingStorage.migrateLegacyWAVRecordings(
+            store: store,
+            recordingsDirectory: recordingsDirectory
+        )
+        #expect(secondSummary.migrated == 0)
+        #expect(secondSummary.deletedOrphanStubs == 0)
+        #expect(try store.meeting(id: migratedID)?.savedRecordingPath == migratedPath)
+    }
+
     private func makeTemporaryDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("meeting-writer-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func makeStore() throws -> DictationStore {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-recording-migration-\(UUID().uuidString).db")
+        let store = DictationStore(databaseURL: url)
+        try store.migrateIfNeeded()
+        return store
     }
 
     private func readMonoPCM16WAVSamples(from url: URL) throws -> [Int16] {

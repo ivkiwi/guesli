@@ -23,6 +23,17 @@ struct MeetingsNavigationTests {
         )
     }
 
+    private func makeController(
+        configStore: ConfigStore,
+        dictationStore: DictationStore
+    ) -> MuesliController {
+        MuesliController(
+            runtime: makeRuntimePaths(),
+            configStore: configStore,
+            dictationStore: dictationStore
+        )
+    }
+
     private func makeRuntimePaths() -> RuntimePaths {
         RuntimePaths(
             repoRoot: FileManager.default.temporaryDirectory,
@@ -164,9 +175,15 @@ struct MeetingsNavigationTests {
     @Test("deleteMeeting clears selected detail state and removes saved recording")
     func deleteMeetingClearsSelection() throws {
         let store = try makeStore()
+        let configStore = makeConfigStore()
         let savedRecordingURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("meeting-recording-\(UUID().uuidString).wav")
         try Data("test".utf8).write(to: savedRecordingURL)
+        let cacheURL = try RecordingWaveformCacheFiles.cacheURL(
+            for: savedRecordingURL,
+            supportDirectory: configStore.supportDirectory()
+        )
+        try Data("cache".utf8).write(to: cacheURL)
 
         let now = Date()
         try store.insertMeeting(
@@ -181,7 +198,7 @@ struct MeetingsNavigationTests {
             savedRecordingPath: savedRecordingURL.path
         )
 
-        let controller = makeController(dictationStore: store)
+        let controller = makeController(configStore: configStore, dictationStore: store)
         let meetingID = try store.recentMeetings(limit: 1).first!.id
         controller.appState.selectedMeetingID = meetingID
         controller.appState.selectedMeetingRecord = try store.meeting(id: meetingID)
@@ -194,6 +211,46 @@ struct MeetingsNavigationTests {
         #expect(controller.appState.selectedMeetingRecord == nil)
         #expect(controller.appState.meetingsNavigationState == .browser)
         #expect(FileManager.default.fileExists(atPath: savedRecordingURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: cacheURL.path) == false)
+    }
+
+    @Test("deleteMeeting keeps a shared saved recording for remaining meetings")
+    func deleteMeetingKeepsSharedRecording() throws {
+        let store = try makeStore()
+        let savedRecordingURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shared-meeting-recording-\(UUID().uuidString).wav")
+        try Data("shared".utf8).write(to: savedRecordingURL)
+
+        let now = Date()
+        let firstID = try store.insertMeeting(
+            title: "First",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "First",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: savedRecordingURL.path
+        )
+        let secondID = try store.insertMeeting(
+            title: "Second",
+            calendarEventID: nil,
+            startTime: now.addingTimeInterval(120),
+            endTime: now.addingTimeInterval(180),
+            rawTranscript: "Second",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: savedRecordingURL.path
+        )
+        let controller = makeController(dictationStore: store)
+
+        controller.deleteMeeting(id: firstID)
+
+        #expect(try store.meeting(id: firstID) == nil)
+        #expect(try store.meeting(id: secondID)?.savedRecordingPath == savedRecordingURL.path)
+        #expect(FileManager.default.fileExists(atPath: savedRecordingURL.path))
     }
 
     @Test("deleteMeeting refuses live meeting rows")

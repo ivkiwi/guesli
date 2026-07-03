@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import MuesliCore
 
 enum MeetingRecordingStorage {
     private static let defaultDirectoryName = "meeting-recordings"
@@ -81,6 +82,50 @@ enum MeetingRecordingStorage {
         }
     }
 
+    @discardableResult
+    static func migrateLegacyWAVRecordings(
+        store: DictationStore,
+        recordingsDirectory: URL,
+        fileManager: FileManager = .default
+    ) throws -> (migrated: Int, deletedOrphanStubs: Int) {
+        var migrated = 0
+        for candidate in try store.legacyWAVMeetingRecordingPaths() {
+            if Task.isCancelled { break }
+            let sourceURL = URL(fileURLWithPath: candidate.path).standardizedFileURL
+            guard sourceURL.pathExtension.lowercased() == "wav",
+                  fileManager.fileExists(atPath: sourceURL.path) else { continue }
+            let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
+            let fileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+            guard fileSize >= 1024 else { continue }
+
+            let destinationURL = sourceURL.deletingPathExtension().appendingPathExtension("m4a")
+            let temporaryURL = sourceURL
+                .deletingLastPathComponent()
+                .appendingPathComponent(".\(destinationURL.lastPathComponent).migrating")
+            do {
+                try? fileManager.removeItem(at: temporaryURL)
+                try encodeWAVToM4A(sourceURL: sourceURL, destinationURL: temporaryURL)
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.moveItem(at: temporaryURL, to: destinationURL)
+                try store.updateMeetingSavedRecordingPath(id: candidate.id, path: destinationURL.path)
+                try fileManager.removeItem(at: sourceURL)
+                migrated += 1
+            } catch {
+                try? fileManager.removeItem(at: temporaryURL)
+                fputs("[meeting-recording-storage] failed to migrate legacy wav \(sourceURL.path): \(error)\n", stderr)
+            }
+        }
+
+        let deletedOrphanStubs = try deleteOrphanedWAVStubs(
+            in: recordingsDirectory,
+            store: store,
+            fileManager: fileManager
+        )
+        return (migrated, deletedOrphanStubs)
+    }
+
     private static func encodeWAVToM4A(sourceURL: URL, destinationURL: URL) throws {
         let inputFile = try AVAudioFile(forReading: sourceURL)
         let inputFormat = inputFile.processingFormat
@@ -106,6 +151,28 @@ enum MeetingRecordingStorage {
             guard buffer.frameLength > 0 else { break }
             try outputFile.write(from: buffer)
         }
+    }
+
+    private static func deleteOrphanedWAVStubs(
+        in recordingsDirectory: URL,
+        store: DictationStore,
+        fileManager: FileManager
+    ) throws -> Int {
+        guard fileManager.fileExists(atPath: recordingsDirectory.path) else { return 0 }
+        let files = try fileManager.contentsOfDirectory(
+            at: recordingsDirectory,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        )
+        var deleted = 0
+        for file in files where file.pathExtension.lowercased() == "wav" {
+            let values = try file.resourceValues(forKeys: [.fileSizeKey])
+            guard (values.fileSize ?? 0) < 1024,
+                  try store.savedRecordingReferenceCount(path: file.path) == 0 else { continue }
+            try fileManager.removeItem(at: file)
+            deleted += 1
+        }
+        return deleted
     }
 
     private static func fileNamePrefix(for date: Date, title: String) -> String {

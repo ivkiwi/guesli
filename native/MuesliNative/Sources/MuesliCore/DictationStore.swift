@@ -441,6 +441,59 @@ public final class DictationStore {
         return rows
     }
 
+    public func legacyWAVMeetingRecordingPaths() throws -> [(id: Int64, path: String)] {
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+
+        let sql = """
+        SELECT id, saved_recording_path
+        FROM meetings
+        WHERE saved_recording_path IS NOT NULL
+          AND lower(saved_recording_path) LIKE '%.wav'
+          AND deleted_at IS NULL
+        ORDER BY id ASC
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var rows: [(id: Int64, path: String)] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            rows.append((sqlite3_column_int64(statement, 0), stringColumn(statement, index: 1)))
+        }
+        return rows
+    }
+
+    public func savedRecordingReferenceCount(path: String, excludingMeetingID: Int64? = nil) throws -> Int {
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+
+        let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        var sql = """
+        SELECT COUNT(*) FROM meetings
+        WHERE saved_recording_path IN (?, ?) AND deleted_at IS NULL
+        """
+        if excludingMeetingID != nil {
+            sql += " AND id != ?"
+        }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, (path as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 2, (standardizedPath as NSString).utf8String, -1, nil)
+        if let excludingMeetingID {
+            sqlite3_bind_int64(statement, 3, excludingMeetingID)
+        }
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw lastError(db)
+        }
+        return Int(sqlite3_column_int(statement, 0))
+    }
+
     public func staleLiveMeetings() throws -> [MeetingRecord] {
         let db = try openDatabase()
         defer { sqlite3_close(db) }

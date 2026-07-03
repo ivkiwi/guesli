@@ -344,6 +344,7 @@ final class MuesliController: NSObject {
     private var meetingStartMeetingID: Int64?
     private var importTask: Task<Void, Never>?
     private var importSessionID: UUID?
+    private var legacyRecordingMigrationTask: Task<Void, Never>?
     private var canceledMeetingStartIDs = Set<Int64>()
     private var iCloudSyncTask: Task<Void, Never>?
     private var iCloudSyncGeneration = 0
@@ -425,6 +426,7 @@ final class MuesliController: NSObject {
             fputs("[muesli-native] startup error: \(error)\n", stderr)
         }
         importLegacyMuesliHistoryIfNeeded()
+        startLegacyRecordingMigration()
         recoverStaleLiveMeetings()
         normalizeMeetingTranscriptionSelectionForAvailability()
         SoundController.prewarmLifecycleSounds()
@@ -698,6 +700,32 @@ final class MuesliController: NSObject {
         }
     }
 
+    private func startLegacyRecordingMigration() {
+        legacyRecordingMigrationTask?.cancel()
+        let store = dictationStore
+        let recordingsDirectory = MeetingRecordingStorage.directory(
+            config: config,
+            supportDirectory: configStore.supportDirectory()
+        )
+        legacyRecordingMigrationTask = Task.detached(priority: .utility) {
+            do {
+                let summary = try MeetingRecordingStorage.migrateLegacyWAVRecordings(
+                    store: store,
+                    recordingsDirectory: recordingsDirectory
+                )
+                if summary.migrated > 0 || summary.deletedOrphanStubs > 0 {
+                    fputs(
+                        "[muesli-native] migrated \(summary.migrated) legacy wav recordings, deleted \(summary.deletedOrphanStubs) orphan stubs\n",
+                        stderr
+                    )
+                    MuesliNotifications.postDataDidChange()
+                }
+            } catch {
+                fputs("[muesli-native] legacy recording migration failed: \(error)\n", stderr)
+            }
+        }
+    }
+
     func shutdown() {
         if let workspaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
@@ -716,6 +744,8 @@ final class MuesliController: NSObject {
             self.iCloudWakeObserver = nil
         }
         cancelActiveICloudSyncTask()
+        legacyRecordingMigrationTask?.cancel()
+        legacyRecordingMigrationTask = nil
         iCloudSyncDebounceTask?.cancel()
         iCloudSyncDebounceTask = nil
         iCloudSubscriptionTask?.cancel()
@@ -2213,7 +2243,7 @@ final class MuesliController: NSObject {
             )
 
             // Show "starts in X min" notification now
-            handleUpcomingMeeting(upcomingEvent)
+            handleUpcomingMeeting(upcomingEvent, notificationKey: key)
 
             // Schedule a second "Meeting starting now" notification at event start time for pre-start prompts.
             let delay = event.startDate.timeIntervalSinceNow
@@ -3841,7 +3871,8 @@ final class MuesliController: NSObject {
         do {
             // Delete the retained file first so a failed file removal does not orphan
             // user-visible recording data after the meeting row disappears.
-            if let savedRecordingPath = meeting.savedRecordingPath {
+            if let savedRecordingPath = meeting.savedRecordingPath,
+               try dictationStore.savedRecordingReferenceCount(path: savedRecordingPath, excludingMeetingID: id) == 0 {
                 try deleteSavedMeetingRecording(at: savedRecordingPath)
             }
             try dictationStore.deleteMeeting(id: id)
@@ -5389,6 +5420,10 @@ final class MuesliController: NSObject {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
 
         do {
+            try RecordingWaveformCacheFiles.removeCachedWaveform(
+                for: url,
+                supportDirectory: configStore.supportDirectory()
+            )
             try FileManager.default.removeItem(at: url)
         } catch {
             throw MeetingLifecycleError.failedToDeleteRecording(underlying: error)
@@ -7140,7 +7175,7 @@ final class MuesliController: NSObject {
         }
     }
 
-    private func handleUpcomingMeeting(_ event: UpcomingMeetingEvent) {
+    private func handleUpcomingMeeting(_ event: UpcomingMeetingEvent, notificationKey: String? = nil) {
         // Look up end date and meeting URL from unified calendar events
         let calendarEvent = appState.upcomingCalendarEvents
             .first(where: { $0.id == event.id })
@@ -7190,11 +7225,13 @@ final class MuesliController: NSObject {
             onJoinOnly: meetingURL != nil ? { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.joinOnly(meetingURL: meetingURL!, endDate: calendarEndDate)
             } : nil,
             onDismiss: { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 let remaining = calendarEndDate.map { max($0.timeIntervalSinceNow, 120) } ?? 120
                 self.meetingMonitor.suppress(for: remaining)
                 self.meetingMonitor.refreshState()
@@ -7204,6 +7241,12 @@ final class MuesliController: NSObject {
                 self?.showPendingMeetingCompletionNotificationIfPossible()
             }
         )
+    }
+
+    private func cancelMeetingStartingNowTimer(notificationKey: String?) {
+        guard let notificationKey else { return }
+        meetingStartingNowTimers[notificationKey]?.invalidate()
+        meetingStartingNowTimers.removeValue(forKey: notificationKey)
     }
 
     private func scheduleMeetingEndNotification(endDate: Date?, title: String) {

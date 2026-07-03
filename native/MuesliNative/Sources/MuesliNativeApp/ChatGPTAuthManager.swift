@@ -391,7 +391,7 @@ final class ChatGPTAuthManager {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let data = try JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted)
             try data.write(to: tokenFileURL, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenFileURL.path)
+            try Self.secureTokenFilePermissions(at: tokenFileURL)
             var resourceValues = URLResourceValues()
             resourceValues.isExcludedFromBackup = true
             var fileURL = tokenFileURL
@@ -402,11 +402,23 @@ final class ChatGPTAuthManager {
     }
 
     private func tokenRead(key: String) -> String? {
+        try? Self.secureTokenFilePermissions(at: tokenFileURL)
         guard let data = try? Data(contentsOf: tokenFileURL),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
             return nil
         }
         return dict[key]
+    }
+
+    nonisolated static func secureTokenFilePermissions(
+        at url: URL,
+        fileManager: FileManager = .default
+    ) throws {
+        guard fileManager.fileExists(atPath: url.path) else { return }
+        let attributes = try fileManager.attributesOfItem(atPath: url.path)
+        let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
+        guard permissions != 0o600 else { return }
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private func deleteTokens() {

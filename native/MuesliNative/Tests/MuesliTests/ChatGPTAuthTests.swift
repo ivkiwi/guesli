@@ -205,6 +205,20 @@ struct ChatGPTAuthTests {
         #expect(Data().base64URLEncoded() == "")
     }
 
+    @Test("token file permissions are tightened to owner read-write")
+    func tokenFilePermissionsAreTightened() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatgpt-auth-\(UUID().uuidString).json")
+        try Data("{}".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+
+        try ChatGPTAuthManager.secureTokenFilePermissions(at: url)
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
+        #expect(permissions.intValue & 0o777 == 0o600)
+    }
+
     // MARK: - Helpers
 
     /// Build a fake JWT with the given JSON payload (header and signature are dummy values).

@@ -76,6 +76,10 @@ final class ConfigStore {
         configURL
     }
 
+    func supportDirectory() -> URL {
+        supportURL
+    }
+
     private func ensureDirectory() {
         try? fileManager.createDirectory(
             at: configURL.deletingLastPathComponent(),

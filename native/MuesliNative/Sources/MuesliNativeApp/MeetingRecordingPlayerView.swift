@@ -91,6 +91,60 @@ private struct RecordingWaveformData: Equatable {
     }
 }
 
+enum RecordingWaveformCacheFiles {
+    static func cacheURL(
+        for url: URL,
+        supportDirectory: URL = AppIdentity.supportDirectoryURL,
+        fileManager: FileManager = .default,
+        createDirectory: Bool = true
+    ) throws -> URL {
+        let key = try cacheKey(for: url, fileManager: fileManager)
+        return try cacheURL(
+            for: key,
+            supportDirectory: supportDirectory,
+            fileManager: fileManager,
+            createDirectory: createDirectory
+        )
+    }
+
+    static func removeCachedWaveform(
+        for url: URL,
+        supportDirectory: URL = AppIdentity.supportDirectoryURL,
+        fileManager: FileManager = .default
+    ) throws {
+        let url = try cacheURL(
+            for: url,
+            supportDirectory: supportDirectory,
+            fileManager: fileManager,
+            createDirectory: false
+        )
+        guard fileManager.fileExists(atPath: url.path) else { return }
+        try fileManager.removeItem(at: url)
+    }
+
+    private static func cacheKey(for url: URL, fileManager: FileManager) throws -> String {
+        let attributes = try fileManager.attributesOfItem(atPath: url.path)
+        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return "\(url.path)|\(size)|\(modified)"
+    }
+
+    private static func cacheURL(
+        for cacheKey: String,
+        supportDirectory: URL,
+        fileManager: FileManager,
+        createDirectory: Bool
+    ) throws -> URL {
+        let directory = supportDirectory.appendingPathComponent("waveform-cache", isDirectory: true)
+        if createDirectory {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let digest = SHA256.hash(data: Data(cacheKey.utf8))
+        let filename = digest.map { String(format: "%02x", $0) }.joined() + ".mwf"
+        return directory.appendingPathComponent(filename)
+    }
+}
+
 private actor RecordingWaveformCache {
     static let shared = RecordingWaveformCache()
 
@@ -98,12 +152,16 @@ private actor RecordingWaveformCache {
     private let fileManager = FileManager.default
 
     func waveform(for url: URL) throws -> RecordingWaveformData {
-        let cacheKey = try cacheKey(for: url)
+        let cacheURL = try RecordingWaveformCacheFiles.cacheURL(
+            for: url,
+            supportDirectory: AppIdentity.supportDirectoryURL,
+            fileManager: fileManager
+        )
+        let cacheKey = cacheURL.lastPathComponent
         if let cached = memory[cacheKey] {
             return cached
         }
 
-        let cacheURL = try cacheURL(for: cacheKey)
         if let data = try? Data(contentsOf: cacheURL),
            let cached = RecordingWaveformData.decodeCacheData(data) {
             memory[cacheKey] = cached
@@ -114,22 +172,6 @@ private actor RecordingWaveformCache {
         memory[cacheKey] = waveform
         persist(waveform, to: cacheURL)
         return waveform
-    }
-
-    private func cacheKey(for url: URL) throws -> String {
-        let attributes = try fileManager.attributesOfItem(atPath: url.path)
-        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-        let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        return "\(url.path)|\(size)|\(modified)"
-    }
-
-    private func cacheURL(for cacheKey: String) throws -> URL {
-        let directory = AppIdentity.supportDirectoryURL
-            .appendingPathComponent("waveform-cache", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let digest = SHA256.hash(data: Data(cacheKey.utf8))
-        let filename = digest.map { String(format: "%02x", $0) }.joined() + ".mwf"
-        return directory.appendingPathComponent(filename)
     }
 
     private func persist(_ waveform: RecordingWaveformData, to cacheURL: URL) {

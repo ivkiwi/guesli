@@ -14,7 +14,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.1"),
-        .package(url: "https://github.com/argmaxinc/WhisperKit.git", branch: "main"), // TODO: pin to tagged release once one ships post-PR #455 (swift-transformers removal)
+        .package(url: "https://github.com/argmaxinc/WhisperKit.git", exact: "1.0.0"),
         // Ghost Pepper uses this LLM.swift fork for local Qwen cleanup. Before production, replace it with upstream
         // eastriverlee/LLM.swift once explicit Qwen/ChatML template behavior is validated against our GGUF models.
         .package(url: "https://github.com/obra/LLM.swift.git", revision: "f1e1e11982dbc59662be191b8bed408dfb48e9df"),
