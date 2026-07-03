@@ -7,17 +7,27 @@ const BACKUP_MAX_EVENTS = 1200;
 const BACKUP_FLUSH_BATCH_SIZE = 50;
 const BACKUP_FLUSH_MAX_BYTES = 48000;
 const BACKUP_FLUSH_INTERVAL_MS = 5000;
+const SCAN_DEBOUNCE_MS = 750;
+const MIN_SCAN_INTERVAL_MS = 1000;
 
 let lastSpeaker = "";
 let lastSentAt = 0;
 let lastParticipantSignature = "";
 let lastParticipantSentAt = 0;
 let flushingBackup = false;
+let backupObservations = loadBackupObservations().slice(-BACKUP_MAX_EVENTS);
+let backupDirty = false;
+let backupPersistTimer = 0;
+let pendingScanTimer = 0;
+let lastScanAt = 0;
 
 function isVisible(element) {
   const rect = element.getBoundingClientRect();
-  const style = window.getComputedStyle(element);
-  return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  return rect.width > 0 && rect.height > 0;
+}
+
+function isDocumentVisible() {
+  return document.visibilityState === "visible" && !document.hidden;
 }
 
 function cleanName(value) {
@@ -181,25 +191,48 @@ function loadBackupObservations() {
   }
 }
 
-function saveBackupObservations(observations) {
+function persistBackupObservations() {
+  if (!backupDirty) return;
   try {
-    localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify(observations.slice(-BACKUP_MAX_EVENTS)));
+    localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify(backupObservations.slice(-BACKUP_MAX_EVENTS)));
+    backupDirty = false;
   } catch (_) {
     // If storage is unavailable or full, live push still works.
   }
 }
 
+function persistBackupObservationsNow() {
+  if (backupPersistTimer) {
+    clearTimeout(backupPersistTimer);
+    backupPersistTimer = 0;
+  }
+  persistBackupObservations();
+}
+
+function scheduleBackupPersist() {
+  backupDirty = true;
+  if (backupPersistTimer) return;
+  backupPersistTimer = setTimeout(() => {
+    backupPersistTimer = 0;
+    persistBackupObservations();
+  }, BACKUP_FLUSH_INTERVAL_MS);
+}
+
 function storeBackupObservation(body) {
   const id = `${body.observedAtMs}-${Math.random().toString(36).slice(2)}`;
-  const observations = loadBackupObservations();
-  observations.push({ id, body });
-  saveBackupObservations(observations);
+  backupObservations.push({ id, body });
+  backupObservations = backupObservations.slice(-BACKUP_MAX_EVENTS);
+  scheduleBackupPersist();
   return id;
 }
 
 function removeBackupObservations(ids) {
   const remove = new Set(ids);
-  saveBackupObservations(loadBackupObservations().filter((entry) => !remove.has(entry.id)));
+  const previousLength = backupObservations.length;
+  backupObservations = backupObservations.filter((entry) => !remove.has(entry.id));
+  if (backupObservations.length !== previousLength) {
+    scheduleBackupPersist();
+  }
 }
 
 async function postBridgePayload(payload) {
@@ -236,11 +269,10 @@ function sendBackgroundMessage(message) {
 
 async function flushBackupObservations() {
   if (flushingBackup) return;
-  const observations = loadBackupObservations();
-  if (observations.length === 0) return;
+  if (backupObservations.length === 0) return;
 
   flushingBackup = true;
-  const batch = selectBackupBatch(observations);
+  const batch = selectBackupBatch(backupObservations);
   try {
     await postBridgePayload({
       meetingURL: location.href,
@@ -272,10 +304,42 @@ function selectBackupBatch(observations) {
 }
 
 function sample() {
+  if (!isDocumentVisible()) return;
+  const now = Date.now();
+  const elapsed = now - lastScanAt;
+  if (elapsed < MIN_SCAN_INTERVAL_MS) {
+    scheduleSample(MIN_SCAN_INTERVAL_MS - elapsed);
+    return;
+  }
+  if (pendingScanTimer) {
+    clearTimeout(pendingScanTimer);
+    pendingScanTimer = 0;
+  }
+  lastScanAt = now;
   sendObservation(detectActiveSpeaker());
 }
 
-const observer = new MutationObserver(sample);
+function scheduleSample(delayMs = SCAN_DEBOUNCE_MS) {
+  if (!isDocumentVisible()) return;
+  if (pendingScanTimer) {
+    clearTimeout(pendingScanTimer);
+  }
+  const elapsed = Date.now() - lastScanAt;
+  const waitMs = Math.max(delayMs, MIN_SCAN_INTERVAL_MS - elapsed, 0);
+  pendingScanTimer = setTimeout(() => {
+    pendingScanTimer = 0;
+    sample();
+  }, waitMs);
+}
+
+function handleVisibilityChange() {
+  persistBackupObservationsNow();
+  if (isDocumentVisible()) {
+    scheduleSample(0);
+  }
+}
+
+const observer = new MutationObserver(() => scheduleSample());
 observer.observe(document.documentElement, {
   subtree: true,
   childList: true,
@@ -283,6 +347,9 @@ observer.observe(document.documentElement, {
   attributes: true,
   attributeFilter: ["aria-label", "class", "data-is-speaking", "data-speaking"]
 });
+
+window.addEventListener("pagehide", persistBackupObservationsNow);
+document.addEventListener("visibilitychange", handleVisibilityChange);
 
 setInterval(sample, 1500);
 setInterval(flushBackupObservations, BACKUP_FLUSH_INTERVAL_MS);
