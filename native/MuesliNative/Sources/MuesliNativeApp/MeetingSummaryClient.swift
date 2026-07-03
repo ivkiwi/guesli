@@ -95,6 +95,10 @@ enum MeetingSummaryClient {
     private static let transcriptCleanupChunkCharacterLimit = 24_000
     private static let summaryTranscriptCharacterLimit = transcriptCleanupChunkCharacterLimit
 
+    static func resolvedChatGPTModel(_ rawValue: String) -> String {
+        rawValue.isEmpty ? defaultChatGPTModel : rawValue
+    }
+
     private static let titleInstructions = """
     Generate a short, descriptive meeting title (3-7 words) from these transcript excerpts. \
     Prefer the main topic and outcome across the whole meeting over opening small talk or setup. \
@@ -499,7 +503,7 @@ enum MeetingSummaryClient {
         )
         guard !chunks.isEmpty else { return "" }
 
-        let model = config.chatGPTModel.isEmpty ? defaultChatGPTModel : config.chatGPTModel
+        let model = resolvedChatGPTModel(config.chatGPTModel)
         var cleanedChunks: [String] = []
         cleanedChunks.reserveCapacity(chunks.count)
 
@@ -609,7 +613,7 @@ enum MeetingSummaryClient {
                     manualNotes: manualNotes,
                     visualContext: visualContext
                 ),
-                model: config.chatGPTModel.isEmpty ? defaultChatGPTModel : config.chatGPTModel
+                model: resolvedChatGPTModel(config.chatGPTModel)
             )
             if let text, !text.isEmpty {
                 return text
@@ -961,7 +965,7 @@ enum MeetingSummaryClient {
     }
 
     /// Call the WHAM streaming API and collect the full response text.
-    private static func callWHAM(
+    static func callWHAM(
         systemPrompt: String,
         userPrompt: String,
         model: String,

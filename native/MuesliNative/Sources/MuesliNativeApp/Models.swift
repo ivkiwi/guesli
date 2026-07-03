@@ -480,6 +480,7 @@ enum CustomLLMFormat: String, Codable, CaseIterable {
 
 enum TranscriptCleanupProviderOption: String, Codable, CaseIterable, Sendable {
     case local = "local"
+    case chatGPT = "chatgpt"
     case openAI = "openai"
     case openRouter = "openrouter"
     case customLLM = "custom_llm"
@@ -488,6 +489,8 @@ enum TranscriptCleanupProviderOption: String, Codable, CaseIterable, Sendable {
         switch self {
         case .local:
             return "Local model"
+        case .chatGPT:
+            return "ChatGPT (subscription)"
         case .openAI:
             return "OpenAI"
         case .openRouter:

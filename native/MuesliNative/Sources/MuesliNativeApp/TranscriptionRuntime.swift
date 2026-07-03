@@ -92,6 +92,15 @@ actor TranscriptionCoordinator {
     private var postProcessorModelId: String = PostProcessorOption.defaultOption.id
     private var transcriptCleanupSettings = TranscriptCleanupSettings()
     private var transcriptCleanupWarningHandler: (@MainActor (String?) -> Void)?
+    private let externalTranscriptCleanup: TranscriptCleanupRequest
+
+    init(
+        externalTranscriptCleanup: @escaping TranscriptCleanupRequest = { text, appContext, settings in
+            try await ExternalTranscriptCleanupClient.cleanup(text, appContext: appContext, settings: settings)
+        }
+    ) {
+        self.externalTranscriptCleanup = externalTranscriptCleanup
+    }
 
     @available(macOS 15, *)
     private var qwen3PostProcessor: Qwen3PostProcessor {
@@ -434,7 +443,7 @@ actor TranscriptionCoordinator {
         return SpeechTranscriptionResult(text: filtered, segments: filtered.isEmpty ? [] : result.segments)
     }
 
-    private func postProcessDictationIfNeeded(
+    func postProcessDictationIfNeeded(
         _ result: SpeechTranscriptionResult,
         backend: BackendOption,
         enabled: Bool,
@@ -453,10 +462,10 @@ actor TranscriptionCoordinator {
             do {
                 Qwen3PostProcessorLogging.logVerbose("External transcript cleanup forced by toggle")
                 let start = CFAbsoluteTimeGetCurrent()
-                let trimmed = try await ExternalTranscriptCleanupClient.cleanup(
+                let trimmed = try await externalTranscriptCleanup(
                     result.text,
-                    appContext: appContext,
-                    settings: transcriptCleanupSettings
+                    appContext,
+                    transcriptCleanupSettings
                 )
                 let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
                 Qwen3PostProcessorLogging.logVerbose("External transcript cleanup applied via \(transcriptCleanupSettings.provider.label) to \(backend.label) in \(String(format: "%.1f", elapsedMs))ms (chars=\(trimmed.count))")

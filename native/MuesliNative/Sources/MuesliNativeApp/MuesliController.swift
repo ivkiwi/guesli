@@ -1776,11 +1776,7 @@ final class MuesliController: NSObject {
 
     func setPostProcessorEnabled(_ enabled: Bool) {
         if enabled, transcriptCleanupProvider == .local {
-            guard normalizePostProcessorSelectionForAvailability() != nil else {
-                updateConfig { $0.enablePostProcessor = false }
-                appState.selectedTab = .models
-                return
-            }
+            _ = normalizePostProcessorSelectionForAvailability()
         }
         updateConfig { $0.enablePostProcessor = enabled }
         preloadExperimentalTranscriptionFeatures()
@@ -1807,12 +1803,7 @@ final class MuesliController: NSObject {
     func setTranscriptCleanupProvider(_ provider: TranscriptCleanupProviderOption) {
         updateConfig { $0.transcriptCleanupProvider = provider.rawValue }
         if provider == .local, config.enablePostProcessor {
-            guard normalizePostProcessorSelectionForAvailability() != nil else {
-                updateConfig { $0.enablePostProcessor = false }
-                appState.selectedTab = .models
-                preloadExperimentalTranscriptionFeatures()
-                return
-            }
+            _ = normalizePostProcessorSelectionForAvailability()
         }
         preloadExperimentalTranscriptionFeatures()
     }

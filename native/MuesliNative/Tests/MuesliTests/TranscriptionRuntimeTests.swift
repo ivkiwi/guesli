@@ -94,6 +94,72 @@ struct TranscriptionCoordinatorTests {
         let backends = Set(BackendOption.all.map(\.backend))
         #expect(backends == TranscriptionCoordinator.explicitlyRoutedBackendIdentifiers.union(["fluidaudio"]))
     }
+
+    @Test("routes ChatGPT dictation cleanup through external client")
+    func routesChatGPTDictationCleanupThroughExternalClient() async throws {
+        let recorder = TranscriptCleanupCallRecorder()
+        let coordinator = TranscriptionCoordinator(externalTranscriptCleanup: { text, appContext, settings in
+            await recorder.record(text: text, appContext: appContext, settings: settings)
+            return "Ship the release."
+        })
+        await coordinator.setTranscriptCleanupSettings(TranscriptCleanupSettings(
+            provider: .chatGPT,
+            systemPrompt: "Clean dictation",
+            chatGPTModel: "gpt-test"
+        ))
+
+        let result = await coordinator.postProcessDictationIfNeeded(
+            SpeechTranscriptionResult(text: "um ship the release", segments: [
+                SpeechSegment(start: 0, end: 1, text: "um ship the release"),
+            ]),
+            backend: .whisper,
+            enabled: true,
+            appContext: "Release notes"
+        )
+
+        let call = await recorder.recordedCall()
+        #expect(result?.text == "Ship the release.")
+        #expect(result?.segments.isEmpty == true)
+        #expect(call?.text == "um ship the release")
+        #expect(call?.appContext == "Release notes")
+        #expect(call?.settings.provider == .chatGPT)
+        #expect(call?.settings.systemPrompt == "Clean dictation")
+        #expect(call?.settings.chatGPTModel == "gpt-test")
+    }
+
+    @Test("falls back when external dictation cleanup fails")
+    func fallsBackWhenExternalDictationCleanupFails() async {
+        let coordinator = TranscriptionCoordinator(externalTranscriptCleanup: { _, _, _ in
+            throw TranscriptCleanupError.emptyResponse("ChatGPT (subscription)")
+        })
+        await coordinator.setTranscriptCleanupSettings(TranscriptCleanupSettings(provider: .chatGPT))
+
+        let result = await coordinator.postProcessDictationIfNeeded(
+            SpeechTranscriptionResult(text: "raw dictation", segments: []),
+            backend: .whisper,
+            enabled: true
+        )
+
+        #expect(result == nil)
+    }
+}
+
+private struct TranscriptCleanupCall: Sendable {
+    let text: String
+    let appContext: String?
+    let settings: TranscriptCleanupSettings
+}
+
+private actor TranscriptCleanupCallRecorder {
+    private var call: TranscriptCleanupCall?
+
+    func record(text: String, appContext: String?, settings: TranscriptCleanupSettings) {
+        call = TranscriptCleanupCall(text: text, appContext: appContext, settings: settings)
+    }
+
+    func recordedCall() -> TranscriptCleanupCall? {
+        call
+    }
 }
 
 @Suite("CohereTranscribeLanguage")
@@ -458,6 +524,37 @@ struct ExternalTranscriptCleanupClientTests {
         )
     }
 
+    @Test("cleans ChatGPT cleanup output through WHAM request")
+    func cleansChatGPTCleanupOutputThroughWHAMRequest() async throws {
+        let recorder = ChatGPTCleanupRequestRecorder(response: "<think>skip</think>Ship it.")
+        let cleaned = try await ExternalTranscriptCleanupClient.cleanup(
+            "um ship it",
+            appContext: "Release notes",
+            settings: TranscriptCleanupSettings(
+                provider: .chatGPT,
+                systemPrompt: "Clean dictation",
+                chatGPTModel: "gpt-test"
+            ),
+            chatGPTRequest: { systemPrompt, userPrompt, model, timeout in
+                await recorder.record(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    model: model,
+                    timeout: timeout
+                )
+                return recorder.response
+            }
+        )
+
+        let call = await recorder.recordedCall()
+        #expect(cleaned == "Ship it.")
+        #expect(call?.systemPrompt == "Clean dictation")
+        #expect(call?.userPrompt.contains("App context:\nRelease notes") == true)
+        #expect(call?.userPrompt.contains("Raw transcript:\num ship it") == true)
+        #expect(call?.model == "gpt-test")
+        #expect(call?.timeout == 120)
+    }
+
     @Test("reports missing OpenAI cleanup credentials")
     func reportsMissingOpenAICleanupCredentials() throws {
         var config = AppConfig()
@@ -490,6 +587,27 @@ struct ExternalTranscriptCleanupClientTests {
         #expect(status.message.contains("key present"))
     }
 
+    @Test("reports ChatGPT cleanup sign-in status")
+    func reportsChatGPTCleanupSignInStatus() throws {
+        let signedOut = try #require(TranscriptCleanupCredentialStatus.dictationCleanup(
+            provider: .chatGPT,
+            config: AppConfig(),
+            isChatGPTAuthenticated: false,
+            environment: [:]
+        ))
+        let signedIn = try #require(TranscriptCleanupCredentialStatus.dictationCleanup(
+            provider: .chatGPT,
+            config: AppConfig(),
+            isChatGPTAuthenticated: true,
+            environment: [:]
+        ))
+
+        #expect(signedOut.isWarning)
+        #expect(signedOut.message.contains("Sign in with ChatGPT"))
+        #expect(!signedIn.isWarning)
+        #expect(signedIn.message.contains("Signed in with ChatGPT"))
+    }
+
     @Test("warns when custom cleanup cannot use summary settings")
     func warnsWhenCustomCleanupCannotUseSummarySettings() throws {
         var config = AppConfig()
@@ -514,5 +632,34 @@ struct ExternalTranscriptCleanupClientTests {
 
         #expect(warning.contains("OpenAI transcript cleanup failed; using raw transcript"))
         #expect(warning.contains("needs an API key"))
+    }
+}
+
+private struct ChatGPTCleanupRequestCall: Sendable {
+    let systemPrompt: String
+    let userPrompt: String
+    let model: String
+    let timeout: TimeInterval
+}
+
+private actor ChatGPTCleanupRequestRecorder {
+    let response: String
+    private var call: ChatGPTCleanupRequestCall?
+
+    init(response: String) {
+        self.response = response
+    }
+
+    func record(systemPrompt: String, userPrompt: String, model: String, timeout: TimeInterval) {
+        call = ChatGPTCleanupRequestCall(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: model,
+            timeout: timeout
+        )
+    }
+
+    func recordedCall() -> ChatGPTCleanupRequestCall? {
+        call
     }
 }

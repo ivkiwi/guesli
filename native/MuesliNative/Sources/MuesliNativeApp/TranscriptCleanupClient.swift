@@ -1,8 +1,12 @@
 import Foundation
 
+typealias TranscriptCleanupRequest = @Sendable (String, String?, TranscriptCleanupSettings) async throws -> String
+typealias ChatGPTTranscriptCleanupRequest = @Sendable (String, String, String, TimeInterval) async throws -> String?
+
 struct TranscriptCleanupSettings: Equatable, Sendable {
     var provider: TranscriptCleanupProviderOption
     var systemPrompt: String
+    var chatGPTModel: String
     var openAIAPIKey: String
     var openAIModel: String
     var openRouterAPIKey: String
@@ -15,6 +19,7 @@ struct TranscriptCleanupSettings: Equatable, Sendable {
     init(
         provider: TranscriptCleanupProviderOption = .local,
         systemPrompt: String = PostProcessorOption.defaultSystemPrompt,
+        chatGPTModel: String = "",
         openAIAPIKey: String = "",
         openAIModel: String = "",
         openRouterAPIKey: String = "",
@@ -26,6 +31,7 @@ struct TranscriptCleanupSettings: Equatable, Sendable {
     ) {
         self.provider = provider
         self.systemPrompt = systemPrompt
+        self.chatGPTModel = chatGPTModel
         self.openAIAPIKey = openAIAPIKey
         self.openAIModel = openAIModel
         self.openRouterAPIKey = openRouterAPIKey
@@ -40,6 +46,7 @@ struct TranscriptCleanupSettings: Equatable, Sendable {
         self.init(
             provider: TranscriptCleanupProviderOption.resolved(config.transcriptCleanupProvider),
             systemPrompt: config.postProcessorSystemPrompt,
+            chatGPTModel: config.chatGPTModel,
             openAIAPIKey: config.openAIAPIKey,
             openAIModel: config.openAIModel,
             openRouterAPIKey: config.openRouterAPIKey,
@@ -59,11 +66,19 @@ struct TranscriptCleanupCredentialStatus: Equatable, Sendable {
     static func dictationCleanup(
         provider: TranscriptCleanupProviderOption,
         config: AppConfig,
+        isChatGPTAuthenticated: Bool = false,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Self? {
         switch provider {
         case .local:
             return nil
+        case .chatGPT:
+            return Self(
+                message: isChatGPTAuthenticated
+                    ? "Signed in with ChatGPT."
+                    : "Sign in with ChatGPT to use subscription cleanup.",
+                isWarning: !isChatGPTAuthenticated
+            )
         case .openAI:
             let hasConfiguredKey = hasValue(config.openAIAPIKey)
             let hasEnvironmentKey = hasValue(environment["OPENAI_API_KEY"] ?? "")
@@ -148,11 +163,34 @@ enum ExternalTranscriptCleanupClient {
     private static let defaultOpenRouterModel = "stepfun/step-3.5-flash:free"
     private static let defaultCustomModel = "local-model"
     private static let timeout: TimeInterval = 120
+    private static let defaultChatGPTRequest: ChatGPTTranscriptCleanupRequest = { systemPrompt, userPrompt, model, timeout in
+        try await MeetingSummaryClient.callWHAM(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: model,
+            timeout: timeout
+        )
+    }
 
-    static func cleanup(_ text: String, appContext: String?, settings: TranscriptCleanupSettings) async throws -> String {
+    static func cleanup(
+        _ text: String,
+        appContext: String?,
+        settings: TranscriptCleanupSettings,
+        chatGPTRequest: ChatGPTTranscriptCleanupRequest = defaultChatGPTRequest
+    ) async throws -> String {
         switch settings.provider {
         case .local:
             throw TranscriptCleanupError.rejectedOutput(settings.provider.label)
+        case .chatGPT:
+            guard let raw = try await chatGPTRequest(
+                settings.systemPrompt,
+                userPrompt(text: text, appContext: appContext),
+                MeetingSummaryClient.resolvedChatGPTModel(settings.chatGPTModel),
+                timeout
+            ) else {
+                throw TranscriptCleanupError.emptyResponse(settings.provider.label)
+            }
+            return try validateOutput(raw, input: text, provider: settings.provider.label)
         case .openAI:
             let apiKey = resolvedAPIKey(environmentName: "OPENAI_API_KEY", configured: settings.openAIAPIKey)
             guard !apiKey.isEmpty else { throw TranscriptCleanupError.missingAPIKey(settings.provider.label) }

@@ -605,7 +605,7 @@ struct AppConfigTests {
         config.customLLMModel = "custom-model"
         config.customLLMFormat = "anthropic"
         config.meetingSummaryRetryCount = 6
-        config.transcriptCleanupProvider = TranscriptCleanupProviderOption.openRouter.rawValue
+        config.transcriptCleanupProvider = TranscriptCleanupProviderOption.chatGPT.rawValue
         config.contributionPromptNextWordCount = 31_000
         config.contributionPromptNextMeetingCount = 75
         config.contributionGitHubStarClicked = true
@@ -664,13 +664,20 @@ struct AppConfigTests {
         #expect(decoded.customLLMModel == "custom-model")
         #expect(decoded.customLLMFormat == "anthropic")
         #expect(decoded.meetingSummaryRetryCount == 6)
-        #expect(decoded.transcriptCleanupProvider == TranscriptCleanupProviderOption.openRouter.rawValue)
+        #expect(decoded.transcriptCleanupProvider == TranscriptCleanupProviderOption.chatGPT.rawValue)
         #expect(decoded.contributionPromptNextWordCount == 31_000)
         #expect(decoded.contributionPromptNextMeetingCount == 75)
         #expect(decoded.contributionGitHubStarClicked == true)
         #expect(decoded.contributionBuyMeCoffeeClicked == false)
         #expect(decoded.upcomingMeetingsDayCount == UpcomingMeetingsWindow.today.dayCount)
         #expect(decoded.hiddenCalendarEventSourceHints == config.hiddenCalendarEventSourceHints)
+    }
+
+    @Test("transcript cleanup provider resolves ChatGPT subscription")
+    func transcriptCleanupProviderResolvesChatGPTSubscription() {
+        #expect(TranscriptCleanupProviderOption.resolved("chatgpt") == .chatGPT)
+        #expect(TranscriptCleanupProviderOption.chatGPT.rawValue == "chatgpt")
+        #expect(TranscriptCleanupProviderOption.chatGPT.label == "ChatGPT (subscription)")
     }
 
     @Test("JSON coding keys use snake_case")

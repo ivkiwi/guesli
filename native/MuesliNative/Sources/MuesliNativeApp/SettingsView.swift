@@ -118,8 +118,19 @@ struct SettingsView: View {
     private var transcriptCleanupCredentialStatus: TranscriptCleanupCredentialStatus? {
         TranscriptCleanupCredentialStatus.dictationCleanup(
             provider: selectedTranscriptCleanupProvider,
-            config: appState.config
+            config: appState.config,
+            isChatGPTAuthenticated: appState.isChatGPTAuthenticated
         )
+    }
+    private var transcriptCleanupProviderDescription: String {
+        switch selectedTranscriptCleanupProvider {
+        case .local:
+            return "Runs on the downloaded local cleanup model."
+        case .chatGPT:
+            return "Uses your ChatGPT subscription."
+        case .openAI, .openRouter, .customLLM:
+            return "External cleanup uses credentials and models from Meeting Summaries."
+        }
     }
     private let meetingDetectionAppOptions: [MeetingDetectionAppOption] = [
         MeetingDetectionAppOption(bundleID: "com.google.Chrome", name: "Chrome", icon: "globe"),
@@ -608,9 +619,7 @@ struct SettingsView: View {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow(
                         "Cleanup provider",
-                        description: selectedTranscriptCleanupProvider == .local
-                            ? "Runs on the downloaded local cleanup model."
-                            : "External cleanup uses credentials and models from Meeting Summaries."
+                        description: transcriptCleanupProviderDescription
                     ) {
                         let provider = selectedTranscriptCleanupProvider
                         settingsMenu(
@@ -628,6 +637,13 @@ struct SettingsView: View {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Cleanup credentials") {
                         transcriptCleanupStatusView(status)
+                    }
+                }
+                if appState.config.enablePostProcessor,
+                   selectedTranscriptCleanupProvider == .chatGPT {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Cleanup account") {
+                        chatGPTAccountControl
                     }
                 }
                 if appState.config.enablePostProcessor,
