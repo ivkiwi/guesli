@@ -5875,6 +5875,7 @@ final class MuesliController: NSObject {
         } ?? false
         if matchedSource {
             isMeetingSignalLossPromptSuppressed = false
+            dismissMeetingSignalLossPromptIfVisible(for: activeMeetingID)
         }
         if activeMeetingAutoStop.observe(
             candidate: candidate,
@@ -5885,6 +5886,18 @@ final class MuesliController: NSObject {
         }
     }
 
+    private func meetingSignalLossPromptID(for meetingID: Int64?) -> String {
+        meetingID.map { "meeting-signal-lost:\($0)" } ?? "meeting-signal-lost"
+    }
+
+    private func dismissMeetingSignalLossPromptIfVisible(for meetingID: Int64?) {
+        guard meetingNotification.isVisible,
+              meetingNotification.currentPromptID == meetingSignalLossPromptID(for: meetingID) else {
+            return
+        }
+        meetingNotification.close()
+    }
+
     private func presentMeetingSignalLossPromptIfNeeded() {
         guard activeMeetingSignalLossResponse != .none,
               !isMeetingSignalLossPromptSuppressed,
@@ -5892,7 +5905,7 @@ final class MuesliController: NSObject {
               !isStoppingMeetingRecording else { return }
 
         let meetingID = activeMeetingID
-        let promptID = meetingID.map { "meeting-signal-lost:\($0)" } ?? "meeting-signal-lost"
+        let promptID = meetingSignalLossPromptID(for: meetingID)
         guard meetingNotification.currentPromptID != promptID || !meetingNotification.isVisible else { return }
 
         isMeetingSignalLossPromptSuppressed = true
@@ -5906,7 +5919,8 @@ final class MuesliController: NSObject {
             // MeetingNotificationController uses onStartRecording as its generic
             // primary-action slot; here the primary action is stopping recording.
             onStartRecording: { [weak self] in
-                self?.stopMeetingRecording()
+                guard let self, self.activeMeetingID == meetingID else { return }
+                self.stopMeetingRecording()
             },
             onDismiss: { [weak self] in
                 self?.isMeetingSignalLossPromptSuppressed = true
@@ -5915,6 +5929,7 @@ final class MuesliController: NSObject {
                 guard let self else { return }
                 self.isMeetingSignalLossPromptSuppressed = true
                 guard response == .autoStopAfterWarning else { return }
+                guard self.activeMeetingID == meetingID else { return }
                 fputs("[meeting] auto-stopping recording after meeting source disappeared and warning timed out\n", stderr)
                 self.stopMeetingRecording()
             }
