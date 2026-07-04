@@ -94,6 +94,136 @@ struct MeetingSummaryClientTests {
         #expect(prompt.contains("- User typed decision"))
     }
 
+    @Test("ChatGPT WHAM parser reads top-level output text")
+    func chatGPTWHAMParserReadsTopLevelOutputText() {
+        let payload: [String: Any] = [
+            "output_text": "Cleaned dictation text",
+        ]
+
+        #expect(ChatGPTResponsesClient.extractOutputText(from: payload) == "Cleaned dictation text")
+    }
+
+    @Test("ChatGPT WHAM parser reads streaming deltas")
+    func chatGPTWHAMParserReadsStreamingDeltas() {
+        let payload: [String: Any] = [
+            "type": "response.output_text.delta",
+            "delta": "streamed text",
+        ]
+
+        #expect(ChatGPTResponsesClient.extractOutputTextDelta(from: payload) == "streamed text")
+    }
+
+    @Test("ChatGPT WHAM parser rejects malformed stream payloads")
+    func chatGPTWHAMParserRejectsMalformedStreamPayloads() {
+        #expect(throws: ChatGPTResponsesError.self) {
+            _ = try ChatGPTResponsesClient.decodeStreamPayload("{", httpStatus: 200)
+        }
+    }
+
+    @Test("ChatGPT WHAM parser ignores heartbeat stream payloads")
+    func chatGPTWHAMParserIgnoresHeartbeatPayloads() throws {
+        #expect(try ChatGPTResponsesClient.decodeStreamPayload("ping", httpStatus: 200) == nil)
+    }
+
+    @Test("ChatGPT WHAM parser ignores blank stream payloads")
+    func chatGPTWHAMParserIgnoresBlankStreamPayloads() throws {
+        #expect(try ChatGPTResponsesClient.decodeStreamPayload("   ", httpStatus: 200) == nil)
+    }
+
+    @Test("ChatGPT WHAM parser ignores valid unknown stream events")
+    func chatGPTWHAMParserIgnoresValidUnknownStreamEvents() throws {
+        var deltaText = "partial"
+        var finalText = ""
+        let decoded = try ChatGPTResponsesClient.decodeStreamPayload(
+            #"{"type":"response.created","response":{"id":"resp_1"}}"#,
+            httpStatus: 200
+        )
+        let payload = try #require(decoded)
+
+        ChatGPTResponsesClient.applyStreamPayload(
+            payload,
+            deltaText: &deltaText,
+            finalText: &finalText
+        )
+
+        #expect(deltaText == "partial")
+        #expect(finalText.isEmpty)
+    }
+
+    @Test("ChatGPT WHAM parser prefers final output over streamed deltas")
+    func chatGPTWHAMParserPrefersFinalOutputOverDeltas() {
+        var deltaText = ""
+        var finalText = ""
+
+        ChatGPTResponsesClient.applyStreamPayload(
+            [
+                "type": "response.output_text.delta",
+                "delta": "partial ",
+            ],
+            deltaText: &deltaText,
+            finalText: &finalText
+        )
+        ChatGPTResponsesClient.applyStreamPayload(
+            [
+                "type": "response.completed",
+                "response": [
+                    "output_text": "final cleaned text",
+                ],
+            ],
+            deltaText: &deltaText,
+            finalText: &finalText
+        )
+
+        #expect(deltaText == "partial ")
+        #expect(finalText == "final cleaned text")
+        #expect(ChatGPTResponsesClient.accumulatedOutputText(deltaText: deltaText, finalText: finalText) == "final cleaned text")
+    }
+
+    @Test("ChatGPT WHAM parser reads nested final response payload")
+    func chatGPTWHAMParserReadsNestedFinalResponsePayload() {
+        let payload: [String: Any] = [
+            "type": "response.completed",
+            "response": [
+                "output": [
+                    [
+                        "content": [
+                            [
+                                "type": "output_text",
+                                "text": [
+                                    "value": "Nested final response text",
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ]
+
+        #expect(ChatGPTResponsesClient.extractOutputText(from: payload) == "Nested final response text")
+    }
+
+    @Test("ChatGPT WHAM parser reads output content text")
+    func chatGPTWHAMParserReadsOutputContentText() {
+        let payload: [String: Any] = [
+            "output": [
+                [
+                    "content": [
+                        [
+                            "type": "output_text",
+                            "text": "Part one ",
+                        ],
+                        [
+                            "type": "output_text",
+                            "text": "part two",
+                        ],
+                    ],
+                ],
+            ],
+        ]
+
+        #expect(ChatGPTResponsesClient.extractOutputText(from: payload) == "Part one part two")
+    }
+
     @Test("final notes retain manual notes verbatim")
     func finalNotesRetainManualNotesVerbatim() {
         let result = MeetingSummaryClient.notesByRetainingManualNotes(
