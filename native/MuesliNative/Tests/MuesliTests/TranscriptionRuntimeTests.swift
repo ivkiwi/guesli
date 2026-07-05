@@ -450,6 +450,38 @@ struct Qwen3PostProcessingOutputCleanerTests {
         #expect(Qwen3PostProcessorOutputCleaner.clean(raw) == "First point is ship it")
     }
 
+    @Test("adds sentence-final period after terminal letters and digits")
+    func addsSentenceFinalPeriodAfterLettersAndDigits() {
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("что в итоге получается") == "что в итоге получается.")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("не который MLX") == "не который MLX.")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("Release 42") == "Release 42.")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("single") == "single.")
+    }
+
+    @Test("preserves punctuation emoji and empty strings")
+    func preservesTerminalPunctuationEmojiAndEmptyStrings() {
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("") == "")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done.") == "done.")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done?") == "done?")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done!") == "done!")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done…") == "done…")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done,") == "done,")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done:") == "done:")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done;") == "done;")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done-") == "done-")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done🙂") == "done🙂")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done 1️⃣") == "done 1️⃣")
+    }
+
+    @Test("handles trailing whitespace and closing quotes")
+    func handlesTrailingWhitespaceAndClosingQuotes() {
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("done   ") == "done.   ")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("«так.»") == "«так.»")
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("\"so.\"") == "\"so.\"")
+        // Closing quote after a word gets an outside period; moving it inside would rewrite dictated text.
+        #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("\"so\"") == "\"so\".")
+    }
+
     @Test("rejects assistant-style analysis output")
     func rejectsAssistantStyleAnalysisOutput() {
         let cleaned = """
