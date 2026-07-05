@@ -165,7 +165,7 @@ enum MeetingSummaryClient {
                     throw error
                 }
                 attempt += 1
-                fputs("[summary] retrying summary generation after failure (\(attempt)/\(retryCount)): \(error.localizedDescription)\n", stderr)
+                DiagnosticsLog.write("[summary] retrying summary generation after failure (\(attempt)/\(retryCount)): \(error.localizedDescription)")
                 try await sleep(MeetingSummaryRetryPolicy.retryDelay(forAttempt: attempt))
             }
         }
@@ -299,7 +299,7 @@ enum MeetingSummaryClient {
         var prompt = "Meeting title: \(meetingTitle)\n\n"
         let visualContextCharCount = visualContext?.trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0
         logger.info("summary prompt visualContextIncluded=\(visualContextCharCount > 0) visualContextChars=\(visualContextCharCount)")
-        fputs("[summary] prompt visualContextIncluded=\(visualContextCharCount > 0) visualContextChars=\(visualContextCharCount)\n", stderr)
+        DiagnosticsLog.write("[summary] prompt visualContextIncluded=\(visualContextCharCount > 0) visualContextChars=\(visualContextCharCount)")
 
         if let visualContext, !visualContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             prompt += "Meeting context captured during the meeting:\n\(visualContext)\n---\n\n"
@@ -632,7 +632,7 @@ enum MeetingSummaryClient {
             }
             throw MeetingSummaryError.emptyResponse(backend: "ChatGPT")
         } catch {
-            fputs("[summary] ChatGPT summarization failed: \(error)\n", stderr)
+            DiagnosticsLog.write("[summary] ChatGPT summarization failed: \(error.localizedDescription)")
             throw summaryRequestError(backend: "ChatGPT", error: error)
         }
     }
@@ -1021,7 +1021,7 @@ enum MeetingSummaryClient {
             var errorData = Data()
             for try await byte in bytes { errorData.append(byte) }
             let message = extractErrorMessage(from: errorData) ?? String(data: errorData, encoding: .utf8) ?? "(unknown)"
-            fputs("[summary] ChatGPT WHAM: HTTP \(httpStatus): \(String(message.prefix(500)))\n", stderr)
+            DiagnosticsLog.write("[summary] ChatGPT WHAM: HTTP \(httpStatus): \(String(message.prefix(500)))")
             throw MeetingSummaryError.backendFailed(backend: "ChatGPT", statusCode: httpStatus, message: message)
         }
 
@@ -1046,7 +1046,7 @@ enum MeetingSummaryClient {
             }
         }
 
-        fputs("[summary] ChatGPT WHAM: collected \(fullText.count) chars\n", stderr)
+        DiagnosticsLog.write("[summary] ChatGPT WHAM: collected \(fullText.count) chars")
         return fullText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -1321,11 +1321,11 @@ enum MeetingSummaryClient {
         do {
             let (data, _) = try await URLSession.shared.data(for: request)
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                fputs("[summary] title generation: invalid JSON response\n", stderr)
+                DiagnosticsLog.write("[summary] title generation: invalid JSON response")
                 return nil
             }
             if let error = json["error"] as? [String: Any] {
-                fputs("[summary] title generation error: \(error["message"] ?? error)\n", stderr)
+                DiagnosticsLog.write("[summary] title generation error: \(error["message"] ?? error)")
                 return nil
             }
             // Try chat completions format first, then responses API format
@@ -1335,12 +1335,13 @@ enum MeetingSummaryClient {
                 let choices = json["choices"] as? [[String: Any]] ?? []
                 let firstChoice = choices.first ?? [:]
                 let message = firstChoice["message"] as? [String: Any] ?? [:]
-                fputs("[summary] title generation: nil. message keys: \(message.keys.sorted()), content type: \(type(of: message["content"] as Any)), content: \(String(describing: message["content"]).prefix(300))\n", stderr)
+                let contentChars = String(describing: message["content"]).count
+                DiagnosticsLog.write("[summary] title generation: nil. message keys: \(message.keys.sorted()), content type: \(type(of: message["content"] as Any)), contentChars=\(contentChars)")
             }
-            fputs("[summary] generated title: \(result ?? "(nil)")\n", stderr)
+            DiagnosticsLog.write("[summary] generated title chars=\(result?.count ?? 0)")
             return result
         } catch {
-            fputs("[summary] title generation failed: \(error)\n", stderr)
+            DiagnosticsLog.write("[summary] title generation failed: \(error.localizedDescription)")
             return nil
         }
     }
@@ -1379,13 +1380,13 @@ enum MeetingSummaryClient {
             let (data, response) = try await URLSession.shared.data(for: request)
             try validateHTTPResponse(response, data: data, backend: "Custom LLM")
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                fputs("[summary] Anthropic title generation: invalid JSON response\n", stderr)
+                DiagnosticsLog.write("[summary] Anthropic title generation: invalid JSON response")
                 return nil
             }
             return extractAnthropicText(from: json)?
                 .trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: "\"")))
         } catch {
-            fputs("[summary] Anthropic title generation failed: \(error)\n", stderr)
+            DiagnosticsLog.write("[summary] Anthropic title generation failed: \(error.localizedDescription)")
             return nil
         }
     }
@@ -1399,22 +1400,22 @@ enum MeetingSummaryClient {
                 model: model
             )
             let title = result?.trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: "\"")))
-            fputs("[summary] ChatGPT generated title: \(title ?? "(nil)")\n", stderr)
+            DiagnosticsLog.write("[summary] ChatGPT generated title chars=\(title?.count ?? 0)")
             return title
         } catch {
-            fputs("[summary] ChatGPT title generation failed: \(error)\n", stderr)
+            DiagnosticsLog.write("[summary] ChatGPT title generation failed: \(error.localizedDescription)")
             return nil
         }
     }
 
     private static func generateTitleWithLMStudio(transcript: String, config: AppConfig) async -> String? {
         guard let requestURL = resolveLMStudioURL(config: config) else {
-            fputs("[summary] LM Studio title generation: invalid URL \(config.lmStudioURL)\n", stderr)
+            DiagnosticsLog.write("[summary] LM Studio title generation: invalid URL \(config.lmStudioURL)")
             return nil
         }
         let model = config.lmStudioModel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !model.isEmpty else {
-            fputs("[summary] LM Studio title generation: no model selected\n", stderr)
+            DiagnosticsLog.write("[summary] LM Studio title generation: no model selected")
             return nil
         }
         return await callChatCompletions(
@@ -1435,11 +1436,11 @@ enum MeetingSummaryClient {
         let apiKey = config.customLLMAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let configuredModel = config.customLLMModel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !configuredModel.isEmpty else {
-            fputs("[summary] Custom LLM title generation: no model selected\n", stderr)
+            DiagnosticsLog.write("[summary] Custom LLM title generation: no model selected")
             return nil
         }
         if customLLMRequiresAPIKey(config: config) && apiKey.isEmpty {
-            fputs("[summary] Custom LLM title generation: no API key configured\n", stderr)
+            DiagnosticsLog.write("[summary] Custom LLM title generation: no API key configured")
             return nil
         }
 
@@ -1475,7 +1476,7 @@ enum MeetingSummaryClient {
             baseURL = defaultOllamaBaseURL
         } else {
             guard let url = URL(string: baseURLString) else {
-                fputs("[summary] Ollama title generation: invalid URL \(baseURLString)\n", stderr)
+                DiagnosticsLog.write("[summary] Ollama title generation: invalid URL \(baseURLString)")
                 return nil
             }
             baseURL = url
@@ -1507,21 +1508,21 @@ enum MeetingSummaryClient {
                   let message = json["message"] as? [String: Any],
                   let content = message["content"] as? String,
                   !content.isEmpty else {
-                fputs("[summary] Ollama title generation: empty or invalid response\n", stderr)
+                DiagnosticsLog.write("[summary] Ollama title generation: empty or invalid response")
                 return nil
             }
             let title = content.trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: "\"")))
             guard !title.isEmpty else {
-                fputs("[summary] Ollama title generation: trimmed response is empty\n", stderr)
+                DiagnosticsLog.write("[summary] Ollama title generation: trimmed response is empty")
                 return nil
             }
-            fputs("[summary] Ollama generated title: \(title)\n", stderr)
+            DiagnosticsLog.write("[summary] Ollama generated title chars=\(title.count)")
             return title
         } catch let error as MeetingSummaryError {
-            fputs("[summary] Ollama title generation failed: \(error.localizedDescription)\n", stderr)
+            DiagnosticsLog.write("[summary] Ollama title generation failed: \(error.localizedDescription)")
             return nil
         } catch {
-            fputs("[summary] Ollama title generation failed: \(error)\n", stderr)
+            DiagnosticsLog.write("[summary] Ollama title generation failed: \(error.localizedDescription)")
             return nil
         }
     }

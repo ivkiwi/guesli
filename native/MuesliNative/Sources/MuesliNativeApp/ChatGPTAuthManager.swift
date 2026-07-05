@@ -61,7 +61,7 @@ final class ChatGPTAuthManager {
         let code = try await startCallbackServerAndOpenBrowser(codeChallenge: challenge)
         let tokens = try await exchangeCodeForTokens(code: code, codeVerifier: verifier)
         saveTokens(tokens, reason: "save")
-        fputs("[chatgpt-auth] signed in successfully\n", stderr)
+        DiagnosticsLog.write("[chatgpt-auth] signed in successfully")
     }
 
     func signOut() {
@@ -70,7 +70,7 @@ final class ChatGPTAuthManager {
         for account in ["access_token", "refresh_token", "expires_at", "account_id"] {
             keychainDeleteLegacy(account: account)
         }
-        fputs("[chatgpt-auth] signed out\n", stderr)
+        DiagnosticsLog.write("[chatgpt-auth] signed out")
     }
 
     func validAccessToken() async throws -> (token: String, accountId: String) {
@@ -87,7 +87,7 @@ final class ChatGPTAuthManager {
                 return (accessToken, accountId)
             }
             // Token expired or about to expire — refresh
-            fputs("[chatgpt-auth] token expired, refreshing...\n", stderr)
+            DiagnosticsLog.write("[chatgpt-auth] token expired, refreshing...")
             guard let refreshToken = tokenRead(key: "refresh_token") else {
                 throw ChatGPTAuthError.notAuthenticated
             }
@@ -192,7 +192,7 @@ final class ChatGPTAuthManager {
 
                     // Validate state before sending success page to prevent CSRF
                     guard callbackState == expectedState else {
-                        fputs("[chatgpt-auth] OAuth state mismatch — possible CSRF\n", stderr)
+                        DiagnosticsLog.write("[chatgpt-auth] OAuth state mismatch — possible CSRF")
                         let errorHtml = """
                         HTTP/1.1 400 Bad Request\r
                         Content-Type: text/html\r
@@ -393,7 +393,7 @@ final class ChatGPTAuthManager {
         do {
             try tokenStore.save(dict, reason: reason)
         } catch {
-            fputs("[chatgpt-auth] failed to save tokens reason=\(reason) error=\(error)\n", stderr)
+            DiagnosticsLog.write("[chatgpt-auth] failed to save tokens reason=\(reason) error=\(error.localizedDescription)")
         }
     }
 
@@ -438,7 +438,7 @@ final class ChatGPTAuthManager {
         for account in ["access_token", "refresh_token", "expires_at", "account_id"] {
             keychainDeleteLegacy(account: account)
         }
-        fputs("[chatgpt-auth] migrated tokens from keychain to file reason=migrate\n", stderr)
+        DiagnosticsLog.write("[chatgpt-auth] migrated tokens from keychain to file reason=migrate")
     }
 
     private func keychainReadLegacy(account: String) -> String? {

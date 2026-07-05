@@ -839,7 +839,7 @@ struct ModelsView: View {
                 }
                 let isCancelled = error is CancellationError || (error as? URLError)?.code == .cancelled
                 if !isCancelled {
-                    fputs("[muesli-native] Post-processor download failed: \(error)\n", stderr)
+                    DiagnosticsLog.write("[muesli-native] Post-processor download failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -1011,7 +1011,7 @@ struct ModelsView: View {
                     }
                 }
                 if !(error is CancellationError) {
-                    fputs("[muesli-native] model download failed for \(option.backend)/\(option.model): \(error)\n", stderr)
+                    DiagnosticsLog.write("[muesli-native] model download failed for \(option.backend)/\(option.model): \(error.localizedDescription)")
                 }
             }
         }
@@ -1040,7 +1040,7 @@ struct ModelsView: View {
                     startDownload(option)
                 }
             } catch {
-                fputs("[muesli-native] model update cleanup failed for \(option.backend)/\(option.model): \(error)\n", stderr)
+                DiagnosticsLog.write("[muesli-native] model update cleanup failed for \(option.backend)/\(option.model): \(error.localizedDescription)")
             }
         }
     }
@@ -1065,7 +1065,7 @@ struct ModelsView: View {
                     _ = downloadedModels.remove(option.model)
                 }
             } catch {
-                fputs("[muesli-native] model delete failed for \(option.backend)/\(option.model): \(error)\n", stderr)
+                DiagnosticsLog.write("[muesli-native] model delete failed for \(option.backend)/\(option.model): \(error.localizedDescription)")
             }
         }
     }
