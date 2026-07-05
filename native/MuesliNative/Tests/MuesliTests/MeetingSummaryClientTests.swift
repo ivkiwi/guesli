@@ -94,6 +94,69 @@ struct MeetingSummaryClientTests {
         #expect(prompt.contains("- User typed decision"))
     }
 
+    @Test("summary transcript passes through under budget")
+    func summaryTranscriptPassesThroughUnderBudget() {
+        let transcript = "Opening\nMiddle\nClosing"
+
+        let bounded = MeetingSummaryClient.summaryTranscriptForPrompt(
+            transcript,
+            maxCharacters: transcript.count + 10
+        )
+
+        #expect(bounded == transcript)
+    }
+
+    @Test("summary transcript passes through at exact budget")
+    func summaryTranscriptPassesThroughAtExactBudget() {
+        let transcript = String(repeating: "x", count: 80)
+
+        let bounded = MeetingSummaryClient.summaryTranscriptForPrompt(
+            transcript,
+            maxCharacters: transcript.count
+        )
+
+        #expect(bounded == transcript)
+    }
+
+    @Test("summary transcript keeps head tail and marker over budget")
+    func summaryTranscriptKeepsHeadTailAndMarkerOverBudget() {
+        let transcript = "OPENING-" + String(repeating: "a", count: 120)
+            + "MIDDLE-" + String(repeating: "b", count: 120) + "-CLOSING"
+
+        let bounded = MeetingSummaryClient.summaryTranscriptForPrompt(
+            transcript,
+            maxCharacters: 120
+        )
+
+        #expect(bounded.count <= 120)
+        #expect(bounded.hasPrefix("OPENING-"))
+        #expect(bounded.contains("[... transcript truncated:"))
+        #expect(bounded.contains("characters omitted ...]"))
+        #expect(!bounded.contains("MIDDLE-"))
+        #expect(bounded.hasSuffix("-CLOSING"))
+    }
+
+    @Test("summary transcript marker contains omitted count")
+    func summaryTranscriptMarkerContainsOmittedCount() throws {
+        let transcript = "OPENING-" + String(repeating: "a", count: 120)
+            + "MIDDLE-" + String(repeating: "b", count: 120) + "-CLOSING"
+
+        let bounded = MeetingSummaryClient.summaryTranscriptForPrompt(
+            transcript,
+            maxCharacters: 120
+        )
+        let markerLine = try #require(
+            bounded.split(separator: "\n").first { $0.contains("characters omitted") }
+        )
+        let omittedText = String(markerLine)
+            .components(separatedBy: CharacterSet.decimalDigits.inverted)
+            .joined()
+        let omittedCount = try #require(Int(omittedText))
+        let marker = "\n\n\(markerLine)\n\n"
+
+        #expect(omittedCount == transcript.count - (bounded.count - marker.count))
+    }
+
     @Test("ChatGPT WHAM parser reads top-level output text")
     func chatGPTWHAMParserReadsTopLevelOutputText() {
         let payload: [String: Any] = [

@@ -135,6 +135,7 @@ enum MeetingSummaryClient {
     private static let lmStudioTitleTimeout: TimeInterval = 120
     private static let customLLMSummaryTimeout: TimeInterval = 300
     private static let customLLMTitleTimeout: TimeInterval = 120
+    private static let summaryTranscriptCharacterLimit = 24_000
 
     private static let titleInstructions = """
     Generate a short, descriptive meeting title (3-7 words) from these transcript excerpts. \
@@ -343,8 +344,42 @@ enum MeetingSummaryClient {
             prompt += "Protected written notes typed by the user during the meeting. Preserve these verbatim and place them where they belong in the summary:\n\(trimmedManualNotes)\n\n"
         }
 
-        prompt += "Raw transcript:\n\(transcript)"
+        prompt += "Raw transcript:\n\(summaryTranscriptForPrompt(transcript))"
         return prompt
+    }
+
+    static func summaryTranscriptForPrompt(
+        _ transcript: String,
+        maxCharacters: Int = summaryTranscriptCharacterLimit
+    ) -> String {
+        guard maxCharacters > 0 else { return "" }
+        guard transcript.count > maxCharacters else { return transcript }
+
+        var omittedCount = transcript.count
+        var marker = summaryTranscriptTruncationMarker(omittedCount: omittedCount)
+        var contentBudget = maxCharacters - marker.count
+
+        while contentBudget > 0 {
+            let nextOmittedCount = transcript.count - contentBudget
+            guard nextOmittedCount != omittedCount else { break }
+            omittedCount = nextOmittedCount
+            marker = summaryTranscriptTruncationMarker(omittedCount: omittedCount)
+            contentBudget = maxCharacters - marker.count
+        }
+
+        guard contentBudget > 0 else {
+            return String(marker.prefix(maxCharacters))
+        }
+
+        let openingCharacters = contentBudget / 2
+        let closingCharacters = contentBudget - openingCharacters
+        return String(transcript.prefix(openingCharacters))
+            + marker
+            + String(transcript.suffix(closingCharacters))
+    }
+
+    private static func summaryTranscriptTruncationMarker(omittedCount: Int) -> String {
+        "\n\n[... transcript truncated: \(omittedCount) characters omitted ...]\n\n"
     }
 
     static func notesByRetainingManualNotes(generatedNotes: String, manualNotes: String?) -> String {
