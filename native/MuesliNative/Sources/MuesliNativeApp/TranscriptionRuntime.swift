@@ -2,6 +2,29 @@ import FluidAudio
 import Foundation
 import MuesliCore
 
+enum DictationFinalPunctuationGuard {
+    private static let closingDelimiters: Set<Character> = [
+        "\"", "'", "”", "’", "»", "›", ")", "]", "}", "）", "】", "」", "』", "》", "〉",
+    ]
+
+    static func apply(_ text: String) -> String {
+        guard let lastContentIndex = text.lastIndex(where: { !$0.isWhitespace }) else { return text }
+
+        var inspectedIndex = lastContentIndex
+        while closingDelimiters.contains(text[inspectedIndex]) {
+            guard inspectedIndex != text.startIndex else { return text }
+            inspectedIndex = text.index(before: inspectedIndex)
+        }
+
+        let terminal = text[inspectedIndex]
+        guard terminal.isLetter || terminal.isNumber else { return text }
+
+        var result = text
+        result.insert(".", at: result.index(after: lastContentIndex))
+        return result
+    }
+}
+
 struct SpeechSegment: Sendable {
     let start: Double
     let end: Double
@@ -370,7 +393,11 @@ actor TranscriptionCoordinator {
             postProcessorSnapshot: postProcessorSnapshot,
             appContext: appContext
         ) ?? removeFillersWithLogging(result)
-        let final = applyCustomWords(result, customWords: customWords)
+        let corrected = applyCustomWords(result, customWords: customWords)
+        let final = SpeechTranscriptionResult(
+            text: DictationFinalPunctuationGuard.apply(corrected.text),
+            segments: corrected.segments
+        )
         if !final.text.isEmpty {
             Qwen3PostProcessorLogging.logVerbose("Dictation final transcript: \(final.text)")
         }

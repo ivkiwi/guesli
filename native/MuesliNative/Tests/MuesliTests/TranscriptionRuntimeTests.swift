@@ -39,6 +39,39 @@ struct SpeechTranscriptionResultTests {
     }
 }
 
+@Suite("DictationFinalPunctuationGuard")
+struct DictationFinalPunctuationGuardTests {
+
+    @Test("adds period after terminal letters and digits")
+    func addsPeriodAfterLettersAndDigits() {
+        #expect(DictationFinalPunctuationGuard.apply("hello") == "hello.")
+        #expect(DictationFinalPunctuationGuard.apply("что дальше") == "что дальше.")
+        #expect(DictationFinalPunctuationGuard.apply("今日は晴れ") == "今日は晴れ.")
+        #expect(DictationFinalPunctuationGuard.apply("Release 42") == "Release 42.")
+    }
+
+    @Test("preserves existing terminal punctuation and empty strings")
+    func preservesTerminalPunctuationAndEmptyStrings() {
+        #expect(DictationFinalPunctuationGuard.apply("") == "")
+        #expect(DictationFinalPunctuationGuard.apply("done.") == "done.")
+        #expect(DictationFinalPunctuationGuard.apply("done?") == "done?")
+        #expect(DictationFinalPunctuationGuard.apply("done!") == "done!")
+        #expect(DictationFinalPunctuationGuard.apply("done…") == "done…")
+        #expect(DictationFinalPunctuationGuard.apply("done,") == "done,")
+        #expect(DictationFinalPunctuationGuard.apply("done:") == "done:")
+        #expect(DictationFinalPunctuationGuard.apply("done;") == "done;")
+    }
+
+    @Test("handles trailing whitespace and closing delimiters")
+    func handlesTrailingWhitespaceAndClosingDelimiters() {
+        #expect(DictationFinalPunctuationGuard.apply("done  \n") == "done.  \n")
+        #expect(DictationFinalPunctuationGuard.apply("\"done.\"") == "\"done.\"")
+        #expect(DictationFinalPunctuationGuard.apply("(done.)") == "(done.)")
+        // Closing quote after a word gets an outside period; moving it inside would rewrite dictated text.
+        #expect(DictationFinalPunctuationGuard.apply("\"done\"") == "\"done\".")
+    }
+}
+
 @Suite("Qwen3 inference gate")
 struct Qwen3InferenceGateTests {
 
