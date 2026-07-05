@@ -329,6 +329,45 @@ struct MeetingChunkCollectorTests {
         #expect(retired == nil)
     }
 
+    @Test("collector treats unknown retire IDs as stale callbacks")
+    func collectorTreatsUnknownRetireIDsAsStaleCallbacks() {
+        let collector = MeetingChunkCollector()
+        let firstTask = Task { [SpeechSegment(start: 1, end: 2, text: "first")] }
+        let secondTask = Task { [SpeechSegment(start: 2, end: 3, text: "second")] }
+        let first = collector.add(firstTask)
+        let second = collector.add(secondTask)
+        firstTask.cancel()
+        secondTask.cancel()
+
+        let blocked = collector.retire(id: second.retireID, segments: [SpeechSegment(start: 2, end: 3, text: "second")])
+        let stale = collector.retire(id: UUID(), segments: [SpeechSegment(start: 0, end: 1, text: "stale")])
+        let ready = collector.retire(id: first.retireID, segments: [SpeechSegment(start: 1, end: 2, text: "first")])
+
+        #expect(first.registered)
+        #expect(second.registered)
+        #expect(blocked?.isEmpty == true)
+        #expect(stale == nil)
+        #expect(ready?.map { $0.map(\.text) } == [["first"], ["second"]])
+    }
+
+    @Test("collector retire returns nil after cancel closes collector")
+    func collectorRetireReturnsNilAfterCancel() async {
+        let collector = MeetingChunkCollector()
+        let task = Task<[SpeechSegment], Never> {
+            while !Task.isCancelled {
+                await Task.yield()
+            }
+            return [SpeechSegment(start: 1, end: 2, text: "first")]
+        }
+        let registration = collector.add(task)
+        #expect(registration.registered)
+
+        collector.cancelAll()
+        let retired = collector.retire(id: registration.retireID, segments: await task.value)
+
+        #expect(retired == nil)
+    }
+
     @Test("collector flattens timed segments from a single chunk and sorts them")
     func collectorFlattensChunkSegments() async {
         let collector = MeetingChunkCollector()
