@@ -1,6 +1,7 @@
 @preconcurrency import CoreML
 import FluidAudio
 import Foundation
+import MuesliCore
 
 struct GigaAMV3TranscriptionResult: Sendable {
     let text: String
@@ -62,9 +63,9 @@ enum GigaAMV3FileChunking {
 
     private static func suffixPrefixOverlap(_ left: [String], _ right: [String]) -> Int {
         let limit = min(40, left.count, right.count)
-        guard limit >= 2 else { return 0 }
+        guard limit >= 1 else { return 0 }
 
-        for count in stride(from: limit, through: 2, by: -1) {
+        for count in stride(from: limit, through: 1, by: -1) {
             let leftSuffix = left.suffix(count).map(normalizedWord)
             let rightPrefix = right.prefix(count).map(normalizedWord)
             if !leftSuffix.contains(""), leftSuffix == rightPrefix {
@@ -137,7 +138,10 @@ enum GigaAMV3ModelStore {
     ]
 
     static func cacheDirectory(fileManager: FileManager = .default) -> URL {
-        AppIdentity.supportDirectoryURL.appendingPathComponent(cacheRelativePath, isDirectory: true)
+        MuesliPaths.defaultSupportDirectoryURL(
+            appName: AppIdentity.supportDirectoryName,
+            fileManager: fileManager
+        ).appendingPathComponent(cacheRelativePath, isDirectory: true)
     }
 
     static func isAvailableLocally(fileManager: FileManager = .default) -> Bool {

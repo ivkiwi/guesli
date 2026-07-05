@@ -228,6 +228,21 @@ struct GigaAMV3FileChunkingTests {
 
         #expect(result == "alpha beta gamma delta epsilon zeta eta theta iota")
     }
+
+    @Test("merge deduplicates single word overlap")
+    func mergeDeduplicatesSingleWordOverlap() {
+        let result = GigaAMV3FileChunking.mergeTranscripts([
+            "alpha beta",
+            "beta gamma",
+        ])
+
+        #expect(result == "alpha beta gamma")
+    }
+
+    @Test("gigaam cache path stays under app support")
+    func gigaAMCachePath() {
+        #expect(GigaAMV3ModelStore.cacheDirectory().path.hasSuffix("Library/Application Support/Muesli/Models/gigaam-v3-coreml"))
+    }
 }
 
 @Suite("TranscriptionEngineArtifactsFilter")

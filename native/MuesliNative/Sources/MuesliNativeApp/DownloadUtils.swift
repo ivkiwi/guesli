@@ -83,7 +83,11 @@ private func downloadTemporaryFile(
     let invalidator = DownloadSessionInvalidator()
     do {
         let result = try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(URL, URLResponse), Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
                 delegate.setContinuation(continuation)
                 progressSession.downloadTask(with: url).resume()
             }
