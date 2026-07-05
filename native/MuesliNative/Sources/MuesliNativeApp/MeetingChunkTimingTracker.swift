@@ -29,14 +29,15 @@ struct MeetingChunkTimingTracker: Sendable {
         currentChunkSampleCount += Int64(sampleCount)
     }
 
-    mutating func rotate() -> MeetingChunkTimingSnapshot? {
+    mutating func rotate(overlapSampleCount: Int = 0) -> MeetingChunkTimingSnapshot? {
         guard let currentChunkStartSampleIndex else { return nil }
         let snapshot = MeetingChunkTimingSnapshot(
             startSampleIndex: currentChunkStartSampleIndex,
             sampleCount: currentChunkSampleCount
         )
-        self.currentChunkStartSampleIndex = currentChunkStartSampleIndex + currentChunkSampleCount
-        currentChunkSampleCount = 0
+        let carriedSamples = min(max(Int64(overlapSampleCount), 0), currentChunkSampleCount)
+        self.currentChunkStartSampleIndex = currentChunkStartSampleIndex + currentChunkSampleCount - carriedSamples
+        currentChunkSampleCount = carriedSamples
         return snapshot
     }
 

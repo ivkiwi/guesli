@@ -297,8 +297,8 @@ struct MeetingChunkCollectorTests {
         lateTask.cancel()
     }
 
-    @Test("collector retire returns false after drain closes collector")
-    func collectorRetireReturnsFalseAfterDrain() async {
+    @Test("collector retire returns nil after drain closes collector")
+    func collectorRetireReturnsNilAfterDrain() async {
         let collector = MeetingChunkCollector()
         let task = Task<[SpeechSegment], Never> {
             try? await Task.sleep(for: .milliseconds(10))
@@ -311,7 +311,7 @@ struct MeetingChunkCollectorTests {
         let retired = collector.retire(id: registration.retireID, segments: await task.value)
 
         #expect(drained.map(\.text) == ["first"])
-        #expect(retired == false)
+        #expect(retired == nil)
     }
 
     @Test("collector flattens timed segments from a single chunk and sorts them")
@@ -356,5 +356,21 @@ struct MeetingChunkTimingTrackerTests {
         #expect(second?.sampleCount == 800)
         #expect(second?.startTimeSeconds == 0.1)
         #expect(second?.durationSeconds == 0.05)
+    }
+
+    @Test("tracks overlap as the next chunk start")
+    func tracksOverlapAsNextChunkStart() {
+        var tracker = MeetingChunkTimingTracker()
+        tracker.start()
+        tracker.append(sampleCount: 1600)
+
+        let first = tracker.rotate(overlapSampleCount: 400)
+        tracker.append(sampleCount: 800)
+        let second = tracker.finish()
+
+        #expect(first?.startSampleIndex == 0)
+        #expect(first?.sampleCount == 1600)
+        #expect(second?.startSampleIndex == 1200)
+        #expect(second?.sampleCount == 1200)
     }
 }

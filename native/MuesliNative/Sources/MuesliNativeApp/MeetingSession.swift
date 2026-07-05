@@ -7,6 +7,7 @@ import os
 final class MeetingChunkCollector {
     private struct PendingTask {
         let id: UUID
+        let sequence: Int
         let task: Task<[SpeechSegment], Never>
     }
 
@@ -16,6 +17,9 @@ final class MeetingChunkCollector {
         // accumulate for the full meeting duration.
         var pendingTasks: [PendingTask] = []
         var completedSegments: [SpeechSegment] = []
+        var nextSequence = 0
+        var nextLiveSequenceToEmit = 0
+        var completedLiveChunks: [Int: [SpeechSegment]] = [:]
         var isClosed = false
     }
 
@@ -27,7 +31,9 @@ final class MeetingChunkCollector {
         let id = UUID()
         let registered = lock.withLock { state in
             guard !state.isClosed else { return false }
-            state.pendingTasks.append(PendingTask(id: id, task: task))
+            let sequence = state.nextSequence
+            state.nextSequence += 1
+            state.pendingTasks.append(PendingTask(id: id, sequence: sequence, task: task))
             return true
         }
         return (registered, id)
@@ -35,12 +41,22 @@ final class MeetingChunkCollector {
 
     /// Move a completed task's result into the collector and drop the Task reference.
     /// Must be called from the watcher Task after awaiting the transcription task's value.
-    func retire(id: UUID, segments: [SpeechSegment]) -> Bool {
+    func retire(id: UUID, segments: [SpeechSegment]) -> [[SpeechSegment]]? {
         lock.withLock { state in
-            guard !state.isClosed else { return false }
+            guard !state.isClosed else { return nil }
+            guard let pending = state.pendingTasks.first(where: { $0.id == id }) else {
+                return []
+            }
             state.completedSegments.append(contentsOf: segments)
             state.pendingTasks.removeAll { $0.id == id }
-            return true
+            state.completedLiveChunks[pending.sequence] = segments
+
+            var readyChunks: [[SpeechSegment]] = []
+            while let ready = state.completedLiveChunks.removeValue(forKey: state.nextLiveSequenceToEmit) {
+                readyChunks.append(ready)
+                state.nextLiveSequenceToEmit += 1
+            }
+            return readyChunks
         }
     }
 
@@ -51,6 +67,7 @@ final class MeetingChunkCollector {
             let completed = state.completedSegments
             state.pendingTasks.removeAll()
             state.completedSegments.removeAll()
+            state.completedLiveChunks.removeAll()
             return (tasks, completed)
         }
 
@@ -73,6 +90,7 @@ final class MeetingChunkCollector {
             let tasks = state.pendingTasks.map { $0.task }
             state.pendingTasks.removeAll()
             state.completedSegments.removeAll()
+            state.completedLiveChunks.removeAll()
             return tasks
         }
         tasksToCancel.forEach { $0.cancel() }
@@ -136,6 +154,43 @@ private enum MeetingTranscriptRecoveryResult {
     case replace([SpeechSegment])
 }
 
+struct LiveMeetingChunkingConfiguration: Equatable, Sendable {
+    static let defaultSampleRate = 16_000
+
+    let minChunkDuration: TimeInterval
+    let maxChunkDuration: TimeInterval
+    let overlapSampleCount: Int
+    let deduplicatesText: Bool
+
+    static func configuration(for backend: BackendOption) -> LiveMeetingChunkingConfiguration {
+        if backend.backend == BackendOption.gigaAMV3Russian.backend {
+            return LiveMeetingChunkingConfiguration(
+                minChunkDuration: 3.0,
+                maxChunkDuration: 20.0,
+                overlapSampleCount: 2 * defaultSampleRate,
+                deduplicatesText: true
+            )
+        }
+
+        return LiveMeetingChunkingConfiguration(
+            minChunkDuration: 3.0,
+            maxChunkDuration: 5.0,
+            overlapSampleCount: 0,
+            deduplicatesText: false
+        )
+    }
+}
+
+private enum LiveMeetingTrack {
+    case mic
+    case system
+}
+
+private struct LiveMeetingOverlapState {
+    var micText = ""
+    var systemText = ""
+}
+
 final class MeetingSession {
     private static let logger = Logger(subsystem: "com.muesli.native", category: "MeetingSession")
 
@@ -144,6 +199,7 @@ final class MeetingSession {
     private let backendLock = OSAllocatedUnfairLock(initialState: BackendOption.whisper)
     private let runtime: RuntimePaths
     private let config: AppConfig
+    private let liveChunkingConfiguration: LiveMeetingChunkingConfiguration
     private let templateSnapshot: MeetingTemplateSnapshot
     private let transcriptionCoordinator: TranscriptionCoordinator
     private let systemAudioRecorder: SystemAudioCapturing
@@ -162,6 +218,7 @@ final class MeetingSession {
     private let micChunkHealthTracker = MeetingTranscriptChunkHealthTracker()
     private let systemChunkHealthTracker = MeetingTranscriptChunkHealthTracker()
     private let micHealthTracker = MeetingMicHealthTracker()
+    private let liveOverlapLock = OSAllocatedUnfairLock(initialState: LiveMeetingOverlapState())
     private let chunkRotationQueue = DispatchQueue(label: "MuesliNative.MeetingSession.chunkRotation")
     private let pausedDisplayLock = OSAllocatedUnfairLock(initialState: false)
     private var chunkTimingTracker = MeetingChunkTimingTracker()
@@ -207,6 +264,7 @@ final class MeetingSession {
         backendLock.withLock { $0 = backend }
         self.runtime = runtime
         self.config = config
+        self.liveChunkingConfiguration = Self.liveChunkingConfiguration(for: backend)
         self.templateSnapshot = templateSnapshot
         self.transcriptionCoordinator = transcriptionCoordinator
         self.meetingMicRecorder = meetingMicRecorder
@@ -225,10 +283,34 @@ final class MeetingSession {
         backendLock.withLock { $0 }
     }
 
+    static func liveChunkingConfiguration(for backend: BackendOption) -> LiveMeetingChunkingConfiguration {
+        LiveMeetingChunkingConfiguration.configuration(for: backend)
+    }
+
+    static func deduplicateLiveSegments(
+        _ segments: [SpeechSegment],
+        enabled: Bool,
+        previousText: inout String
+    ) -> [SpeechSegment] {
+        guard enabled else { return segments }
+
+        return segments.compactMap { segment in
+            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            let addition = TranscriptOverlapMerger
+                .uniqueAddition(previous: previousText, next: text)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            previousText = TranscriptOverlapMerger.merge([previousText, text])
+            guard !addition.isEmpty else { return nil }
+            return SpeechSegment(start: segment.start, end: segment.end, text: addition)
+        }
+    }
+
     func start() async throws {
         let vadManager = await transcriptionCoordinator.getVadManager()
         let now = Date()
         diagnostics = MeetingSessionDiagnostics(title: title, startedAt: now)
+        liveOverlapLock.withLock { $0 = LiveMeetingOverlapState() }
 
         // AEC must be loaded before audio pipeline starts (streaming mode)
         await neuralAec.preload()
@@ -482,6 +564,11 @@ final class MeetingSession {
             }
         }
 
+        if liveChunkingConfiguration.deduplicatesText {
+            micSegments = TranscriptOverlapMerger.deduplicateSegments(micSegments)
+            systemSegments = TranscriptOverlapMerger.deduplicateSegments(systemSegments)
+        }
+
         fputs("[meeting] \(micSegments.count) mic chunks transcribed during meeting\n", stderr)
         fputs("[meeting] \(systemSegments.count) system chunks transcribed during meeting\n", stderr)
 
@@ -606,7 +693,9 @@ final class MeetingSession {
     private func rotateChunkOnQueue() {
         guard isRecording, !isPaused else { return }
         appendFlushedStreamingMicOnQueue()
-        guard let chunkTiming = chunkTimingTracker.rotate() else {
+        guard let chunkTiming = chunkTimingTracker.rotate(
+            overlapSampleCount: liveChunkingConfiguration.overlapSampleCount
+        ) else {
             return
         }
         let rawChunkURL = rawMicChunkRecorder?.rotateFile()
@@ -637,9 +726,13 @@ final class MeetingSession {
         if registered {
             Task { [weak self] in
                 let segments = await task.value
-                guard self?.micChunkCollector.retire(id: retireID, segments: segments) == true else { return }
-                guard !segments.isEmpty else { return }
-                self?.onChunkTranscribed?(segments, "You")
+                guard let self else { return }
+                guard let readyChunks = self.micChunkCollector.retire(id: retireID, segments: segments) else { return }
+                for readySegments in readyChunks {
+                    let liveSegments = self.liveSegmentsForEmission(readySegments, track: .mic)
+                    guard !liveSegments.isEmpty else { continue }
+                    self.onChunkTranscribed?(liveSegments, "You")
+                }
             }
         } else {
             task.cancel()
@@ -656,7 +749,9 @@ final class MeetingSession {
     private func rotateSystemChunkOnQueue() {
         guard isRecording, !isPaused else { return }
         guard let chunkURL = systemChunkRecorder?.rotateFile(),
-              let chunkTiming = systemChunkTimingTracker.rotate() else {
+              let chunkTiming = systemChunkTimingTracker.rotate(
+                overlapSampleCount: liveChunkingConfiguration.overlapSampleCount
+              ) else {
             return
         }
 
@@ -705,9 +800,13 @@ final class MeetingSession {
         if registered {
             Task { [weak self] in
                 let segments = await task.value
-                guard self?.systemChunkCollector.retire(id: retireID, segments: segments) == true else { return }
-                guard !segments.isEmpty else { return }
-                self?.onChunkTranscribed?(segments, "Others")
+                guard let self else { return }
+                guard let readyChunks = self.systemChunkCollector.retire(id: retireID, segments: segments) else { return }
+                for readySegments in readyChunks {
+                    let liveSegments = self.liveSegmentsForEmission(readySegments, track: .system)
+                    guard !liveSegments.isEmpty else { continue }
+                    self.onChunkTranscribed?(liveSegments, "Others")
+                }
             }
         } else {
             task.cancel()
@@ -729,14 +828,24 @@ final class MeetingSession {
     }
 
     private func prepareRealtimeAudioPipeline(vadManager: VadManager?) throws {
-        rawMicChunkRecorder = try PCMChunkRecorder(directoryName: "muesli-meeting-mic-chunks")
-        systemChunkRecorder = try PCMChunkRecorder(directoryName: "muesli-meeting-system-chunks")
+        rawMicChunkRecorder = try PCMChunkRecorder(
+            directoryName: "muesli-meeting-mic-chunks",
+            overlapSampleCount: liveChunkingConfiguration.overlapSampleCount
+        )
+        systemChunkRecorder = try PCMChunkRecorder(
+            directoryName: "muesli-meeting-system-chunks",
+            overlapSampleCount: liveChunkingConfiguration.overlapSampleCount
+        )
         configureRealtimeAudioCallbacks(vadManager: vadManager)
     }
 
     private func configureRealtimeAudioCallbacks(vadManager: VadManager?) {
         if let vadManager {
-            let controller = StreamingVadController(vadManager: vadManager)
+            let controller = StreamingVadController(
+                vadManager: vadManager,
+                minChunkDuration: liveChunkingConfiguration.minChunkDuration,
+                maxChunkDuration: liveChunkingConfiguration.maxChunkDuration
+            )
             controller.onChunkBoundary = { [weak self] in
                 // Streaming VAD callbacks can arrive off-main; serialize chunk rotation explicitly.
                 self?.chunkRotationQueue.async { [weak self] in
@@ -746,7 +855,11 @@ final class MeetingSession {
             controller.start()
             vadController = controller
 
-            let systemController = StreamingVadController(vadManager: vadManager)
+            let systemController = StreamingVadController(
+                vadManager: vadManager,
+                minChunkDuration: liveChunkingConfiguration.minChunkDuration,
+                maxChunkDuration: liveChunkingConfiguration.maxChunkDuration
+            )
             systemController.onChunkBoundary = { [weak self] in
                 // Streaming VAD callbacks can arrive off-main; serialize chunk rotation explicitly.
                 self?.chunkRotationQueue.async { [weak self] in
@@ -765,6 +878,29 @@ final class MeetingSession {
         }
         systemAudioRecorder.onPCMSamples = { [weak self] samples in
             self?.enqueueRealtimeSystemSamples(samples)
+        }
+    }
+
+    private func liveSegmentsForEmission(
+        _ segments: [SpeechSegment],
+        track: LiveMeetingTrack
+    ) -> [SpeechSegment] {
+        guard liveChunkingConfiguration.deduplicatesText else { return segments }
+        return liveOverlapLock.withLock { state in
+            switch track {
+            case .mic:
+                return Self.deduplicateLiveSegments(
+                    segments,
+                    enabled: true,
+                    previousText: &state.micText
+                )
+            case .system:
+                return Self.deduplicateLiveSegments(
+                    segments,
+                    enabled: true,
+                    previousText: &state.systemText
+                )
+            }
         }
     }
 

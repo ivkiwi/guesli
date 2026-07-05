@@ -6,14 +6,18 @@ final class PCMChunkRecorder {
         var fileHandle: FileHandle?
         var fileURL: URL?
         var bytesWritten = 0
+        var freshBytesWritten = 0
+        var tailSamples: [Int16] = []
     }
 
     private let directoryName: String
+    private let overlapSampleCount: Int
     private let lock = OSAllocatedUnfairLock(initialState: State())
 
-    init(directoryName: String) throws {
+    init(directoryName: String, overlapSampleCount: Int = 0) throws {
         self.directoryName = directoryName
-        let initialState = try createFileState()
+        self.overlapSampleCount = max(0, overlapSampleCount)
+        let initialState = try createFileState(carryoverSamples: [])
         lock.withLock {
             $0 = initialState
         }
@@ -25,24 +29,25 @@ final class PCMChunkRecorder {
         lock.withLock { state in
             state.fileHandle?.write(pcmData)
             state.bytesWritten += pcmData.count
+            state.freshBytesWritten += pcmData.count
+            guard overlapSampleCount > 0 else { return }
+            state.tailSamples = Array((state.tailSamples + samples).suffix(overlapSampleCount))
         }
     }
 
     func rotateFile() -> URL? {
-        let newState: State
-        do {
-            newState = try createFileState()
-        } catch {
-            fputs("[pcm-chunk-recorder] failed to rotate file: \(error)\n", stderr)
-            return nil
-        }
-
-        let completedState = lock.withLock { state -> State in
+        let completedState = lock.withLock { state -> State? in
             let oldState = state
-            state = newState
-            return oldState
+            do {
+                state = try createFileState(carryoverSamples: oldState.tailSamples)
+                return oldState
+            } catch {
+                fputs("[pcm-chunk-recorder] failed to rotate file: \(error)\n", stderr)
+                return nil
+            }
         }
 
+        guard let completedState else { return nil }
         return finalizeFile(completedState)
     }
 
@@ -67,7 +72,7 @@ final class PCMChunkRecorder {
         }
     }
 
-    private func createFileState() throws -> State {
+    private func createFileState(carryoverSamples: [Int16]) throws -> State {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(directoryName, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -81,7 +86,17 @@ final class PCMChunkRecorder {
             )
         }
         fileHandle.write(WavWriter.header(dataSize: 0))
-        return State(fileHandle: fileHandle, fileURL: fileURL, bytesWritten: 0)
+        if !carryoverSamples.isEmpty {
+            let carryoverData = carryoverSamples.withUnsafeBufferPointer { Data(buffer: $0) }
+            fileHandle.write(carryoverData)
+        }
+        return State(
+            fileHandle: fileHandle,
+            fileURL: fileURL,
+            bytesWritten: carryoverSamples.count * MemoryLayout<Int16>.size,
+            freshBytesWritten: 0,
+            tailSamples: carryoverSamples
+        )
     }
 
     private func finalizeFile(_ state: State) -> URL? {
@@ -91,7 +106,7 @@ final class PCMChunkRecorder {
         fileHandle.write(WavWriter.header(dataSize: UInt32(state.bytesWritten)))
         fileHandle.closeFile()
 
-        guard state.bytesWritten > 0 else {
+        guard state.freshBytesWritten > 0 else {
             try? FileManager.default.removeItem(at: fileURL)
             return nil
         }
