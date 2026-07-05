@@ -157,6 +157,18 @@ struct MeetingSummaryClientTests {
         #expect(omittedCount == transcript.count - (bounded.count - marker.count))
     }
 
+    @Test("summary transcript uses raw prefix when marker cannot fit")
+    func summaryTranscriptUsesRawPrefixWhenMarkerCannotFit() {
+        let transcript = "abcdef"
+
+        let bounded = MeetingSummaryClient.summaryTranscriptForPrompt(
+            transcript,
+            maxCharacters: 3
+        )
+
+        #expect(bounded == "abc")
+    }
+
     @Test("ChatGPT WHAM parser reads top-level output text")
     func chatGPTWHAMParserReadsTopLevelOutputText() {
         let payload: [String: Any] = [

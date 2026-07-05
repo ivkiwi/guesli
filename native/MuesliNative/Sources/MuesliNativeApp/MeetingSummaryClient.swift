@@ -359,6 +359,7 @@ enum MeetingSummaryClient {
         var marker = summaryTranscriptTruncationMarker(omittedCount: omittedCount)
         var contentBudget = maxCharacters - marker.count
 
+        // Marker length depends on the omitted-count digits, so recalculate until stable.
         while contentBudget > 0 {
             let nextOmittedCount = transcript.count - contentBudget
             guard nextOmittedCount != omittedCount else { break }
@@ -368,11 +369,18 @@ enum MeetingSummaryClient {
         }
 
         guard contentBudget > 0 else {
-            return String(marker.prefix(maxCharacters))
+            // Tiny budgets cannot fit the marker; avoid returning a misleading partial marker.
+            let boundedTranscript = String(transcript.prefix(maxCharacters))
+            logSummaryTranscriptTruncated(
+                originalCharacters: transcript.count,
+                omittedCharacters: transcript.count - boundedTranscript.count
+            )
+            return boundedTranscript
         }
 
         let openingCharacters = contentBudget / 2
         let closingCharacters = contentBudget - openingCharacters
+        logSummaryTranscriptTruncated(originalCharacters: transcript.count, omittedCharacters: omittedCount)
         return String(transcript.prefix(openingCharacters))
             + marker
             + String(transcript.suffix(closingCharacters))
@@ -380,6 +388,11 @@ enum MeetingSummaryClient {
 
     private static func summaryTranscriptTruncationMarker(omittedCount: Int) -> String {
         "\n\n[... transcript truncated: \(omittedCount) characters omitted ...]\n\n"
+    }
+
+    private static func logSummaryTranscriptTruncated(originalCharacters: Int, omittedCharacters: Int) {
+        logger.info("summary transcript truncated originalChars=\(originalCharacters) omittedChars=\(omittedCharacters)")
+        fputs("[summary] transcript truncated originalChars=\(originalCharacters) omittedChars=\(omittedCharacters)\n", stderr)
     }
 
     static func notesByRetainingManualNotes(generatedNotes: String, manualNotes: String?) -> String {
