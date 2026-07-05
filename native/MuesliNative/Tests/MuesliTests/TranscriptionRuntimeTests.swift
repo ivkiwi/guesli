@@ -341,6 +341,28 @@ struct GigaAMV3FileChunkingTests {
     }
 }
 
+@Suite("GigaAMV3Transcriber errors")
+struct GigaAMV3TranscriberErrorTests {
+
+    @Test("cancellation errors pass through")
+    func cancellationErrorsPassThrough() {
+        let error = GigaAMV3Transcriber.readableTranscriptionError(CancellationError())
+        #expect(error is CancellationError)
+    }
+
+    @Test("wrapped cancellation errors pass through")
+    func wrappedCancellationErrorsPassThrough() {
+        let wrapped = NSError(
+            domain: "GigaAMV3TranscriberErrorTests",
+            code: 1,
+            userInfo: [NSUnderlyingErrorKey: CancellationError()]
+        )
+
+        let error = GigaAMV3Transcriber.readableTranscriptionError(wrapped)
+        #expect(error is CancellationError)
+    }
+}
+
 @Suite("SenseVoiceFileChunking")
 struct SenseVoiceFileChunkingTests {
 

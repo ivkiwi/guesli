@@ -817,7 +817,10 @@ actor GigaAMV3Transcriber {
         }
     }
 
-    private nonisolated static func readableTranscriptionError(_ error: Error) -> Error {
+    nonisolated static func readableTranscriptionError(_ error: Error) -> Error {
+        if let cancellationError = cancellationError(in: error) {
+            return cancellationError
+        }
         let nsError = error as NSError
         if nsError.domain == "GigaAMV3Transcriber" {
             return error
@@ -827,5 +830,16 @@ actor GigaAMV3Transcriber {
             NSLocalizedDescriptionKey: "GigaAM v3 transcription failed: \(error.localizedDescription)",
             NSUnderlyingErrorKey: error,
         ])
+    }
+
+    private nonisolated static func cancellationError(in error: Error) -> Error? {
+        if error is CancellationError {
+            return error
+        }
+        let nsError = error as NSError
+        if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return cancellationError(in: underlyingError)
+        }
+        return nil
     }
 }
