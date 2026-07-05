@@ -1990,7 +1990,7 @@ final class MuesliController: NSObject {
             syncAppState()
             return nil
         } catch {
-            fputs("[muesli-native] ChatGPT sign-in failed: \(error)\n", stderr)
+            DiagnosticsLog.write("[muesli-native] ChatGPT sign-in failed: \(error.localizedDescription)")
             return error.localizedDescription
         }
     }
@@ -2015,7 +2015,7 @@ final class MuesliController: NSObject {
             }
             return nil
         } catch {
-            fputs("[muesli-native] Google Calendar sign-in failed: \(error)\n", stderr)
+            DiagnosticsLog.write("[muesli-native] Google Calendar sign-in failed: \(error.localizedDescription)")
             return error.localizedDescription
         }
     }
@@ -2055,12 +2055,12 @@ final class MuesliController: NSObject {
             appState.googleCalendarListLoadState = .loaded
         } catch GoogleCalendarAuthError.notAuthenticated {
             invalidateGoogleCalendarAuth()
-            fputs("[muesli-native] Google Calendar token invalid while loading calendar list, signed out\n", stderr)
+            DiagnosticsLog.write("[muesli-native] Google Calendar token invalid while loading calendar list, signed out")
         } catch GoogleCalendarAuthError.refreshFailed(let message) {
-            fputs("[muesli-native] Google Calendar token refresh failed while loading calendar list: \(message)\n", stderr)
+            DiagnosticsLog.write("[muesli-native] Google Calendar token refresh failed while loading calendar list: \(message)")
             appState.googleCalendarListLoadState = .failed("Token refresh failed: \(message)")
         } catch {
-            fputs("[muesli-native] Google calendarList fetch failed: \(error)\n", stderr)
+            DiagnosticsLog.write("[muesli-native] Google calendarList fetch failed: \(error.localizedDescription)")
             appState.googleCalendarListLoadState = .failed(error.localizedDescription)
         }
     }
@@ -2091,13 +2091,13 @@ final class MuesliController: NSObject {
                 ekEvents = GoogleCalendarClient.mergeEvents(eventKit: ekEvents, google: googleResult.events)
             } catch GoogleCalendarAuthError.notAuthenticated {
                 invalidateGoogleCalendarAuth()
-                fputs("[muesli-native] Google Calendar token invalid, signed out\n", stderr)
+                DiagnosticsLog.write("[muesli-native] Google Calendar token invalid, signed out")
             } catch GoogleCalendarAuthError.refreshFailed(let message) {
-                fputs("[muesli-native] Google Calendar token refresh failed: \(message)\n", stderr)
+                DiagnosticsLog.write("[muesli-native] Google Calendar token refresh failed: \(message)")
             } catch GoogleCalendarClientError.staleRequest {
                 return false
             } catch {
-                fputs("[muesli-native] Google Calendar fetch failed: \(error)\n", stderr)
+                DiagnosticsLog.write("[muesli-native] Google Calendar fetch failed: \(error.localizedDescription)")
             }
         }
 
@@ -3596,7 +3596,7 @@ final class MuesliController: NSObject {
                     completion(.success(()))
                 }
             } catch {
-                fputs("[muesli-native] failed to generate or persist meeting summary: \(error)\n", stderr)
+                DiagnosticsLog.write("[muesli-native] failed to generate or persist meeting summary: \(error.localizedDescription)")
                 await MainActor.run {
                     if error is MeetingSummaryError {
                         completion(.failure(error))
@@ -3667,7 +3667,7 @@ final class MuesliController: NSObject {
                         manualNotesToRetain: meeting.manualNotes
                     )
                 } catch {
-                    fputs("[muesli-native] re-transcription summary generation failed: \(error)\n", stderr)
+                    DiagnosticsLog.write("[muesli-native] re-transcription summary generation failed: \(error.localizedDescription)")
                     formattedNotes = MeetingSummaryClient.summaryFailureNotes(
                         transcript: rawTranscript,
                         meetingTitle: meeting.title,
@@ -3695,7 +3695,7 @@ final class MuesliController: NSObject {
                 self.historyWindowController?.reload()
                 completion(.success(()))
             } catch {
-                fputs("[muesli-native] failed to re-transcribe meeting \(meeting.id): \(error)\n", stderr)
+                DiagnosticsLog.write("[muesli-native] failed to re-transcribe meeting \(meeting.id): \(error.localizedDescription)")
                 if let status = Self.retranscriptionFailureStatus(
                     originalStatus: meeting.status,
                     didSetProcessing: didSetProcessing,

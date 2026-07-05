@@ -33,11 +33,11 @@ enum MeetingTranscriptCleanupPipeline {
             return MeetingTranscriptCleanupResult(transcript: transcript, originalTranscript: nil)
         }
         guard config.resolvedMeetingTranscriptCleanupProvider == .chatGPT else {
-            fputs("[meeting-cleanup] unsupported provider \(config.meetingTranscriptCleanupProvider); keeping raw transcript\n", stderr)
+            DiagnosticsLog.write("[meeting-cleanup] unsupported provider \(config.meetingTranscriptCleanupProvider); keeping raw transcript")
             return MeetingTranscriptCleanupResult(transcript: transcript, originalTranscript: nil)
         }
         guard isChatGPTAuthenticated else {
-            fputs("[meeting-cleanup] ChatGPT not authenticated; keeping raw transcript\n", stderr)
+            DiagnosticsLog.write("[meeting-cleanup] ChatGPT not authenticated; keeping raw transcript")
             return MeetingTranscriptCleanupResult(transcript: transcript, originalTranscript: nil)
         }
 
@@ -45,16 +45,16 @@ enum MeetingTranscriptCleanupPipeline {
             let cleaned = try await cleaner.cleanupMeetingTranscript(rawTranscript, config: config)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty else {
-                fputs("[meeting-cleanup] empty cleanup response; keeping raw transcript\n", stderr)
+                DiagnosticsLog.write("[meeting-cleanup] empty cleanup response; keeping raw transcript")
                 return MeetingTranscriptCleanupResult(transcript: transcript, originalTranscript: nil)
             }
             guard cleaned != rawTranscript else {
                 return MeetingTranscriptCleanupResult(transcript: transcript, originalTranscript: nil)
             }
-            fputs("[meeting-cleanup] cleaned transcript chars raw=\(rawTranscript.count) cleaned=\(cleaned.count)\n", stderr)
+            DiagnosticsLog.write("[meeting-cleanup] cleaned transcript chars raw=\(rawTranscript.count) cleaned=\(cleaned.count)")
             return MeetingTranscriptCleanupResult(transcript: cleaned, originalTranscript: transcript)
         } catch {
-            fputs("[meeting-cleanup] cleanup failed, keeping raw transcript: \(error)\n", stderr)
+            DiagnosticsLog.write("[meeting-cleanup] cleanup failed, keeping raw transcript: \(error.localizedDescription)")
             return MeetingTranscriptCleanupResult(transcript: transcript, originalTranscript: nil)
         }
     }

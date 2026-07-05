@@ -163,6 +163,8 @@ enum ExternalTranscriptCleanupClient {
     private static let defaultOpenRouterModel = "stepfun/step-3.5-flash:free"
     private static let defaultCustomModel = "local-model"
     private static let chatGPTTimeout: TimeInterval = 10
+    private static let chatGPTRetryBudget: TimeInterval = 12
+    private static let minimumRetryTimeout: TimeInterval = 0.25
     private static let timeout: TimeInterval = 120
     private static let defaultChatGPTRequest: ChatGPTTranscriptCleanupRequest = { systemPrompt, userPrompt, model, timeout in
         try await MeetingSummaryClient.callWHAM(
@@ -177,20 +179,23 @@ enum ExternalTranscriptCleanupClient {
         _ text: String,
         appContext: String?,
         settings: TranscriptCleanupSettings,
-        chatGPTRequest: ChatGPTTranscriptCleanupRequest = defaultChatGPTRequest
+        chatGPTRequest: ChatGPTTranscriptCleanupRequest = defaultChatGPTRequest,
+        clock: () -> Date = { Date() }
     ) async throws -> String {
         switch settings.provider {
         case .local:
             throw TranscriptCleanupError.rejectedOutput(settings.provider.label)
         case .chatGPT:
-            guard let raw = try await chatGPTRequest(
-                settings.systemPrompt,
-                userPrompt(text: text, appContext: appContext),
-                AppConfig.resolvedChatGPTModel(
+            guard let raw = try await callChatGPTCleanup(
+                provider: settings.provider.label,
+                systemPrompt: settings.systemPrompt,
+                userPrompt: userPrompt(text: text, appContext: appContext),
+                model: AppConfig.resolvedChatGPTModel(
                     settings.chatGPTModel,
                     defaultModel: AppConfig.defaultChatGPTDictationCleanupModel
                 ),
-                chatGPTTimeout
+                chatGPTRequest: chatGPTRequest,
+                clock: clock
             ) else {
                 throw TranscriptCleanupError.emptyResponse(settings.provider.label)
             }
@@ -240,6 +245,90 @@ enum ExternalTranscriptCleanupClient {
                 extraHeaders: [:]
             )
         }
+    }
+
+    private static func callChatGPTCleanup(
+        provider: String,
+        systemPrompt: String,
+        userPrompt: String,
+        model: String,
+        chatGPTRequest: ChatGPTTranscriptCleanupRequest,
+        clock: () -> Date
+    ) async throws -> String? {
+        let startedAt = clock()
+        var didRetry = false
+        while true {
+            do {
+                return try await chatGPTRequest(
+                    systemPrompt,
+                    userPrompt,
+                    model,
+                    remainingChatGPTTimeout(startedAt: startedAt, clock: clock)
+                )
+            } catch {
+                let cleanupError = transcriptCleanupError(provider: provider, error: error)
+                guard !didRetry,
+                      isTransientChatGPTCleanupFailure(error),
+                      remainingChatGPTTimeout(startedAt: startedAt, clock: clock) > minimumRetryTimeout else {
+                    throw cleanupError
+                }
+                didRetry = true
+                DiagnosticsLog.write("[transcript-cleanup] retrying ChatGPT cleanup after transient failure (1/1): \(cleanupError.localizedDescription)")
+            }
+        }
+    }
+
+    private static func remainingChatGPTTimeout(startedAt: Date, clock: () -> Date) -> TimeInterval {
+        let remaining = chatGPTRetryBudget - clock().timeIntervalSince(startedAt)
+        return max(min(chatGPTTimeout, remaining), minimumRetryTimeout)
+    }
+
+    private static func transcriptCleanupError(provider: String, error: Error) -> TranscriptCleanupError {
+        if let cleanupError = error as? TranscriptCleanupError {
+            return cleanupError
+        }
+        if let summaryError = error as? MeetingSummaryError {
+            switch summaryError {
+            case let .backendFailed(_, statusCode, message):
+                return .backendFailed(provider, statusCode, message)
+            case .emptyResponse:
+                return .emptyResponse(provider)
+            case let .requestFailed(_, underlying):
+                return .backendFailed(provider, nil, underlying.localizedDescription)
+            }
+        }
+        return .backendFailed(provider, nil, error.localizedDescription)
+    }
+
+    private static func isTransientChatGPTCleanupFailure(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return false
+        }
+        if let summaryError = error as? MeetingSummaryError {
+            switch summaryError {
+            case let .backendFailed(_, statusCode, _):
+                guard let statusCode else { return false }
+                return statusCode == 429 || (500..<600).contains(statusCode)
+            case let .requestFailed(_, underlying):
+                return isTimeout(underlying)
+            case .emptyResponse:
+                return false
+            }
+        }
+        if let cleanupError = error as? TranscriptCleanupError {
+            switch cleanupError {
+            case let .backendFailed(_, statusCode, _):
+                guard let statusCode else { return false }
+                return statusCode == 429 || (500..<600).contains(statusCode)
+            default:
+                return false
+            }
+        }
+        return isTimeout(error)
+    }
+
+    private static func isTimeout(_ error: Error) -> Bool {
+        (error as? URLError)?.code == .timedOut
     }
 
     static func validateOutput(_ raw: String, input: String, provider: String) throws -> String {

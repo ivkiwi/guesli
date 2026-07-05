@@ -2701,17 +2701,29 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func transcriptCleanupWarningView(_ warning: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .top, spacing: 6) {
             Spacer(minLength: 0)
             Circle()
                 .fill(MuesliTheme.transcribing)
                 .frame(width: 6, height: 6)
+                .padding(.top, 4)
             Text(warning)
                 .font(.system(size: 11))
                 .foregroundStyle(MuesliTheme.transcribing)
                 .multilineTextAlignment(.trailing)
-                .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
+                .help(warning)
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(warning, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .help("Copy cleanup warning")
         }
         .frame(width: controlWidth, alignment: .trailing)
         .frame(minHeight: 24)

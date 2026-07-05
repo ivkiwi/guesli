@@ -491,7 +491,7 @@ actor TranscriptionCoordinator {
                     provider: transcriptCleanupSettings.provider,
                     error: error
                 )
-                fputs("[dictation-cleanup] \(warning)\n", stderr)
+                DiagnosticsLog.write("[transcript-cleanup] \(warning)")
                 await transcriptCleanupWarningHandler?(warning)
                 Qwen3PostProcessorLogging.logVerbose("External transcript cleanup failed, falling back: \(error)")
                 return nil

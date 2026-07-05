@@ -4,7 +4,7 @@ struct AuthTokenFileStore {
     let primaryURL: URL
     let logPrefix: String
     var fileManager: FileManager = .default
-    var logger: (String) -> Void = { fputs("\($0)\n", stderr) }
+    var logger: (String) -> Void = { DiagnosticsLog.write($0) }
 
     var backupURL: URL { Self.backupURL(for: primaryURL) }
     var signedOutURL: URL { Self.signedOutURL(for: primaryURL) }

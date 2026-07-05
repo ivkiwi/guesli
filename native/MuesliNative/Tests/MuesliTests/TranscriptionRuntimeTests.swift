@@ -627,6 +627,117 @@ struct ExternalTranscriptCleanupClientTests {
         #expect(call?.timeout == 10)
     }
 
+    @Test("maps ChatGPT cleanup WHAM errors to cleanup wording")
+    func mapsChatGPTCleanupWHAMErrorsToCleanupWording() async throws {
+        do {
+            _ = try await ExternalTranscriptCleanupClient.cleanup(
+                "ship it",
+                appContext: nil,
+                settings: TranscriptCleanupSettings(provider: .chatGPT),
+                chatGPTRequest: { _, _, _, _ in
+                    throw MeetingSummaryError.backendFailed(
+                        backend: "ChatGPT",
+                        statusCode: 401,
+                        message: "authentication failed"
+                    )
+                }
+            )
+            Issue.record("Expected ChatGPT cleanup to throw")
+        } catch let error as TranscriptCleanupError {
+            guard case let .backendFailed(provider, statusCode, message) = error else {
+                Issue.record("Expected backendFailed, got \(error)")
+                return
+            }
+            let description = error.errorDescription ?? ""
+            #expect(provider == TranscriptCleanupProviderOption.chatGPT.label)
+            #expect(statusCode == 401)
+            #expect(message == "authentication failed")
+            #expect(description.contains("transcript cleanup failed"))
+            #expect(description.contains("Status 401"))
+            #expect(!description.contains("meeting notes"))
+        }
+    }
+
+    @Test("retries ChatGPT dictation cleanup once for transient HTTP failure")
+    func retriesChatGPTDictationCleanupOnceForTransientHTTPFailure() async throws {
+        let sequence = ChatGPTCleanupRequestSequence(outcomes: [
+            .error(MeetingSummaryError.backendFailed(
+                backend: "ChatGPT",
+                statusCode: 429,
+                message: "rate limited"
+            )),
+            .response("Ship it."),
+        ])
+
+        let cleaned = try await ExternalTranscriptCleanupClient.cleanup(
+            "ship it",
+            appContext: nil,
+            settings: TranscriptCleanupSettings(provider: .chatGPT),
+            chatGPTRequest: { systemPrompt, userPrompt, model, timeout in
+                try await sequence.request(systemPrompt: systemPrompt, userPrompt: userPrompt, model: model, timeout: timeout)
+            }
+        )
+
+        #expect(cleaned == "Ship it.")
+        #expect(await sequence.callCount == 2)
+    }
+
+    @Test("retries ChatGPT dictation cleanup once for timeout")
+    func retriesChatGPTDictationCleanupOnceForTimeout() async throws {
+        let sequence = ChatGPTCleanupRequestSequence(outcomes: [
+            .error(MeetingSummaryError.requestFailed(
+                backend: "ChatGPT",
+                underlying: URLError(.timedOut)
+            )),
+            .response("Ship it."),
+        ])
+
+        let cleaned = try await ExternalTranscriptCleanupClient.cleanup(
+            "ship it",
+            appContext: nil,
+            settings: TranscriptCleanupSettings(provider: .chatGPT),
+            chatGPTRequest: { systemPrompt, userPrompt, model, timeout in
+                try await sequence.request(systemPrompt: systemPrompt, userPrompt: userPrompt, model: model, timeout: timeout)
+            }
+        )
+
+        #expect(cleaned == "Ship it.")
+        #expect(await sequence.callCount == 2)
+    }
+
+    @Test("does not retry ChatGPT dictation cleanup for permanent HTTP failure")
+    func doesNotRetryChatGPTDictationCleanupForPermanentHTTPFailure() async throws {
+        let sequence = ChatGPTCleanupRequestSequence(outcomes: [
+            .error(MeetingSummaryError.backendFailed(
+                backend: "ChatGPT",
+                statusCode: 403,
+                message: "forbidden"
+            )),
+            .response("Should not be used"),
+        ])
+
+        do {
+            _ = try await ExternalTranscriptCleanupClient.cleanup(
+                "ship it",
+                appContext: nil,
+                settings: TranscriptCleanupSettings(provider: .chatGPT),
+                chatGPTRequest: { systemPrompt, userPrompt, model, timeout in
+                    try await sequence.request(systemPrompt: systemPrompt, userPrompt: userPrompt, model: model, timeout: timeout)
+                }
+            )
+            Issue.record("Expected permanent ChatGPT cleanup failure")
+        } catch let error as TranscriptCleanupError {
+            guard case let .backendFailed(_, statusCode, message) = error else {
+                Issue.record("Expected backendFailed, got \(error)")
+                return
+            }
+            #expect(statusCode == 403)
+            #expect(message == "forbidden")
+        }
+
+        #expect(await sequence.callCount == 1)
+    }
+
     @Test("reports missing OpenAI cleanup credentials")
     func reportsMissingOpenAICleanupCredentials() throws {
         var config = AppConfig()
@@ -733,5 +844,35 @@ private actor ChatGPTCleanupRequestRecorder {
 
     func recordedCall() -> ChatGPTCleanupRequestCall? {
         call
+    }
+}
+
+private enum ChatGPTCleanupRequestOutcome: Sendable {
+    case response(String?)
+    case error(Error)
+}
+
+private actor ChatGPTCleanupRequestSequence {
+    private var outcomes: [ChatGPTCleanupRequestOutcome]
+    private var calls: [TimeInterval] = []
+
+    init(outcomes: [ChatGPTCleanupRequestOutcome]) {
+        self.outcomes = outcomes
+    }
+
+    var callCount: Int {
+        calls.count
+    }
+
+    func request(systemPrompt: String, userPrompt: String, model: String, timeout: TimeInterval) async throws -> String? {
+        calls.append(timeout)
+        let outcome = outcomes.isEmpty ? ChatGPTCleanupRequestOutcome.response(nil) : outcomes.removeFirst()
+
+        switch outcome {
+        case .response(let response):
+            return response
+        case .error(let error):
+            throw error
+        }
     }
 }
