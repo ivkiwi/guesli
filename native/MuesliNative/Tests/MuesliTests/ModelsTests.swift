@@ -251,11 +251,49 @@ struct PostProcessorOptionTests {
     func defaultOption() {
         #expect(PostProcessorOption.all.first == PostProcessorOption.defaultOption)
         #expect(AppConfig().activePostProcessorId == PostProcessorOption.defaultOption.id)
+        #expect(AppConfig().activeTranscriptCleanupPromptId == TranscriptCleanupPrompts.defaultID)
+        #expect(AppConfig().resolvedTranscriptCleanupSystemPrompt == PostProcessorOption.defaultSystemPrompt)
     }
 
     @Test("unknown ids resolve to default")
     func unknownIDResolvesToDefault() {
         #expect(PostProcessorOption.resolve(id: "missing") == PostProcessorOption.defaultOption)
+    }
+
+    @Test("cleanup prompt selection round-trips through config JSON")
+    func cleanupPromptSelectionRoundTripsThroughConfigJSON() throws {
+        let prompt = CustomTranscriptCleanupPrompt(id: "custom-cleanup", name: "Brief", prompt: "Clean briefly.")
+        var config = AppConfig()
+        config.customTranscriptCleanupPrompts = [prompt]
+        config.activeTranscriptCleanupPromptId = prompt.id
+        config.postProcessorSystemPrompt = prompt.prompt
+
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
+
+        #expect(decoded.customTranscriptCleanupPrompts == [prompt])
+        #expect(decoded.activeTranscriptCleanupPromptId == prompt.id)
+        #expect(decoded.postProcessorSystemPrompt == prompt.prompt)
+        #expect(decoded.resolvedTranscriptCleanupSystemPrompt == prompt.prompt)
+    }
+
+    @Test("legacy cleanup prompt migrates to custom preset")
+    func legacyCleanupPromptMigratesToCustomPreset() throws {
+        let data = try #require(
+            """
+            {
+              "post_processor_system_prompt": "Legacy cleanup prompt"
+            }
+            """.data(using: .utf8)
+        )
+
+        let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
+
+        #expect(decoded.activeTranscriptCleanupPromptId == TranscriptCleanupPrompts.migratedLegacyCustomID)
+        #expect(decoded.customTranscriptCleanupPrompts.count == 1)
+        #expect(decoded.customTranscriptCleanupPrompts.first?.name == "Custom Cleanup")
+        #expect(decoded.customTranscriptCleanupPrompts.first?.prompt == "Legacy cleanup prompt")
+        #expect(decoded.resolvedTranscriptCleanupSystemPrompt == "Legacy cleanup prompt")
     }
 
     @Test("resolveDownloaded prefers selected downloaded option")
@@ -752,6 +790,8 @@ struct AppConfigTests {
         #expect(json["custom_llm_format"] != nil)
         #expect(json["meeting_summary_retry_count"] != nil)
         #expect(json["transcript_cleanup_provider"] != nil)
+        #expect(json["active_transcript_cleanup_prompt_id"] != nil)
+        #expect(json["custom_transcript_cleanup_prompts"] != nil)
     }
 
     @Test("decodes with missing fields using defaults")

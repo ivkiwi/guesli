@@ -104,7 +104,10 @@ struct TranscriptionCoordinatorTests {
         })
         var config = AppConfig()
         config.transcriptCleanupProvider = TranscriptCleanupProviderOption.chatGPT.rawValue
-        config.postProcessorSystemPrompt = "Clean dictation"
+        let prompt = CustomTranscriptCleanupPrompt(id: "clean-dictation", name: "Clean", prompt: "Clean dictation")
+        config.customTranscriptCleanupPrompts = [prompt]
+        config.activeTranscriptCleanupPromptId = prompt.id
+        config.postProcessorSystemPrompt = prompt.prompt
         config.chatGPTModel = "gpt-summary"
         config.chatGPTDictationCleanupModel = "gpt-dictation"
         await coordinator.setTranscriptCleanupSettings(TranscriptCleanupSettings(config: config))
@@ -597,11 +600,83 @@ struct ExternalTranscriptCleanupClientTests {
 
         let call = await recorder.recordedCall()
         #expect(cleaned == "Ship it.")
-        #expect(call?.systemPrompt == "Clean dictation")
-        #expect(call?.userPrompt.contains("App context:\nRelease notes") == true)
-        #expect(call?.userPrompt.contains("Raw transcript:\num ship it") == true)
+        #expect(call?.systemPrompt.contains("Clean dictation") == true)
+        #expect(call?.systemPrompt.contains("<APP-CONTEXT>") == true)
+        #expect(call?.userPrompt.contains("<APP-CONTEXT>\nRelease notes\n</APP-CONTEXT>") == true)
+        #expect(call?.userPrompt.contains("<USER-INPUT>\num ship it\n</USER-INPUT>") == true)
         #expect(call?.model == "gpt-test")
         #expect(call?.timeout == 10)
+    }
+
+    @Test("routes selected cleanup prompt into request")
+    func routesSelectedCleanupPromptIntoRequest() async throws {
+        let recorder = ChatGPTCleanupRequestRecorder(response: "Ship it.")
+        var config = AppConfig()
+        let prompt = CustomTranscriptCleanupPrompt(id: "custom-cleanup", name: "Custom", prompt: "Use custom prompt")
+        config.transcriptCleanupProvider = TranscriptCleanupProviderOption.chatGPT.rawValue
+        config.customTranscriptCleanupPrompts = [prompt]
+        config.activeTranscriptCleanupPromptId = prompt.id
+        config.postProcessorSystemPrompt = prompt.prompt
+
+        _ = try await ExternalTranscriptCleanupClient.cleanup(
+            "ship it",
+            appContext: nil,
+            settings: TranscriptCleanupSettings(config: config),
+            chatGPTRequest: { systemPrompt, userPrompt, model, timeout in
+                await recorder.record(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    model: model,
+                    timeout: timeout
+                )
+                return recorder.response
+            }
+        )
+
+        let call = await recorder.recordedCall()
+        #expect(call?.systemPrompt == "Use custom prompt")
+    }
+
+    @Test("truncates hosted app context at exactly five thousand characters")
+    func truncatesHostedAppContextAtFiveThousandCharacters() async throws {
+        let recorder = ChatGPTCleanupRequestRecorder(response: "Ship it.")
+        let prefix = String(repeating: "a", count: 5_000)
+        let appContext = prefix + "Z"
+
+        _ = try await ExternalTranscriptCleanupClient.cleanup(
+            "ship it",
+            appContext: appContext,
+            settings: TranscriptCleanupSettings(
+                provider: .chatGPT,
+                systemPrompt: "Clean dictation",
+                chatGPTModel: "gpt-test"
+            ),
+            chatGPTRequest: { systemPrompt, userPrompt, model, timeout in
+                await recorder.record(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    model: model,
+                    timeout: timeout
+                )
+                return recorder.response
+            }
+        )
+
+        let call = try #require(await recorder.recordedCall())
+        let afterOpenTag = try #require(
+            call.userPrompt
+                .components(separatedBy: "<APP-CONTEXT>\n")
+                .dropFirst()
+                .first
+        )
+        let contextSection = try #require(
+            afterOpenTag
+                .components(separatedBy: "\n</APP-CONTEXT>")
+                .first
+        )
+        #expect(contextSection.count == 5_000)
+        #expect(contextSection == prefix)
+        #expect(!contextSection.contains("Z"))
     }
 
     @Test("defaults ChatGPT dictation cleanup to nano model")

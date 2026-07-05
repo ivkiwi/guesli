@@ -178,10 +178,11 @@ enum Qwen3PostProcessorConfig {
     // Dictation-only cleanup cap. Keep bounded to avoid slow local inference; long dictations may be truncated by LLM.swift.
     static let maxContextTokens: Int32 = 1024
 
-    static func formatInput(_ text: String, appContext: String? = nil) -> String {
+    static func formatInput(_ text: String, appContext: String? = nil, maxAppContextCharacters: Int = 1_200) -> String {
         var parts = ""
-        if let appContext, !appContext.isEmpty {
-            parts += "<APP-CONTEXT>\n\(String(appContext.prefix(1200)))\n</APP-CONTEXT>\n\n"
+        let trimmedAppContext = appContext?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedAppContext, !trimmedAppContext.isEmpty {
+            parts += "<APP-CONTEXT>\n\(String(trimmedAppContext.prefix(maxAppContextCharacters)))\n</APP-CONTEXT>\n\n"
         }
         parts += "<USER-INPUT>\n\(text)\n</USER-INPUT>"
         return parts

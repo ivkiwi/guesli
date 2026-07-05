@@ -722,7 +722,7 @@ final class MuesliController: NSObject {
                     if let ppOption {
                         await self.transcriptionCoordinator.setActivePostProcessor(
                             option: ppOption,
-                            systemPrompt: self.config.postProcessorSystemPrompt
+                            systemPrompt: self.config.resolvedTranscriptCleanupSystemPrompt
                         )
                     }
                     await self.transcriptionCoordinator.setNemotron35PromptId(
@@ -1134,6 +1134,9 @@ final class MuesliController: NSObject {
         let previousEnablePostProcessor = config.enablePostProcessor
         let previousTranscriptCleanupProvider = config.transcriptCleanupProvider
         let previousChatGPTDictationCleanupModel = config.chatGPTDictationCleanupModel
+        let previousActiveTranscriptCleanupPromptId = config.activeTranscriptCleanupPromptId
+        let previousCustomTranscriptCleanupPrompts = config.customTranscriptCleanupPrompts
+        let previousPostProcessorSystemPrompt = config.postProcessorSystemPrompt
         let previousOpenAIAPIKey = config.openAIAPIKey
         let previousOpenAIModel = config.openAIModel
         let previousOpenRouterAPIKey = config.openRouterAPIKey
@@ -1191,6 +1194,9 @@ final class MuesliController: NSObject {
         if previousEnablePostProcessor != config.enablePostProcessor
             || previousTranscriptCleanupProvider != config.transcriptCleanupProvider
             || previousChatGPTDictationCleanupModel != config.chatGPTDictationCleanupModel
+            || previousActiveTranscriptCleanupPromptId != config.activeTranscriptCleanupPromptId
+            || previousCustomTranscriptCleanupPrompts != config.customTranscriptCleanupPrompts
+            || previousPostProcessorSystemPrompt != config.postProcessorSystemPrompt
             || previousOpenAIAPIKey != config.openAIAPIKey
             || previousOpenAIModel != config.openAIModel
             || previousOpenRouterAPIKey != config.openRouterAPIKey
@@ -1739,7 +1745,7 @@ final class MuesliController: NSObject {
                 if let ppOption {
                     await self.transcriptionCoordinator.setActivePostProcessor(
                         option: ppOption,
-                        systemPrompt: self.config.postProcessorSystemPrompt
+                        systemPrompt: self.config.resolvedTranscriptCleanupSystemPrompt
                     )
                 }
             }
@@ -1873,11 +1879,59 @@ final class MuesliController: NSObject {
         preloadExperimentalTranscriptionFeatures()
     }
 
+    func selectTranscriptCleanupPrompt(id: String) {
+        let preset = TranscriptCleanupPrompts.resolve(id: id, custom: config.customTranscriptCleanupPrompts)
+        updateConfig {
+            $0.activeTranscriptCleanupPromptId = preset.id
+            $0.postProcessorSystemPrompt = preset.prompt
+        }
+        preloadExperimentalTranscriptionFeatures()
+    }
+
+    func createTranscriptCleanupPrompt(name: String, prompt: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !trimmedPrompt.isEmpty else { return }
+        let preset = CustomTranscriptCleanupPrompt(name: trimmedName, prompt: trimmedPrompt)
+        updateConfig {
+            $0.customTranscriptCleanupPrompts.append(preset)
+            $0.activeTranscriptCleanupPromptId = preset.id
+            $0.postProcessorSystemPrompt = preset.prompt
+        }
+        preloadExperimentalTranscriptionFeatures()
+    }
+
+    func updateTranscriptCleanupPrompt(id: String, name: String, prompt: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !trimmedPrompt.isEmpty else { return }
+        updateConfig {
+            guard let index = $0.customTranscriptCleanupPrompts.firstIndex(where: { $0.id == id }) else { return }
+            $0.customTranscriptCleanupPrompts[index].name = trimmedName
+            $0.customTranscriptCleanupPrompts[index].prompt = trimmedPrompt
+            if $0.activeTranscriptCleanupPromptId == id {
+                $0.postProcessorSystemPrompt = trimmedPrompt
+            }
+        }
+        preloadExperimentalTranscriptionFeatures()
+    }
+
+    func deleteTranscriptCleanupPrompt(id: String) {
+        updateConfig {
+            $0.customTranscriptCleanupPrompts.removeAll { $0.id == id }
+            if $0.activeTranscriptCleanupPromptId == id {
+                $0.activeTranscriptCleanupPromptId = TranscriptCleanupPrompts.defaultID
+                $0.postProcessorSystemPrompt = PostProcessorOption.defaultSystemPrompt
+            }
+        }
+        preloadExperimentalTranscriptionFeatures()
+    }
+
     func selectPostProcessor(_ option: PostProcessorOption) {
         updateConfig { $0.activePostProcessorId = option.id }
         appState.activePostProcessor = option
         guard config.enablePostProcessor else { return }
-        let systemPrompt = config.postProcessorSystemPrompt
+        let systemPrompt = config.resolvedTranscriptCleanupSystemPrompt
         Task { [weak self] in
             guard let self else { return }
             await self.transcriptionCoordinator.setTranscriptCleanupSettings(
@@ -1893,21 +1947,20 @@ final class MuesliController: NSObject {
     }
 
     func updatePostProcessorSystemPrompt(_ prompt: String) {
-        updateConfig { $0.postProcessorSystemPrompt = prompt }
-        let ppOption = runtimePostProcessorOption()
-        guard config.enablePostProcessor else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            await self.transcriptionCoordinator.setTranscriptCleanupSettings(
-                TranscriptCleanupSettings(config: self.config)
-            )
-            if let ppOption, #available(macOS 15, *) {
-                await self.transcriptionCoordinator.setActivePostProcessor(
-                    option: ppOption,
-                    systemPrompt: prompt
-                )
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty else { return }
+        updateConfig {
+            let activePromptID = $0.activeTranscriptCleanupPromptId
+            if let index = $0.customTranscriptCleanupPrompts.firstIndex(where: { $0.id == activePromptID }) {
+                $0.customTranscriptCleanupPrompts[index].prompt = trimmedPrompt
+            } else {
+                let preset = CustomTranscriptCleanupPrompt(name: "Custom Cleanup", prompt: trimmedPrompt)
+                $0.customTranscriptCleanupPrompts.append(preset)
+                $0.activeTranscriptCleanupPromptId = preset.id
             }
+            $0.postProcessorSystemPrompt = trimmedPrompt
         }
+        preloadExperimentalTranscriptionFeatures()
     }
 
     func selectMeetingSummaryBackend(_ option: MeetingSummaryBackendOption) {

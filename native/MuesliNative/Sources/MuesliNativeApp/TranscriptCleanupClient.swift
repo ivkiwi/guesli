@@ -45,7 +45,7 @@ struct TranscriptCleanupSettings: Equatable, Sendable {
     init(config: AppConfig) {
         self.init(
             provider: TranscriptCleanupProviderOption.resolved(config.transcriptCleanupProvider),
-            systemPrompt: config.postProcessorSystemPrompt,
+            systemPrompt: config.resolvedTranscriptCleanupSystemPrompt,
             chatGPTModel: config.resolvedChatGPTDictationCleanupModel,
             openAIAPIKey: config.openAIAPIKey,
             openAIModel: config.openAIModel,
@@ -166,6 +166,8 @@ enum ExternalTranscriptCleanupClient {
     private static let chatGPTRetryBudget: TimeInterval = 12
     private static let minimumRetryTimeout: TimeInterval = 0.25
     private static let timeout: TimeInterval = 120
+    private static let hostedAppContextCharacterLimit = 5_000
+    private static let appContextGuidance = "The user input may include an <APP-CONTEXT> section with focused app, document, URL, selected text, or OCR screen text. Use it only to resolve obvious transcription errors, names, acronyms, and formatting intent. Never copy app context into the output unless the user dictated it."
     private static let defaultChatGPTRequest: ChatGPTTranscriptCleanupRequest = { systemPrompt, userPrompt, model, timeout in
         try await MeetingSummaryClient.callWHAM(
             systemPrompt: systemPrompt,
@@ -182,13 +184,14 @@ enum ExternalTranscriptCleanupClient {
         chatGPTRequest: ChatGPTTranscriptCleanupRequest = defaultChatGPTRequest,
         clock: () -> Date = { Date() }
     ) async throws -> String {
+        let effectiveSystemPrompt = systemPromptWithAppContextGuidance(settings.systemPrompt, appContext: appContext)
         switch settings.provider {
         case .local:
             throw TranscriptCleanupError.rejectedOutput(settings.provider.label)
         case .chatGPT:
             guard let raw = try await callChatGPTCleanup(
                 provider: settings.provider.label,
-                systemPrompt: settings.systemPrompt,
+                systemPrompt: effectiveSystemPrompt,
                 userPrompt: userPrompt(text: text, appContext: appContext),
                 model: AppConfig.resolvedChatGPTModel(
                     settings.chatGPTModel,
@@ -211,7 +214,7 @@ enum ExternalTranscriptCleanupClient {
                 model: model,
                 text: text,
                 appContext: appContext,
-                systemPrompt: settings.systemPrompt,
+                systemPrompt: effectiveSystemPrompt,
                 extraHeaders: [:]
             )
         case .openRouter:
@@ -225,7 +228,7 @@ enum ExternalTranscriptCleanupClient {
                 model: model,
                 text: text,
                 appContext: appContext,
-                systemPrompt: settings.systemPrompt,
+                systemPrompt: effectiveSystemPrompt,
                 extraHeaders: ["X-OpenRouter-Title": AppIdentity.displayName]
             )
         case .customLLM:
@@ -241,7 +244,7 @@ enum ExternalTranscriptCleanupClient {
                 model: nonEmpty(settings.customLLMModel) ?? defaultCustomModel,
                 text: text,
                 appContext: appContext,
-                systemPrompt: settings.systemPrompt,
+                systemPrompt: effectiveSystemPrompt,
                 extraHeaders: [:]
             )
         }
@@ -406,20 +409,19 @@ enum ExternalTranscriptCleanupClient {
     }
 
     private static func userPrompt(text: String, appContext: String?) -> String {
-        let context = appContext?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let context, !context.isEmpty {
-            return """
-            App context:
-            \(context)
+        Qwen3PostProcessorConfig.formatInput(
+            text,
+            appContext: appContext,
+            maxAppContextCharacters: hostedAppContextCharacterLimit
+        )
+    }
 
-            Raw transcript:
-            \(text)
-            """
+    private static func systemPromptWithAppContextGuidance(_ systemPrompt: String, appContext: String?) -> String {
+        guard let appContext, !appContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return systemPrompt
         }
-        return """
-        Raw transcript:
-        \(text)
-        """
+        guard !systemPrompt.contains("<APP-CONTEXT>") else { return systemPrompt }
+        return systemPrompt + "\n\n" + appContextGuidance
     }
 
     private static func validateHTTPResponse(_ response: URLResponse, data: Data, provider: String) throws {

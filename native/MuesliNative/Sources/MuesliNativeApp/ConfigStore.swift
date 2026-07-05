@@ -264,12 +264,33 @@ final class ConfigStore {
         importValue("enable_meeting_transcript_cleanup", \.enableMeetingTranscriptCleanup)
         importValue("meeting_transcript_cleanup_provider", \.meetingTranscriptCleanupProvider)
         importValue("active_post_processor_id", \.activePostProcessorId)
+        mergeLegacyTranscriptCleanupPrompts(from: legacy, into: &config, importedFields: &importedFields)
+        if config.activeTranscriptCleanupPromptId != legacy.activeTranscriptCleanupPromptId,
+           TranscriptCleanupPrompts.resolve(
+               id: legacy.activeTranscriptCleanupPromptId,
+               custom: config.customTranscriptCleanupPrompts
+           ).id == legacy.activeTranscriptCleanupPromptId {
+            config.activeTranscriptCleanupPromptId = legacy.activeTranscriptCleanupPromptId
+            importedFields.append("active_transcript_cleanup_prompt_id")
+        }
         importValue("post_processor_system_prompt", \.postProcessorSystemPrompt)
         importValue("enable_screen_context", \.enableScreenContext)
         importValue("use_core_audio_tap", \.useCoreAudioTap)
         importValue("show_ios_companion_prompt", \.showIOSCompanionPrompt)
 
         return importedFields
+    }
+
+    private func mergeLegacyTranscriptCleanupPrompts(
+        from legacy: AppConfig,
+        into config: inout AppConfig,
+        importedFields: inout [String]
+    ) {
+        var existingIDs = Set(config.customTranscriptCleanupPrompts.map(\.id))
+        let missingPrompts = legacy.customTranscriptCleanupPrompts.filter { existingIDs.insert($0.id).inserted }
+        guard !missingPrompts.isEmpty else { return }
+        config.customTranscriptCleanupPrompts.append(contentsOf: missingPrompts)
+        importedFields.append("custom_transcript_cleanup_prompts")
     }
 
     private func mergeLegacyMeetingTemplates(

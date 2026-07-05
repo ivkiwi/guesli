@@ -95,6 +95,7 @@ struct SettingsView: View {
     @State private var downloadedPostProcOptions: [PostProcessorOption] = []
     @State private var dictationInputDevices: [AudioInputDeviceInfo] = []
     @State private var permissionPollTimer: Timer?
+    @State private var isCleanupPromptManagerPresented = false
     @State private var micGranted = false
     @State private var accessibilityGranted = false
     @State private var inputMonitoringGranted = false
@@ -114,6 +115,12 @@ struct SettingsView: View {
     private let screenContextGrantIntentTimeout: TimeInterval = 15 * 60
     private var selectedTranscriptCleanupProvider: TranscriptCleanupProviderOption {
         TranscriptCleanupProviderOption.resolved(appState.config.transcriptCleanupProvider)
+    }
+    private var cleanupPromptPresets: [TranscriptCleanupPromptPreset] {
+        TranscriptCleanupPrompts.presets(custom: appState.config.customTranscriptCleanupPrompts)
+    }
+    private var selectedCleanupPromptName: String {
+        appState.config.resolvedTranscriptCleanupPrompt.name
     }
     private var transcriptCleanupCredentialStatus: TranscriptCleanupCredentialStatus? {
         TranscriptCleanupCredentialStatus.dictationCleanup(
@@ -292,6 +299,13 @@ struct SettingsView: View {
             }
         } message: {
             Text("Dictionary suggestions briefly read focused app text via Accessibility after dictation. Grant access, then relaunch Guesli to turn suggestions on.")
+        }
+        .sheet(isPresented: $isCleanupPromptManagerPresented) {
+            TranscriptCleanupPromptsManagerView(
+                appState: appState,
+                controller: controller,
+                onClose: { isCleanupPromptManagerPresented = false }
+            )
         }
     }
 
@@ -692,6 +706,10 @@ struct SettingsView: View {
                             .frame(width: controlWidth, alignment: .trailing)
                     }
                 }
+                if appState.config.enablePostProcessor {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    cleanupPromptSettings
+                }
                 Divider().background(MuesliTheme.surfaceBorder)
                 settingsRow(
                     "Dictionary suggestions",
@@ -728,6 +746,37 @@ struct SettingsView: View {
                 }
                 settingsDescription("Use ⌘⇧V for terminals or apps that remap ⌘V.")
                 screenContextRow("App context")
+            }
+        }
+    }
+
+    private var cleanupPromptSettings: some View {
+        VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+            settingsRow("Cleanup preset") {
+                FixedWidthPopUp(
+                    selection: selectedCleanupPromptName,
+                    options: cleanupPromptPresets.map(\.name),
+                    onSelectIndex: { index in
+                        guard index >= 0, index < cleanupPromptPresets.count else { return }
+                        controller.selectTranscriptCleanupPrompt(id: cleanupPromptPresets[index].id)
+                    }
+                )
+                .frame(height: 24)
+            }
+
+            settingsRow("Prompts") {
+                Button {
+                    isCleanupPromptManagerPresented = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Edit prompts...")
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(MuesliTheme.accent)
+                }
+                .buttonStyle(.plain)
             }
         }
     }

@@ -59,6 +59,23 @@ struct ConfigStoreTests {
         store.save(original)
     }
 
+    @Test("cleanup prompt selection and custom prompt persist")
+    func cleanupPromptSelectionAndCustomPromptPersist() {
+        let store = makeStore()
+        let prompt = CustomTranscriptCleanupPrompt(id: "custom-cleanup", name: "Brief", prompt: "Clean briefly.")
+        var config = AppConfig()
+        config.customTranscriptCleanupPrompts = [prompt]
+        config.activeTranscriptCleanupPromptId = prompt.id
+        config.postProcessorSystemPrompt = prompt.prompt
+
+        store.save(config)
+
+        let loaded = store.load()
+        #expect(loaded.customTranscriptCleanupPrompts == [prompt])
+        #expect(loaded.activeTranscriptCleanupPromptId == prompt.id)
+        #expect(loaded.resolvedTranscriptCleanupSystemPrompt == "Clean briefly.")
+    }
+
     @Test("config path is in Application Support")
     func configPath() {
         let store = makeStore()
@@ -182,7 +199,8 @@ struct ConfigStoreTests {
               "enable_meeting_transcript_cleanup": true,
               "meeting_transcript_cleanup_provider": "chatgpt",
               "chatgpt_dictation_cleanup_model": "gpt-json-dictation",
-              "chatgpt_meeting_cleanup_model": "gpt-json-meeting"
+              "chatgpt_meeting_cleanup_model": "gpt-json-meeting",
+              "post_processor_system_prompt": "Legacy custom cleanup prompt"
             }
             """.utf8
         ).write(to: legacySupport.appendingPathComponent("config.json"))
@@ -198,6 +216,10 @@ struct ConfigStoreTests {
         #expect(loaded.meetingTranscriptCleanupProvider == MeetingTranscriptCleanupProviderOption.chatGPT.rawValue)
         #expect(loaded.chatGPTDictationCleanupModel == "gpt-json-dictation")
         #expect(loaded.chatGPTMeetingCleanupModel == "gpt-json-meeting")
+        #expect(loaded.activeTranscriptCleanupPromptId == TranscriptCleanupPrompts.migratedLegacyCustomID)
+        #expect(loaded.customTranscriptCleanupPrompts.count == 1)
+        #expect(loaded.customTranscriptCleanupPrompts.first?.prompt == "Legacy custom cleanup prompt")
+        #expect(loaded.resolvedTranscriptCleanupSystemPrompt == "Legacy custom cleanup prompt")
     }
 
     @Test("legacy auth import does not clobber recoverable current backup")

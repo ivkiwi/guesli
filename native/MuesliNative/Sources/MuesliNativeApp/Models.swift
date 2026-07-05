@@ -622,6 +622,74 @@ struct PostProcessorOption: Identifiable, Equatable {
     """
 }
 
+struct TranscriptCleanupPromptPreset: Identifiable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let prompt: String
+    let isCustom: Bool
+}
+
+struct CustomTranscriptCleanupPrompt: Codable, Equatable, Identifiable, Sendable {
+    var id: String
+    var name: String
+    var prompt: String
+
+    init(id: String = UUID().uuidString, name: String, prompt: String) {
+        self.id = id
+        self.name = name
+        self.prompt = prompt
+    }
+}
+
+enum TranscriptCleanupPrompts {
+    static let defaultID = "default"
+    static let migratedLegacyCustomID = "legacy-custom-cleanup"
+
+    static let builtIns: [TranscriptCleanupPromptPreset] = [
+        TranscriptCleanupPromptPreset(
+            id: defaultID,
+            name: "Default Cleanup",
+            prompt: PostProcessorOption.defaultSystemPrompt,
+            isCustom: false
+        ),
+    ]
+
+    static func presets(custom: [CustomTranscriptCleanupPrompt]) -> [TranscriptCleanupPromptPreset] {
+        builtIns + custom.map {
+            TranscriptCleanupPromptPreset(id: $0.id, name: $0.name, prompt: $0.prompt, isCustom: true)
+        }
+    }
+
+    static func resolve(id: String, custom: [CustomTranscriptCleanupPrompt]) -> TranscriptCleanupPromptPreset {
+        presets(custom: custom).first { $0.id == id } ?? builtIns[0]
+    }
+
+    static func legacyCustomPrompt(from prompt: String) -> CustomTranscriptCleanupPrompt? {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != PostProcessorOption.defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return nil
+        }
+        return CustomTranscriptCleanupPrompt(
+            id: migratedLegacyCustomID,
+            name: "Custom Cleanup",
+            prompt: prompt
+        )
+    }
+
+    static func upserting(
+        _ prompt: CustomTranscriptCleanupPrompt,
+        into prompts: [CustomTranscriptCleanupPrompt]
+    ) -> [CustomTranscriptCleanupPrompt] {
+        var prompts = prompts
+        if let index = prompts.firstIndex(where: { $0.id == prompt.id }) {
+            prompts[index] = prompt
+        } else {
+            prompts.append(prompt)
+        }
+        return prompts
+    }
+}
+
 struct CustomWord: Codable, Equatable, Identifiable {
     var id = UUID()
     var word: String
@@ -1031,6 +1099,8 @@ struct AppConfig: Codable {
     var enableMeetingTranscriptCleanup: Bool = false
     var meetingTranscriptCleanupProvider: String = MeetingTranscriptCleanupProviderOption.chatGPT.rawValue
     var activePostProcessorId: String = PostProcessorOption.defaultOption.id
+    var activeTranscriptCleanupPromptId: String = TranscriptCleanupPrompts.defaultID
+    var customTranscriptCleanupPrompts: [CustomTranscriptCleanupPrompt] = []
     var postProcessorSystemPrompt: String = PostProcessorOption.defaultSystemPrompt
     var enableScreenContext: Bool = false
     var useCoreAudioTap: Bool = true
@@ -1137,6 +1207,8 @@ struct AppConfig: Codable {
         case enableMeetingTranscriptCleanup = "enable_meeting_transcript_cleanup"
         case meetingTranscriptCleanupProvider = "meeting_transcript_cleanup_provider"
         case activePostProcessorId = "active_post_processor_id"
+        case activeTranscriptCleanupPromptId = "active_transcript_cleanup_prompt_id"
+        case customTranscriptCleanupPrompts = "custom_transcript_cleanup_prompts"
         case postProcessorSystemPrompt = "post_processor_system_prompt"
         case enableScreenContext = "enable_screen_context"
         case useCoreAudioTap = "use_core_audio_tap"
@@ -1300,7 +1372,22 @@ struct AppConfig: Codable {
             .resolved(try? c.decode(String.self, forKey: .meetingTranscriptCleanupProvider))
             .rawValue
         activePostProcessorId = (try? c.decode(String.self, forKey: .activePostProcessorId)) ?? defaults.activePostProcessorId
+        customTranscriptCleanupPrompts = (try? c.decode([CustomTranscriptCleanupPrompt].self, forKey: .customTranscriptCleanupPrompts)) ?? defaults.customTranscriptCleanupPrompts
         postProcessorSystemPrompt = (try? c.decode(String.self, forKey: .postProcessorSystemPrompt)) ?? defaults.postProcessorSystemPrompt
+        if let decodedPromptID = try? c.decode(String.self, forKey: .activeTranscriptCleanupPromptId) {
+            let resolved = TranscriptCleanupPrompts.resolve(id: decodedPromptID, custom: customTranscriptCleanupPrompts)
+            activeTranscriptCleanupPromptId = resolved.id
+            postProcessorSystemPrompt = resolved.prompt
+        } else if let legacyCustomPrompt = TranscriptCleanupPrompts.legacyCustomPrompt(from: postProcessorSystemPrompt) {
+            customTranscriptCleanupPrompts = TranscriptCleanupPrompts.upserting(legacyCustomPrompt, into: customTranscriptCleanupPrompts)
+            activeTranscriptCleanupPromptId = legacyCustomPrompt.id
+        } else {
+            activeTranscriptCleanupPromptId = defaults.activeTranscriptCleanupPromptId
+            postProcessorSystemPrompt = TranscriptCleanupPrompts.resolve(
+                id: activeTranscriptCleanupPromptId,
+                custom: customTranscriptCleanupPrompts
+            ).prompt
+        }
         enableScreenContext = (try? c.decode(Bool.self, forKey: .enableScreenContext)) ?? defaults.enableScreenContext
         useCoreAudioTap = (try? c.decode(Bool.self, forKey: .useCoreAudioTap)) ?? defaults.useCoreAudioTap
         meetingHookEnabled = (try? c.decode(Bool.self, forKey: .meetingHookEnabled)) ?? defaults.meetingHookEnabled
@@ -1348,6 +1435,17 @@ struct AppConfig: Codable {
 
     var resolvedMeetingTranscriptCleanupProvider: MeetingTranscriptCleanupProviderOption {
         MeetingTranscriptCleanupProviderOption.resolved(meetingTranscriptCleanupProvider)
+    }
+
+    var resolvedTranscriptCleanupPrompt: TranscriptCleanupPromptPreset {
+        TranscriptCleanupPrompts.resolve(
+            id: activeTranscriptCleanupPromptId,
+            custom: customTranscriptCleanupPrompts
+        )
+    }
+
+    var resolvedTranscriptCleanupSystemPrompt: String {
+        resolvedTranscriptCleanupPrompt.prompt
     }
 
     var resolvedChatGPTDictationCleanupModel: String {
