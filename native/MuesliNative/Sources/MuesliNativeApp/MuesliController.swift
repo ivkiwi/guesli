@@ -3961,6 +3961,7 @@ final class MuesliController: NSObject {
                 try deleteSavedMeetingRecording(at: savedRecordingPath)
             }
             try dictationStore.deleteMeeting(id: id)
+            cleanupOrphanedMeetingWaveformCacheFiles()
             scheduleICloudSyncAfterLocalChange()
         } catch let error as MeetingLifecycleError {
             presentErrorAlert(title: "Couldn't Delete Meeting", message: error.localizedDescription)
@@ -4033,7 +4034,7 @@ final class MuesliController: NSObject {
         } catch {
             presentErrorAlert(
                 title: "Couldn't Clear Meeting History",
-                message: "Saved meeting audio files could not be deleted, so meeting history was left in place. \(error.localizedDescription)"
+                message: "Saved meeting audio or waveform cache files could not be deleted, so meeting history was left in place. \(error.localizedDescription)"
             )
             return
         }
@@ -5544,7 +5545,7 @@ final class MuesliController: NSObject {
             tempURL: retainedRecordingURL,
             meetingTitle: result.title,
             startedAt: result.startTime,
-            supportDirectory: AppIdentity.supportDirectoryURL,
+            supportDirectory: configStore.supportDirectory(),
             fileFormat: config.resolvedMeetingRecordingFileFormat
         ))
     }
@@ -5646,7 +5647,8 @@ final class MuesliController: NSObject {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
 
         do {
-            try RecordingWaveformCacheFiles.removeCachedWaveform(
+            // Waveform cache is derived data; recording deletion must still proceed if cache cleanup fails.
+            try? RecordingWaveformCacheFiles.removeCachedWaveform(
                 for: url,
                 supportDirectory: configStore.supportDirectory()
             )

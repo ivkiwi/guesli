@@ -183,15 +183,7 @@ struct MeetingsNavigationTests {
             savedRecordingPath: savedRecordingURL.path
         )
 
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
-        )
+        let controller = makeController(dictationStore: store)
         let meetingID = try store.recentMeetings(limit: 1).first!.id
         controller.appState.selectedMeetingID = meetingID
         controller.appState.selectedMeetingRecord = try store.meeting(id: meetingID)
@@ -233,6 +225,38 @@ struct MeetingsNavigationTests {
         #expect(try store.meeting(id: meetingID) == nil)
         #expect(FileManager.default.fileExists(atPath: savedRecordingURL.path) == false)
         #expect(FileManager.default.fileExists(atPath: cacheURL.path) == false)
+    }
+
+    @Test("deleteMeeting removes saved recording when waveform cache removal fails")
+    func deleteMeetingRemovesSavedRecordingWhenWaveformCacheRemovalFails() throws {
+        let store = try makeStore()
+        let supportDirectory = makeSupportDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let configStore = ConfigStore(supportDirectory: supportDirectory)
+        let recordingsDirectory = supportDirectory.appendingPathComponent("meeting-recordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: recordingsDirectory, withIntermediateDirectories: true)
+        let savedRecordingURL = recordingsDirectory.appendingPathComponent("meeting.wav")
+        try Data("recording".utf8).write(to: savedRecordingURL)
+        let cacheURL = try RecordingWaveformCacheFiles.cacheURL(
+            for: savedRecordingURL,
+            supportDirectory: supportDirectory
+        )
+        try Data("cache".utf8).write(to: cacheURL)
+        let cacheDirectory = cacheURL.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: cacheDirectory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cacheDirectory.path) }
+        let meetingID = try insertMeeting(
+            in: store,
+            title: "Delete Cache Failure Target",
+            savedRecordingPath: savedRecordingURL.path
+        )
+        let controller = makeController(dictationStore: store, configStore: configStore)
+
+        controller.deleteMeeting(id: meetingID)
+
+        #expect(try store.meeting(id: meetingID) == nil)
+        #expect(FileManager.default.fileExists(atPath: savedRecordingURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: cacheURL.path))
     }
 
     @Test("clearMeetingHistory removes saved recordings and waveform cache")
@@ -618,14 +642,11 @@ struct MeetingsNavigationTests {
     @Test("persistCompletedMeetingResult honors explicit recording save decision after policy drift")
     func persistCompletedMeetingResultHonorsExplicitRecordingSaveDecisionAfterPolicyDrift() async throws {
         let store = try makeStore()
-        let controller = MuesliController(
-            runtime: RuntimePaths(
-                repoRoot: FileManager.default.temporaryDirectory,
-                menuIcon: nil,
-                appIcon: nil,
-                bundlePath: nil
-            ),
-            dictationStore: store
+        let supportDirectory = makeSupportDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let controller = makeController(
+            dictationStore: store,
+            configStore: ConfigStore(supportDirectory: supportDirectory)
         )
         controller.updateConfig {
             $0.meetingRecordingSavePolicy = .never
@@ -664,6 +685,7 @@ struct MeetingsNavigationTests {
         let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
         let savedRecordingPath = try #require(storedMeeting.savedRecordingPath)
         #expect(FileManager.default.fileExists(atPath: savedRecordingPath))
+        #expect(savedRecordingPath.hasPrefix(supportDirectory.path + "/"))
         #expect(FileManager.default.fileExists(atPath: retainedRecordingURL.path) == false)
     }
 
