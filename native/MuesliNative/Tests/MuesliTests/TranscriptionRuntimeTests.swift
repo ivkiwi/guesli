@@ -211,6 +211,7 @@ struct GigaAMV3FileChunkingTests {
             (36 * sampleRate)..<(56 * sampleRate),
             (54 * sampleRate)..<(61 * sampleRate),
         ])
+        #expect(GigaAMV3FileChunking.shouldChunk(sampleCount: sampleCount))
     }
 
     @Test("empty audio produces no windows")
@@ -242,6 +243,28 @@ struct GigaAMV3FileChunkingTests {
     @Test("gigaam cache path stays under app support")
     func gigaAMCachePath() {
         #expect(GigaAMV3ModelStore.cacheDirectory().path.hasSuffix("Library/Application Support/Muesli/Models/gigaam-v3-coreml"))
+    }
+}
+
+@Suite("GigaAMV3Transcriber errors")
+struct GigaAMV3TranscriberErrorTests {
+
+    @Test("cancellation errors pass through")
+    func cancellationErrorsPassThrough() {
+        let error = GigaAMV3Transcriber.readableTranscriptionError(CancellationError())
+        #expect(error is CancellationError)
+    }
+
+    @Test("wrapped cancellation errors pass through")
+    func wrappedCancellationErrorsPassThrough() {
+        let wrapped = NSError(
+            domain: "GigaAMV3TranscriberErrorTests",
+            code: 1,
+            userInfo: [NSUnderlyingErrorKey: CancellationError()]
+        )
+
+        let error = GigaAMV3Transcriber.readableTranscriptionError(wrapped)
+        #expect(error is CancellationError)
     }
 }
 
