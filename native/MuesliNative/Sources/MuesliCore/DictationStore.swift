@@ -2756,6 +2756,9 @@ public final class DictationStore {
         if sqlite3_exec(db, "PRAGMA journal_mode=WAL", nil, nil, nil) != SQLITE_OK {
             throw lastError(db)
         }
+        if sqlite3_exec(db, "PRAGMA busy_timeout=5000", nil, nil, nil) != SQLITE_OK {
+            throw lastError(db)
+        }
         return db
     }
 

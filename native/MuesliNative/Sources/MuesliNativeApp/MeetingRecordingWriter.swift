@@ -172,17 +172,19 @@ final class MeetingRecordingWriter {
             let destinationURL = sourceURL.deletingPathExtension().appendingPathExtension("m4a")
             let temporaryURL = sourceURL
                 .deletingLastPathComponent()
-                .appendingPathComponent(".\(destinationURL.lastPathComponent).migrating")
+                .appendingPathComponent(".\(sourceURL.deletingPathExtension().lastPathComponent).migrating.m4a")
             do {
                 try? fileManager.removeItem(at: temporaryURL)
                 try await encode(sourceURL, temporaryURL)
                 try Task.checkCancellation()
                 try atomicallyRenameItem(at: temporaryURL, to: destinationURL)
                 try store.updateMeetingSavedRecordingPath(id: candidate.id, path: destinationURL.path)
-                do {
-                    try fileManager.removeItem(at: sourceURL)
-                } catch {
-                    fputs("[muesli-native] failed to delete migrated wav \(sourceURL.path): \(error)\n", stderr)
+                if try store.savedRecordingReferenceCount(path: sourceURL.path, excludingMeetingID: candidate.id) == 0 {
+                    do {
+                        try fileManager.removeItem(at: sourceURL)
+                    } catch {
+                        fputs("[muesli-native] failed to delete migrated wav \(sourceURL.path): \(error)\n", stderr)
+                    }
                 }
                 migrated += 1
             } catch is CancellationError {
@@ -314,11 +316,19 @@ final class MeetingRecordingWriter {
 
         var deleted = 0
         for file in files where file.pathExtension.lowercased() == "wav" {
-            let values = try file.resourceValues(forKeys: [.fileSizeKey])
-            guard (values.fileSize ?? 0) < 1024,
-                  try store.savedRecordingReferenceCount(path: file.path) == 0 else { continue }
-            try fileManager.removeItem(at: file)
-            deleted += 1
+            do {
+                let values = try file.resourceValues(forKeys: [.fileSizeKey])
+                let fileSize = values.fileSize ?? 0
+                let hasMigratedSibling = fileManager.fileExists(
+                    atPath: file.deletingPathExtension().appendingPathExtension("m4a").path
+                )
+                guard (fileSize < 1024 || hasMigratedSibling),
+                      try store.savedRecordingReferenceCount(path: file.path) == 0 else { continue }
+                try fileManager.removeItem(at: file)
+                deleted += 1
+            } catch {
+                fputs("[muesli-native] failed to evaluate/delete orphan wav \(file.path): \(error)\n", stderr)
+            }
         }
         return deleted
     }

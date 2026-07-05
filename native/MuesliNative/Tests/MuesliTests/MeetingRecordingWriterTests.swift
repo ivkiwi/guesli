@@ -97,9 +97,15 @@ struct MeetingRecordingWriterTests {
         let legacyWAVURL = recordingsDirectory.appendingPathComponent("legacy.wav")
         let orphanStubURL = recordingsDirectory.appendingPathComponent("orphan.wav")
         let referencedStubURL = recordingsDirectory.appendingPathComponent("referenced-stub.wav")
+        let strandedWAVURL = recordingsDirectory.appendingPathComponent("stranded.wav")
+        let strandedM4AURL = recordingsDirectory.appendingPathComponent("stranded.m4a")
+        let unrelatedWAVURL = recordingsDirectory.appendingPathComponent("unrelated.wav")
         try Data(repeating: 1, count: 2_048).write(to: legacyWAVURL)
         try Data([0]).write(to: orphanStubURL)
         try Data([1]).write(to: referencedStubURL)
+        try Data(repeating: 2, count: 2_048).write(to: strandedWAVURL)
+        try Data("m4a".utf8).write(to: strandedM4AURL)
+        try Data(repeating: 3, count: 2_048).write(to: unrelatedWAVURL)
 
         let now = Date(timeIntervalSince1970: 1_711_000_000)
         let migratedID = try store.insertMeeting(
@@ -130,6 +136,8 @@ struct MeetingRecordingWriterTests {
             recordingsDirectory: recordingsDirectory,
             encode: { sourceURL, destinationURL in
                 #expect(sourceURL == legacyWAVURL.standardizedFileURL)
+                #expect(destinationURL.pathExtension == "m4a")
+                #expect(destinationURL.lastPathComponent.contains(".migrating"))
                 try Data("m4a".utf8).write(to: destinationURL)
             }
         )
@@ -137,12 +145,15 @@ struct MeetingRecordingWriterTests {
         let migrated = try #require(try store.meeting(id: migratedID))
         let migratedPath = try #require(migrated.savedRecordingPath)
         #expect(summary.migrated == 1)
-        #expect(summary.deletedOrphanStubs == 1)
+        #expect(summary.deletedOrphanStubs == 2)
         #expect(migratedPath.hasSuffix(".m4a"))
         #expect(try Data(contentsOf: URL(fileURLWithPath: migratedPath)) == Data("m4a".utf8))
         #expect(FileManager.default.fileExists(atPath: legacyWAVURL.path) == false)
         #expect(FileManager.default.fileExists(atPath: orphanStubURL.path) == false)
         #expect(FileManager.default.fileExists(atPath: referencedStubURL.path))
+        #expect(FileManager.default.fileExists(atPath: strandedWAVURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: strandedM4AURL.path))
+        #expect(FileManager.default.fileExists(atPath: unrelatedWAVURL.path))
 
         let secondSummary = try await MeetingRecordingWriter.migrateLegacyWAVRecordings(
             store: store,
@@ -154,6 +165,54 @@ struct MeetingRecordingWriterTests {
         #expect(secondSummary.migrated == 0)
         #expect(secondSummary.deletedOrphanStubs == 0)
         #expect(try store.meeting(id: migratedID)?.savedRecordingPath == migratedPath)
+    }
+
+    @Test("legacy wav migration deletes shared wav only after last reference migrates")
+    func legacyWAVMigrationDeletesSharedWAVAfterLastReferenceMigrates() async throws {
+        let store = try makeStore()
+        let recordingsDirectory = makeTemporaryDirectory()
+        let legacyWAVURL = recordingsDirectory.appendingPathComponent("shared.wav")
+        try Data(repeating: 1, count: 2_048).write(to: legacyWAVURL)
+
+        let now = Date(timeIntervalSince1970: 1_711_000_000)
+        let firstID = try store.insertMeeting(
+            title: "First",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "first",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: legacyWAVURL.path
+        )
+        let secondID = try store.insertMeeting(
+            title: "Second",
+            calendarEventID: nil,
+            startTime: now.addingTimeInterval(120),
+            endTime: now.addingTimeInterval(180),
+            rawTranscript: "second",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: legacyWAVURL.path
+        )
+
+        let summary = try await MeetingRecordingWriter.migrateLegacyWAVRecordings(
+            store: store,
+            recordingsDirectory: recordingsDirectory,
+            encode: { _, destinationURL in
+                try Data("m4a".utf8).write(to: destinationURL)
+            }
+        )
+
+        let firstPath = try #require(try store.meeting(id: firstID)?.savedRecordingPath)
+        let secondPath = try #require(try store.meeting(id: secondID)?.savedRecordingPath)
+        #expect(summary.migrated == 2)
+        #expect(firstPath == secondPath)
+        #expect(firstPath.hasSuffix(".m4a"))
+        #expect(FileManager.default.fileExists(atPath: firstPath))
+        #expect(FileManager.default.fileExists(atPath: legacyWAVURL.path) == false)
     }
 
     @Test("legacy wav migration keeps wav and database path when encode fails")
@@ -193,7 +252,50 @@ struct MeetingRecordingWriterTests {
             at: recordingsDirectory,
             includingPropertiesForKeys: nil
         )
-        #expect(!leftovers.contains { $0.lastPathComponent.hasSuffix(".migrating") })
+        #expect(!leftovers.contains { $0.lastPathComponent.contains(".migrating") })
+    }
+
+    @Test("legacy wav migration rethrows cancellation and removes temp file")
+    func legacyWAVMigrationRethrowsCancellationAndRemovesTempFile() async throws {
+        let store = try makeStore()
+        let recordingsDirectory = makeTemporaryDirectory()
+        let legacyWAVURL = recordingsDirectory.appendingPathComponent("legacy.wav")
+        try Data(repeating: 1, count: 2_048).write(to: legacyWAVURL)
+
+        let now = Date(timeIntervalSince1970: 1_711_000_000)
+        let meetingID = try store.insertMeeting(
+            title: "Legacy",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "legacy",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: legacyWAVURL.path
+        )
+
+        do {
+            _ = try await MeetingRecordingWriter.migrateLegacyWAVRecordings(
+                store: store,
+                recordingsDirectory: recordingsDirectory,
+                encode: { _, destinationURL in
+                    try Data("partial".utf8).write(to: destinationURL)
+                    throw CancellationError()
+                }
+            )
+            Issue.record("Migration should rethrow cancellation")
+        } catch is CancellationError {
+        }
+
+        let meeting = try #require(try store.meeting(id: meetingID))
+        #expect(meeting.savedRecordingPath == legacyWAVURL.path)
+        #expect(FileManager.default.fileExists(atPath: legacyWAVURL.path))
+        let leftovers = try FileManager.default.contentsOfDirectory(
+            at: recordingsDirectory,
+            includingPropertiesForKeys: nil
+        )
+        #expect(!leftovers.contains { $0.lastPathComponent.contains(".migrating") })
     }
 
     private func makeTemporaryDirectory() -> URL {
