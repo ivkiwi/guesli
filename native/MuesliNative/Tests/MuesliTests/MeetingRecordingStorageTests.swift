@@ -31,6 +31,20 @@ struct MeetingRecordingStorageTests {
         #expect(directory.path == customDirectory.standardizedFileURL.path)
     }
 
+    @Test("relative custom directory falls back to default")
+    func relativeCustomDirectoryFallsBackToDefault() {
+        let supportDirectory = temporaryDirectory()
+        var config = AppConfig()
+        config.meetingRecordingFolderPath = "relative-recordings"
+
+        let directory = MeetingRecordingStorage.directory(
+            config: config,
+            supportDirectory: supportDirectory
+        )
+
+        #expect(directory.path == MeetingRecordingStorage.defaultDirectory(supportDirectory: supportDirectory).path)
+    }
+
     @Test("resolver keeps existing stored absolute path when custom folder is configured")
     func resolverKeepsExistingStoredPath() throws {
         let supportDirectory = temporaryDirectory()
@@ -73,10 +87,60 @@ struct MeetingRecordingStorageTests {
         #expect(resolved?.path == movedRecording.standardizedFileURL.path)
     }
 
+    @Test("validateWritableDirectory accepts writable directories and cleans probe")
+    func validateWritableDirectoryAcceptsWritableDirectory() throws {
+        let directory = temporaryDirectory()
+        let probeFileName = ".probe-\(UUID().uuidString)"
+
+        try MeetingRecordingStorage.validateWritableDirectory(directory, probeFileName: probeFileName)
+
+        #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent(probeFileName).path) == false)
+    }
+
+    @Test("validateWritableDirectory rejects missing paths and files")
+    func validateWritableDirectoryRejectsMissingPathsAndFiles() throws {
+        let directory = temporaryDirectory()
+        let missingDirectory = directory.appendingPathComponent("missing", isDirectory: true)
+        let fileURL = directory.appendingPathComponent("not-a-directory")
+        try Data("file".utf8).write(to: fileURL)
+
+        #expect(validationErrorCode(for: missingDirectory) == 1)
+        #expect(validationErrorCode(for: fileURL) == 1)
+    }
+
+    @Test("validateWritableDirectory rejects unwritable directories and probe failures")
+    func validateWritableDirectoryRejectsWriteFailures() throws {
+        let unwritableDirectory = temporaryDirectory()
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: unwritableDirectory.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: unwritableDirectory.path)
+        }
+        #expect(validationErrorCode(for: unwritableDirectory) == 2)
+
+        let probeConflictDirectory = temporaryDirectory()
+        let probeFileName = ".probe-\(UUID().uuidString)"
+        try Data("exists".utf8).write(to: probeConflictDirectory.appendingPathComponent(probeFileName))
+
+        #expect(validationErrorCode(for: probeConflictDirectory, probeFileName: probeFileName) == 3)
+    }
+
     private func temporaryDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("meeting-recording-storage-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func validationErrorCode(for url: URL, probeFileName: String? = nil) -> Int? {
+        do {
+            if let probeFileName {
+                try MeetingRecordingStorage.validateWritableDirectory(url, probeFileName: probeFileName)
+            } else {
+                try MeetingRecordingStorage.validateWritableDirectory(url)
+            }
+            return nil
+        } catch {
+            return (error as NSError).code
+        }
     }
 }

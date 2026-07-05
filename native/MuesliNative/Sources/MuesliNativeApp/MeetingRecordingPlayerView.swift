@@ -270,6 +270,12 @@ struct MeetingRecordingPlayerView: View {
         currentTime = 0
         isPlaying = false
 
+        do {
+            try Task.checkCancellation()
+        } catch {
+            return
+        }
+
         guard let url = MeetingRecordingStorage.resolvedFileURL(
             forStoredPath: recordingPath,
             config: config
@@ -281,11 +287,16 @@ struct MeetingRecordingPlayerView: View {
             let loadedWaveform = try await Task.detached(priority: .utility) {
                 try await RecordingWaveformCache.shared.waveform(for: url)
             }.value
+            try Task.checkCancellation()
             let loadedPlayer = try AVAudioPlayer(contentsOf: url)
             loadedPlayer.prepareToPlay()
+            try Task.checkCancellation()
             waveform = loadedWaveform
             player = loadedPlayer
+        } catch is CancellationError {
+            return
         } catch {
+            if Task.isCancelled { return }
             loadFailed = true
         }
     }

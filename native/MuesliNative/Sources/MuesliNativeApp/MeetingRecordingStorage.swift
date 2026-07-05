@@ -16,6 +16,9 @@ enum MeetingRecordingStorage {
         guard !path.isEmpty else {
             return defaultDirectory(supportDirectory: supportDirectory)
         }
+        guard path.hasPrefix("/") else {
+            return defaultDirectory(supportDirectory: supportDirectory)
+        }
         return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
     }
 
@@ -44,7 +47,11 @@ enum MeetingRecordingStorage {
         return nil
     }
 
-    static func validateWritableDirectory(_ url: URL, fileManager: FileManager = .default) throws {
+    static func validateWritableDirectory(
+        _ url: URL,
+        fileManager: FileManager = .default,
+        probeFileName: String = ".muesli-write-test-\(UUID().uuidString)"
+    ) throws {
         let directoryURL = url.standardizedFileURL
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory),
@@ -63,7 +70,7 @@ enum MeetingRecordingStorage {
             )
         }
 
-        let probeURL = directoryURL.appendingPathComponent(".muesli-write-test-\(UUID().uuidString)")
+        let probeURL = directoryURL.appendingPathComponent(probeFileName)
         do {
             try Data().write(to: probeURL, options: .withoutOverwriting)
             try? fileManager.removeItem(at: probeURL)

@@ -1153,11 +1153,11 @@ struct SettingsView: View {
                         controller.updateConfig { $0.meetingRecordingSavePolicy = policy }
                     }
                 }
-                Divider().background(MuesliTheme.surfaceBorder)
-                settingsRow("Recordings folder") {
-                    meetingRecordingFolderPicker
-                }
                 if appState.config.meetingRecordingSavePolicy != .never {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Recordings folder") {
+                        meetingRecordingFolderPicker
+                    }
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Recording format") {
                         settingsMenu(
@@ -1718,12 +1718,9 @@ struct SettingsView: View {
     }
 
     private func preferredMeetingRecordingDirectoryURL() -> URL {
-        let configuredPath = appState.config.meetingRecordingFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !configuredPath.isEmpty {
-            let configuredURL = URL(fileURLWithPath: configuredPath).standardizedFileURL
-            if FileManager.default.fileExists(atPath: configuredURL.path) {
-                return configuredURL
-            }
+        let candidate = MeetingRecordingStorage.directory(config: appState.config)
+        if FileManager.default.fileExists(atPath: candidate.path) {
+            return candidate
         }
         return MeetingRecordingStorage.defaultDirectory()
     }
