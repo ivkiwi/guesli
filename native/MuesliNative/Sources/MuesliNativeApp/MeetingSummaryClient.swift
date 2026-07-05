@@ -22,7 +22,7 @@ enum MeetingSummaryError: LocalizedError {
 
 enum MeetingSummaryRetryPolicy {
     static let defaultRetryCount = 3
-    static let maximumRetryCount = 10
+    static let maximumRetryCount = 5
 
     static func clampedRetryCount(_ count: Int) -> Int {
         min(max(count, 0), maximumRetryCount)

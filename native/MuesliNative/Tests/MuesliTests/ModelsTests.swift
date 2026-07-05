@@ -742,7 +742,7 @@ struct AppConfigTests {
         config.customLLMAPIKey = "custom-key"
         config.customLLMModel = "custom-model"
         config.customLLMFormat = "anthropic"
-        config.meetingSummaryRetryCount = 6
+        config.meetingSummaryRetryCount = 5
         config.postProcessorBackend = TranscriptCleanupBackendOption.hosted(.openRouter).backend
         config.postProcessorChatGPTModel = "gpt-5.4-mini"
         config.postProcessorOpenAIModel = "gpt-5.4-mini"
@@ -818,7 +818,7 @@ struct AppConfigTests {
         #expect(decoded.customLLMAPIKey == "custom-key")
         #expect(decoded.customLLMModel == "custom-model")
         #expect(decoded.customLLMFormat == "anthropic")
-        #expect(decoded.meetingSummaryRetryCount == 6)
+        #expect(decoded.meetingSummaryRetryCount == 5)
         #expect(decoded.postProcessorBackend == "openrouter")
         #expect(decoded.postProcessorChatGPTModel == "gpt-5.4-mini")
         #expect(decoded.postProcessorOpenAIModel == "gpt-5.4-mini")
