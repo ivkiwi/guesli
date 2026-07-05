@@ -619,7 +619,7 @@ struct AppConfigTests {
         config.customLLMAPIKey = "custom-key"
         config.customLLMModel = "custom-model"
         config.customLLMFormat = "anthropic"
-        config.meetingSummaryRetryCount = 6
+        config.meetingSummaryRetryCount = 5
         config.transcriptCleanupProvider = TranscriptCleanupProviderOption.chatGPT.rawValue
         config.contributionPromptNextWordCount = 31_000
         config.contributionPromptNextMeetingCount = 75
@@ -678,7 +678,7 @@ struct AppConfigTests {
         #expect(decoded.customLLMAPIKey == "custom-key")
         #expect(decoded.customLLMModel == "custom-model")
         #expect(decoded.customLLMFormat == "anthropic")
-        #expect(decoded.meetingSummaryRetryCount == 6)
+        #expect(decoded.meetingSummaryRetryCount == 5)
         #expect(decoded.transcriptCleanupProvider == TranscriptCleanupProviderOption.chatGPT.rawValue)
         #expect(decoded.contributionPromptNextWordCount == 31_000)
         #expect(decoded.contributionPromptNextMeetingCount == 75)

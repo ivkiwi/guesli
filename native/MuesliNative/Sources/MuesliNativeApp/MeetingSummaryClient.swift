@@ -22,13 +22,13 @@ enum MeetingSummaryError: LocalizedError {
 
 enum MeetingSummaryRetryPolicy {
     static let defaultRetryCount = 3
-    static let maximumRetryCount = 10
+    static let maximumRetryCount = 5
 
     static func clampedRetryCount(_ count: Int) -> Int {
         min(max(count, 0), maximumRetryCount)
     }
 
-    static func shouldRetry(_ error: Error) -> Bool {
+    static func shouldRetry(_ error: Error, localBackend: Bool = false) -> Bool {
         if error is CancellationError {
             return false
         }
@@ -38,18 +38,41 @@ enum MeetingSummaryRetryPolicy {
         }
 
         switch summaryError {
-        case .requestFailed(_, let underlying):
-            return !isPermanentRequestFailure(underlying)
+        case .requestFailed(let backend, let underlying):
+            if isPermanentRequestFailure(underlying) {
+                return false
+            }
+            if usesLocalRetryPolicy(backend: backend, explicitLocalBackend: localBackend),
+               isLocalEndpointUnavailable(underlying) {
+                return false
+            }
+            return true
         case .emptyResponse:
             return true
         case .backendFailed(_, let statusCode, _):
             guard let statusCode else { return false }
-            return statusCode == 408
-                || statusCode == 409
-                || statusCode == 425
-                || statusCode == 429
-                || (500..<600).contains(statusCode)
+            return isTransientHTTPStatus(statusCode)
         }
+    }
+
+    static func effectiveRetryCount(
+        configuredCount: Int,
+        after error: Error,
+        localBackend: Bool = false
+    ) -> Int {
+        let retryCount = clampedRetryCount(configuredCount)
+        guard retryCount > 0,
+              shouldRetry(error, localBackend: localBackend),
+              let summaryError = error as? MeetingSummaryError else {
+            return 0
+        }
+        if usesLocalRetryPolicy(
+            backend: backendName(from: summaryError),
+            explicitLocalBackend: localBackend
+        ) {
+            return min(retryCount, 1)
+        }
+        return retryCount
     }
 
     private static func isPermanentRequestFailure(_ error: Error) -> Bool {
@@ -65,6 +88,46 @@ enum MeetingSummaryRetryPolicy {
             return true
         default:
             return false
+        }
+    }
+
+    private static func isLocalBackend(_ backend: String) -> Bool {
+        let normalized = backend.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == MeetingSummaryBackendOption.ollama.backend
+            || normalized == MeetingSummaryBackendOption.lmStudio.backend
+            || normalized == "lm studio"
+    }
+
+    private static func usesLocalRetryPolicy(backend: String, explicitLocalBackend: Bool) -> Bool {
+        explicitLocalBackend || isLocalBackend(backend)
+    }
+
+    private static func isLocalEndpointUnavailable(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else {
+            return false
+        }
+        switch urlError.code {
+        case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func isTransientHTTPStatus(_ statusCode: Int) -> Bool {
+        statusCode == 408
+            || statusCode == 409
+            || statusCode == 425
+            || statusCode == 429
+            || (500..<600).contains(statusCode)
+    }
+
+    private static func backendName(from error: MeetingSummaryError) -> String {
+        switch error {
+        case .requestFailed(let backend, _),
+             .emptyResponse(let backend),
+             .backendFailed(let backend, _, _):
+            return backend
         }
     }
 
@@ -134,7 +197,10 @@ enum MeetingSummaryClient {
         manualNotesToRetain: String? = nil,
         visualContext: String? = nil
     ) async throws -> String {
-        try await withSummaryRetries(maxRetries: config.meetingSummaryRetryCount) {
+        try await withSummaryRetries(
+            maxRetries: config.meetingSummaryRetryCount,
+            localBackend: usesLocalSummaryRetryPolicy(config: config)
+        ) {
             try await summarizeOnce(
                 transcript: transcript,
                 meetingTitle: meetingTitle,
@@ -149,6 +215,7 @@ enum MeetingSummaryClient {
 
     static func withSummaryRetries(
         maxRetries: Int,
+        localBackend: Bool = false,
         sleep: (TimeInterval) async throws -> Void = { delay in
             try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         },
@@ -160,12 +227,16 @@ enum MeetingSummaryClient {
             do {
                 return try await operation()
             } catch {
-                guard attempt < retryCount,
-                      MeetingSummaryRetryPolicy.shouldRetry(error) else {
+                let effectiveRetryCount = MeetingSummaryRetryPolicy.effectiveRetryCount(
+                    configuredCount: retryCount,
+                    after: error,
+                    localBackend: localBackend
+                )
+                guard attempt < effectiveRetryCount else {
                     throw error
                 }
                 attempt += 1
-                DiagnosticsLog.write("[summary] retrying summary generation after failure (\(attempt)/\(retryCount)): \(error.localizedDescription)")
+                DiagnosticsLog.write("[summary] retrying summary generation after failure (\(attempt)/\(effectiveRetryCount)): \(error.localizedDescription)")
                 try await sleep(MeetingSummaryRetryPolicy.retryDelay(forAttempt: attempt))
             }
         }
@@ -812,10 +883,33 @@ enum MeetingSummaryClient {
         !config.lmStudioModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    static func usesLocalSummaryRetryPolicy(config: AppConfig) -> Bool {
+        let backend = (config.meetingSummaryBackend.isEmpty ? MeetingSummaryBackendOption.chatGPT.backend : config.meetingSummaryBackend).lowercased()
+        if backend == MeetingSummaryBackendOption.ollama.backend
+            || backend == MeetingSummaryBackendOption.lmStudio.backend {
+            return true
+        }
+        guard backend == MeetingSummaryBackendOption.customLLM.backend else {
+            return false
+        }
+        let format = CustomLLMFormat(rawValue: config.customLLMFormat) ?? .openAI
+        return resolveCustomLLMURL(config: config, format: format).map { isLocalHost($0.host) } ?? false
+    }
+
     static func customLLMHasRequiredSettings(config: AppConfig) -> Bool {
         let model = config.customLLMModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let apiKey = config.customLLMAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         return !model.isEmpty && (!customLLMRequiresAPIKey(config: config) || !apiKey.isEmpty)
+    }
+
+    private static func isLocalHost(_ host: String?) -> Bool {
+        guard let host = host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+            return false
+        }
+        return host == "localhost"
+            || host == "127.0.0.1"
+            || host == "::1"
+            || host == "0.0.0.0"
     }
 
     private static func summarizeWithChatCompletions(

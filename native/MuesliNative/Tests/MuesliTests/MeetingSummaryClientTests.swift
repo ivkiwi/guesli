@@ -321,6 +321,82 @@ struct MeetingSummaryClientTests {
         }
     }
 
+    @Test("summary retries cap local transient failures")
+    func summaryRetriesCapLocalTransientFailures() async {
+        var attempts = 0
+
+        do {
+            _ = try await MeetingSummaryClient.withSummaryRetries(
+                maxRetries: 5,
+                sleep: { _ in }
+            ) {
+                attempts += 1
+                throw MeetingSummaryError.emptyResponse(backend: "Ollama")
+            }
+            #expect(Bool(false), "Expected local summary retries to exhaust and throw")
+        } catch {
+            #expect(attempts == 2)
+            guard case .emptyResponse(let backend) = error as? MeetingSummaryError else {
+                #expect(Bool(false), "Expected emptyResponse, got \(String(describing: error))")
+                return
+            }
+            #expect(backend == "Ollama")
+        }
+    }
+
+    @Test("summary retries skip local endpoint unavailable failures")
+    func summaryRetriesSkipLocalEndpointUnavailableFailures() async {
+        var attempts = 0
+
+        do {
+            _ = try await MeetingSummaryClient.withSummaryRetries(
+                maxRetries: 5,
+                sleep: { _ in }
+            ) {
+                attempts += 1
+                throw MeetingSummaryError.requestFailed(
+                    backend: "LM Studio",
+                    underlying: URLError(.cannotConnectToHost)
+                )
+            }
+            #expect(Bool(false), "Expected local endpoint failure to throw without retries")
+        } catch {
+            #expect(attempts == 1)
+            guard case .requestFailed(let backend, _) = error as? MeetingSummaryError else {
+                #expect(Bool(false), "Expected requestFailed, got \(String(describing: error))")
+                return
+            }
+            #expect(backend == "LM Studio")
+        }
+    }
+
+    @Test("summary retries skip custom localhost endpoint unavailable failures")
+    func summaryRetriesSkipCustomLocalhostEndpointUnavailableFailures() async {
+        var attempts = 0
+
+        do {
+            _ = try await MeetingSummaryClient.withSummaryRetries(
+                maxRetries: 5,
+                localBackend: true,
+                sleep: { _ in }
+            ) {
+                attempts += 1
+                throw MeetingSummaryError.requestFailed(
+                    backend: "Custom LLM",
+                    underlying: URLError(.cannotConnectToHost)
+                )
+            }
+            #expect(Bool(false), "Expected local custom endpoint failure to throw without retries")
+        } catch {
+            #expect(attempts == 1)
+            guard case .requestFailed(let backend, _) = error as? MeetingSummaryError else {
+                #expect(Bool(false), "Expected requestFailed, got \(String(describing: error))")
+                return
+            }
+            #expect(backend == "Custom LLM")
+        }
+    }
+
     @Test("summary retry policy skips cancellation and permanent backend failures")
     func summaryRetryPolicySkipsCancellationAndPermanentBackendFailures() {
         #expect(!MeetingSummaryRetryPolicy.shouldRetry(CancellationError()))
@@ -339,8 +415,21 @@ struct MeetingSummaryClientTests {
         #expect(!MeetingSummaryRetryPolicy.shouldRetry(
             MeetingSummaryError.backendFailed(backend: "OpenRouter", statusCode: 400, message: "Bad request")
         ))
-        #expect(MeetingSummaryRetryPolicy.shouldRetry(
+        #expect(!MeetingSummaryRetryPolicy.shouldRetry(
             MeetingSummaryError.requestFailed(backend: "Ollama", underlying: URLError(.cannotConnectToHost))
+        ))
+        #expect(!MeetingSummaryRetryPolicy.shouldRetry(
+            MeetingSummaryError.requestFailed(backend: "LM Studio", underlying: URLError(.dnsLookupFailed))
+        ))
+        #expect(!MeetingSummaryRetryPolicy.shouldRetry(
+            MeetingSummaryError.requestFailed(
+                backend: "Custom LLM",
+                underlying: URLError(.cannotConnectToHost)
+            ),
+            localBackend: true
+        ))
+        #expect(MeetingSummaryRetryPolicy.shouldRetry(
+            MeetingSummaryError.requestFailed(backend: "OpenAI", underlying: URLError(.cannotConnectToHost))
         ))
         #expect(MeetingSummaryRetryPolicy.shouldRetry(
             MeetingSummaryError.backendFailed(backend: "OpenRouter", statusCode: 429, message: "Rate limited")
@@ -348,6 +437,34 @@ struct MeetingSummaryClientTests {
         #expect(MeetingSummaryRetryPolicy.shouldRetry(
             MeetingSummaryError.backendFailed(backend: "OpenAI", statusCode: 503, message: "Unavailable")
         ))
+    }
+
+    @Test("summary retry policy uses backend-aware retry budgets")
+    func summaryRetryPolicyUsesBackendAwareRetryBudgets() {
+        #expect(MeetingSummaryRetryPolicy.effectiveRetryCount(
+            configuredCount: 5,
+            after: MeetingSummaryError.backendFailed(backend: "OpenAI", statusCode: 503, message: "Unavailable")
+        ) == 5)
+        #expect(MeetingSummaryRetryPolicy.effectiveRetryCount(
+            configuredCount: 5,
+            after: MeetingSummaryError.emptyResponse(backend: "Ollama")
+        ) == 1)
+        #expect(MeetingSummaryRetryPolicy.effectiveRetryCount(
+            configuredCount: 5,
+            after: MeetingSummaryError.requestFailed(
+                backend: "LM Studio",
+                underlying: URLError(.cannotConnectToHost)
+            )
+        ) == 0)
+        #expect(MeetingSummaryRetryPolicy.effectiveRetryCount(
+            configuredCount: 5,
+            after: MeetingSummaryError.emptyResponse(backend: "Custom LLM"),
+            localBackend: true
+        ) == 1)
+        #expect(MeetingSummaryRetryPolicy.effectiveRetryCount(
+            configuredCount: 99,
+            after: MeetingSummaryError.backendFailed(backend: "OpenRouter", statusCode: 429, message: "Rate limited")
+        ) == MeetingSummaryRetryPolicy.maximumRetryCount)
     }
 
     @Test("generateTitle returns nil without API key")
@@ -781,6 +898,22 @@ struct MeetingSummaryClientTests {
 
         config.customLLMAPIKey = "sk-ant-test"
         #expect(MeetingSummaryClient.customLLMHasRequiredSettings(config: config))
+    }
+
+    @Test("custom localhost summary backend uses local retry budget")
+    func customLocalhostSummaryBackendUsesLocalRetryBudget() {
+        var config = AppConfig()
+        config.meetingSummaryBackend = "custom_llm"
+        config.customLLMFormat = "openai"
+        config.customLLMURL = "http://localhost:8080"
+
+        #expect(MeetingSummaryClient.usesLocalSummaryRetryPolicy(config: config))
+
+        config.customLLMURL = "http://127.0.0.1:8080"
+        #expect(MeetingSummaryClient.usesLocalSummaryRetryPolicy(config: config))
+
+        config.customLLMURL = "https://models.example.com"
+        #expect(!MeetingSummaryClient.usesLocalSummaryRetryPolicy(config: config))
     }
 
     @Test("generateTitle returns nil for LM Studio when unreachable")
