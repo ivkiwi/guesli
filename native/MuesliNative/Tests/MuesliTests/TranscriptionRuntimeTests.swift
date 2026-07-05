@@ -69,6 +69,8 @@ struct DictationFinalPunctuationGuardTests {
         #expect(DictationFinalPunctuationGuard.apply("(done.)") == "(done.)")
         // Closing quote after a word gets an outside period; moving it inside would rewrite dictated text.
         #expect(DictationFinalPunctuationGuard.apply("\"done\"") == "\"done\".")
+        #expect(DictationFinalPunctuationGuard.apply("“done”") == "“done”.")
+        #expect(DictationFinalPunctuationGuard.apply("‘done’") == "‘done’.")
     }
 }
 
