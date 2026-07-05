@@ -526,6 +526,7 @@ struct AppConfigTests {
         #expect(config.mutedMeetingDetectionAppBundleIDs.isEmpty)
         #expect(config.openAIAPIKey.isEmpty)
         #expect(config.meetingRecordingFileFormat == MeetingRecordingFileFormat.m4a.rawValue)
+        #expect(config.meetingRecordingFolderPath.isEmpty)
         #expect(config.resolvedMeetingRecordingFileFormat == .m4a)
         #expect(config.openRouterAPIKey.isEmpty)
         #expect(config.meetingSummaryRetryCount == MeetingSummaryRetryPolicy.defaultRetryCount)
@@ -709,6 +710,7 @@ struct AppConfigTests {
         config.defaultMeetingTemplateID = "weekly-team-meeting"
         config.meetingRecordingSavePolicy = .always
         config.meetingRecordingFileFormat = MeetingRecordingFileFormat.wav.rawValue
+        config.meetingRecordingFolderPath = "/tmp/muesli-recordings"
         config.customMeetingTemplates = [
             CustomMeetingTemplate(
                 id: "tmpl_123",
@@ -785,6 +787,7 @@ struct AppConfigTests {
         #expect(decoded.defaultMeetingTemplateID == "weekly-team-meeting")
         #expect(decoded.meetingRecordingSavePolicy == .always)
         #expect(decoded.meetingRecordingFileFormat == MeetingRecordingFileFormat.wav.rawValue)
+        #expect(decoded.meetingRecordingFolderPath == "/tmp/muesli-recordings")
         #expect(decoded.resolvedMeetingRecordingFileFormat == .wav)
         #expect(decoded.customMeetingTemplates.count == 1)
         #expect(decoded.customMeetingTemplates.first?.name == "Customer Follow-Up")
@@ -872,6 +875,7 @@ struct AppConfigTests {
         #expect(json["default_meeting_template_id"] != nil)
         #expect(json["meeting_recording_save_policy"] != nil)
         #expect(json["meeting_recording_file_format"] != nil)
+        #expect(json["meeting_recording_folder_path"] != nil)
         #expect(json["show_scheduled_meeting_notifications"] != nil)
         #expect(json["show_meeting_detection_notification"] != nil)
         #expect(json["muted_meeting_detection_app_bundle_ids"] != nil)
@@ -941,6 +945,7 @@ struct AppConfigTests {
         #expect(config.hiddenCalendarEventSourceHints.isEmpty)
         #expect(config.meetingRecordingSavePolicy == .never)
         #expect(config.meetingRecordingFileFormat == MeetingRecordingFileFormat.m4a.rawValue)
+        #expect(config.meetingRecordingFolderPath.isEmpty)
         #expect(config.resolvedMeetingRecordingFileFormat == .m4a)
         #expect(config.showScheduledMeetingNotifications == true)
         #expect(config.showMeetingDetectionNotification == true)

@@ -261,7 +261,11 @@ enum AudioFileImportController {
         try Task.checkCancellation()
 
         // Persist the converted WAV as a saved recording so retranscription works
-        let savedRecordingPath = try persistRecording(wavURL: wavURL, title: generatedTitle)
+        let savedRecordingPath = try persistRecording(
+            wavURL: wavURL,
+            title: generatedTitle,
+            config: config
+        )
 
         progress("Saving...")
         let now = Date()
@@ -373,11 +377,18 @@ enum AudioFileImportController {
         return samples
     }
 
-    /// Copies the converted WAV to the meeting-recordings directory so the imported
+    /// Copies the converted WAV to the configured recordings directory so the imported
     /// meeting can be retranscribed later.
-    private static func persistRecording(wavURL: URL, title: String) throws -> String {
-        let recordingsDirectory = AppIdentity.supportDirectoryURL
-            .appendingPathComponent("meeting-recordings", isDirectory: true)
+    static func persistRecording(
+        wavURL: URL,
+        title: String,
+        config: AppConfig,
+        supportDirectory: URL = AppIdentity.supportDirectoryURL
+    ) throws -> String {
+        let recordingsDirectory = MeetingRecordingStorage.directory(
+            config: config,
+            supportDirectory: supportDirectory
+        )
         try FileManager.default.createDirectory(
             at: recordingsDirectory,
             withIntermediateDirectories: true

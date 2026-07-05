@@ -49,13 +49,14 @@ struct MeetingRecordingWriterTests {
         writer.appendSystem([1200, -800, 400])
         let tempURL = try #require(writer.stop())
         let supportDirectory = makeTemporaryDirectory()
+        let recordingsDirectory = MeetingRecordingStorage.defaultDirectory(supportDirectory: supportDirectory)
         let startedAt = Date(timeIntervalSince1970: 1_711_000_000)
 
         let savedURL = try await MeetingRecordingWriter.persistTemporaryRecordingAsync(
             from: tempURL,
             meetingTitle: "Weekly Product Sync! With Very Long Title Extra Words",
             startedAt: startedAt,
-            supportDirectory: supportDirectory,
+            recordingsDirectory: recordingsDirectory,
             fileFormat: .wav
         )
 
@@ -71,13 +72,14 @@ struct MeetingRecordingWriterTests {
         writer.appendSystem(Array(repeating: Int16(1200), count: 16_000))
         let tempURL = try #require(writer.stop())
         let supportDirectory = makeTemporaryDirectory()
+        let recordingsDirectory = MeetingRecordingStorage.defaultDirectory(supportDirectory: supportDirectory)
         let startedAt = Date(timeIntervalSince1970: 1_711_000_000)
 
         let savedURL = try await MeetingRecordingWriter.persistTemporaryRecordingAsync(
             from: tempURL,
             meetingTitle: "Weekly Product Sync",
             startedAt: startedAt,
-            supportDirectory: supportDirectory
+            recordingsDirectory: recordingsDirectory
         )
 
         #expect(FileManager.default.fileExists(atPath: tempURL.path) == false)
@@ -87,6 +89,26 @@ struct MeetingRecordingWriterTests {
 
         let file = try AVAudioFile(forReading: savedURL)
         #expect(file.length > 0)
+    }
+
+    @Test("persistTemporaryRecording writes to custom recordings directory")
+    func persistTemporaryRecordingWritesToCustomDirectory() async throws {
+        let writer = try MeetingRecordingWriter()
+        writer.appendSystem([100, 200])
+        let tempURL = try #require(writer.stop())
+        let customDirectory = makeTemporaryDirectory()
+            .appendingPathComponent("custom-recordings", isDirectory: true)
+
+        let savedURL = try await MeetingRecordingWriter.persistTemporaryRecordingAsync(
+            from: tempURL,
+            meetingTitle: "Custom Location",
+            startedAt: Date(timeIntervalSince1970: 1_711_000_000),
+            recordingsDirectory: customDirectory,
+            fileFormat: .wav
+        )
+
+        #expect(savedURL.deletingLastPathComponent().path == customDirectory.path)
+        #expect(try readMonoPCM16WAVSamples(from: savedURL) == [100, 200])
     }
 
     private func makeTemporaryDirectory() -> URL {

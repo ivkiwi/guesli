@@ -152,7 +152,7 @@ struct MeetingRecordingSaveRequest: Sendable {
     let tempURL: URL
     let meetingTitle: String
     let startedAt: Date
-    let supportDirectory: URL
+    let recordingsDirectory: URL
     let fileFormat: MeetingRecordingFileFormat
 }
 
@@ -3493,8 +3493,10 @@ final class MuesliController: NSObject {
                       !savedRecordingPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw MeetingRetranscriptionError.recordingUnavailable
                 }
-                let recordingURL = URL(fileURLWithPath: savedRecordingPath)
-                guard FileManager.default.fileExists(atPath: recordingURL.path) else {
+                guard let recordingURL = MeetingRecordingStorage.resolvedFileURL(
+                    forStoredPath: savedRecordingPath,
+                    config: self.config
+                ) else {
                     throw MeetingRetranscriptionError.recordingUnavailable
                 }
                 guard let backend = self.normalizeMeetingTranscriptionSelectionForAvailability() else {
@@ -4024,7 +4026,7 @@ final class MuesliController: NSObject {
         }
 
         do {
-            try clearSavedMeetingRecordingsDirectory()
+            try clearSavedMeetingRecordings()
         } catch {
             presentErrorAlert(
                 title: "Couldn't Clear Meeting History",
@@ -5316,8 +5318,7 @@ final class MuesliController: NSObject {
     }
 
     func revealMeetingRecordingInFinder(path: String) {
-        let url = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        guard let url = MeetingRecordingStorage.resolvedFileURL(forStoredPath: path, config: config) else {
             presentErrorAlert(
                 title: "Recording Not Found",
                 message: "The saved meeting recording is no longer available on disk."
@@ -5539,7 +5540,7 @@ final class MuesliController: NSObject {
             tempURL: retainedRecordingURL,
             meetingTitle: result.title,
             startedAt: result.startTime,
-            supportDirectory: AppIdentity.supportDirectoryURL,
+            recordingsDirectory: MeetingRecordingStorage.directory(config: config),
             fileFormat: config.resolvedMeetingRecordingFileFormat
         ))
     }
@@ -5569,7 +5570,7 @@ final class MuesliController: NSObject {
                     from: request.tempURL,
                     meetingTitle: request.meetingTitle,
                     startedAt: request.startedAt,
-                    supportDirectory: request.supportDirectory,
+                    recordingsDirectory: request.recordingsDirectory,
                     fileFormat: request.fileFormat
                 )
                 return PreparedMeetingRecordingSave(path: outputURL.path, error: nil)
@@ -5609,16 +5610,22 @@ final class MuesliController: NSObject {
         }
     }
 
-    private func clearSavedMeetingRecordingsDirectory() throws {
-        let recordingsDirectory = AppIdentity.supportDirectoryURL
-            .appendingPathComponent("meeting-recordings", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: recordingsDirectory.path) else { return }
-        try FileManager.default.removeItem(at: recordingsDirectory)
+    private func clearSavedMeetingRecordings() throws {
+        let paths = try dictationStore.recentMeetings().compactMap(\.savedRecordingPath)
+        for path in Set(paths) {
+            try deleteSavedMeetingRecording(at: path)
+        }
+
+        let defaultDirectory = MeetingRecordingStorage.defaultDirectory()
+        if FileManager.default.fileExists(atPath: defaultDirectory.path) {
+            try FileManager.default.removeItem(at: defaultDirectory)
+        }
     }
 
     private func deleteSavedMeetingRecording(at path: String) throws {
-        let url = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        guard let url = MeetingRecordingStorage.resolvedFileURL(forStoredPath: path, config: config) else {
+            return
+        }
 
         do {
             try FileManager.default.removeItem(at: url)

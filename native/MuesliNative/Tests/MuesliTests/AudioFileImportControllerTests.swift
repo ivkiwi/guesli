@@ -236,6 +236,26 @@ struct AudioFileImportControllerTests {
         #expect(result.contains("Test transcript"))
     }
 
+    @Test("persist imported recording writes to configured recordings folder")
+    func persistImportedRecordingWritesToConfiguredFolder() throws {
+        let wavURL = try createTestAudioFile(duration: 0.25, sampleRate: 16000, channels: 1)
+        defer { try? FileManager.default.removeItem(at: wavURL) }
+        let supportDirectory = temporaryDirectory(prefix: "import-support")
+        let customDirectory = temporaryDirectory(prefix: "import-recordings")
+        var config = AppConfig()
+        config.meetingRecordingFolderPath = customDirectory.path
+
+        let savedPath = try AudioFileImportController.persistRecording(
+            wavURL: wavURL,
+            title: "Imported Recording",
+            config: config,
+            supportDirectory: supportDirectory
+        )
+
+        #expect(savedPath.hasPrefix(customDirectory.path))
+        #expect(FileManager.default.fileExists(atPath: savedPath))
+    }
+
     // MARK: - Helpers
 
     /// Creates a test audio file with a sine wave tone.
@@ -289,5 +309,12 @@ struct AudioFileImportControllerTests {
 
     private func localMidnight() -> Date {
         Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 0))
+    }
+
+    private func temporaryDirectory(prefix: String) -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 }

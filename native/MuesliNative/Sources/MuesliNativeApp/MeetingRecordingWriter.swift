@@ -117,11 +117,9 @@ final class MeetingRecordingWriter {
         from tempURL: URL,
         meetingTitle: String,
         startedAt: Date,
-        supportDirectory: URL,
+        recordingsDirectory: URL,
         fileFormat: MeetingRecordingFileFormat = .m4a
     ) async throws -> URL {
-        let recordingsDirectory = supportDirectory
-            .appendingPathComponent("meeting-recordings", isDirectory: true)
         try FileManager.default.createDirectory(
             at: recordingsDirectory,
             withIntermediateDirectories: true

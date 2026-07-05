@@ -230,8 +230,11 @@ struct MeetingDetailView: View {
             }
 
             if let savedRecordingPath = meeting.savedRecordingPath,
-               FileManager.default.fileExists(atPath: savedRecordingPath) {
-                MeetingRecordingPlayerView(recordingPath: savedRecordingPath)
+               MeetingRecordingStorage.resolvedFileURL(
+                   forStoredPath: savedRecordingPath,
+                   config: appState.config
+               ) != nil {
+                MeetingRecordingPlayerView(recordingPath: savedRecordingPath, config: appState.config)
             }
 
             activeMeetingAudioWarningBanner(for: meeting)

@@ -176,6 +176,47 @@ struct MeetingsNavigationTests {
         #expect(FileManager.default.fileExists(atPath: savedRecordingURL.path) == false)
     }
 
+    @Test("deleteMeeting removes saved recording from custom folder")
+    func deleteMeetingRemovesCustomFolderRecording() throws {
+        let store = try makeStore()
+        let recordingsDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-recordings-custom-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: recordingsDirectory, withIntermediateDirectories: true)
+        let savedRecordingURL = recordingsDirectory.appendingPathComponent("meeting.wav")
+        let unrelatedURL = recordingsDirectory.appendingPathComponent("keep.txt")
+        try Data("recording".utf8).write(to: savedRecordingURL)
+        try Data("keep".utf8).write(to: unrelatedURL)
+
+        let now = Date()
+        let meetingID = try store.insertMeeting(
+            title: "Delete Custom Recording",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "Transcript",
+            formattedNotes: "## Notes",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: savedRecordingURL.path
+        )
+
+        let controller = MuesliController(
+            runtime: RuntimePaths(
+                repoRoot: FileManager.default.temporaryDirectory,
+                menuIcon: nil,
+                appIcon: nil,
+                bundlePath: nil
+            ),
+            dictationStore: store
+        )
+
+        controller.deleteMeeting(id: meetingID)
+
+        #expect(try store.meeting(id: meetingID) == nil)
+        #expect(FileManager.default.fileExists(atPath: savedRecordingURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: unrelatedURL.path) == true)
+    }
+
     @Test("deleteMeeting refuses live meeting rows")
     func deleteMeetingRefusesLiveRows() throws {
         let store = try makeStore()

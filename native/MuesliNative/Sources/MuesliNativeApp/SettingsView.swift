@@ -103,6 +103,7 @@ struct SettingsView: View {
     @State private var isLoadingOpenRouterFreeModels = false
     @State private var openRouterFreeModelsError: String?
     @State private var hasRefreshedMeetingCalendarSources = false
+    @State private var meetingRecordingFolderError: String?
 
     // Uniform width for standard right-side controls.
     private let controlWidth: CGFloat = 220
@@ -269,6 +270,19 @@ struct SettingsView: View {
             }
         } message: {
             Text("Dictionary suggestions briefly read focused app text via Accessibility after dictation. Grant access, then relaunch Muesli to turn suggestions on.")
+        }
+        .alert(
+            "Recording Folder",
+            isPresented: Binding(
+                get: { meetingRecordingFolderError != nil },
+                set: { if !$0 { meetingRecordingFolderError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                meetingRecordingFolderError = nil
+            }
+        } message: {
+            Text(meetingRecordingFolderError ?? "")
         }
         .sheet(isPresented: $isCleanupPromptManagerPresented) {
             TranscriptCleanupPromptsManagerView(
@@ -1139,6 +1153,10 @@ struct SettingsView: View {
                         controller.updateConfig { $0.meetingRecordingSavePolicy = policy }
                     }
                 }
+                Divider().background(MuesliTheme.surfaceBorder)
+                settingsRow("Recordings folder") {
+                    meetingRecordingFolderPicker
+                }
                 if appState.config.meetingRecordingSavePolicy != .never {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Recording format") {
@@ -1677,6 +1695,37 @@ struct SettingsView: View {
         presentOpenPanel(panel) { url in
             controller.updateConfig { $0.autoExportMarkdownFolderPath = url.standardizedFileURL.path }
         }
+    }
+
+    private func pickMeetingRecordingFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a folder for meeting recordings"
+        panel.prompt = "Choose Folder"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = preferredMeetingRecordingDirectoryURL()
+
+        presentOpenPanel(panel) { url in
+            do {
+                try MeetingRecordingStorage.validateWritableDirectory(url)
+                controller.updateConfig { $0.meetingRecordingFolderPath = url.standardizedFileURL.path }
+            } catch {
+                meetingRecordingFolderError = error.localizedDescription
+            }
+        }
+    }
+
+    private func preferredMeetingRecordingDirectoryURL() -> URL {
+        let configuredPath = appState.config.meetingRecordingFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configuredPath.isEmpty {
+            let configuredURL = URL(fileURLWithPath: configuredPath).standardizedFileURL
+            if FileManager.default.fileExists(atPath: configuredURL.path) {
+                return configuredURL
+            }
+        }
+        return MeetingRecordingStorage.defaultDirectory()
     }
 
     private func preferredAutoExportDirectoryURL() -> URL {
@@ -2419,20 +2468,54 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
+    private var meetingRecordingFolderPicker: some View {
+        folderPathPicker(
+            path: appState.config.meetingRecordingFolderPath,
+            emptyLabel: "Default Muesli folder",
+            emptyHelp: MeetingRecordingStorage.defaultDirectory().path,
+            clearLabel: "Reset recordings folder to default",
+            chooseLabel: "Choose recordings folder",
+            onClear: { controller.updateConfig { $0.meetingRecordingFolderPath = "" } },
+            onChoose: pickMeetingRecordingFolder
+        )
+    }
+
+    @ViewBuilder
     private var autoExportFolderPicker: some View {
+        folderPathPicker(
+            path: appState.config.autoExportMarkdownFolderPath,
+            emptyLabel: "Choose a folder…",
+            emptyHelp: "No destination folder selected",
+            clearLabel: "Clear destination folder",
+            chooseLabel: "Choose destination folder",
+            onClear: { controller.updateConfig { $0.autoExportMarkdownFolderPath = "" } },
+            onChoose: pickAutoExportFolder
+        )
+    }
+
+    @ViewBuilder
+    private func folderPathPicker(
+        path: String,
+        emptyLabel: String,
+        emptyHelp: String,
+        clearLabel: String,
+        chooseLabel: String,
+        onClear: @escaping () -> Void,
+        onChoose: @escaping () -> Void
+    ) -> some View {
         HStack(spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "folder")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(MuesliTheme.textTertiary)
 
-                if appState.config.autoExportMarkdownFolderPath.isEmpty {
-                    Text("Choose a folder…")
+                if path.isEmpty {
+                    Text(emptyLabel)
                         .font(.system(size: 12))
                         .foregroundStyle(MuesliTheme.textTertiary)
                         .lineLimit(1)
                 } else {
-                    Text(appState.config.autoExportMarkdownFolderPath)
+                    Text(path)
                         .font(.system(size: 12))
                         .foregroundStyle(MuesliTheme.textPrimary)
                         .lineLimit(1)
@@ -2449,11 +2532,11 @@ struct SettingsView: View {
                 RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
                     .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
             )
-            .help(appState.config.autoExportMarkdownFolderPath.isEmpty ? "No destination folder selected" : appState.config.autoExportMarkdownFolderPath)
+            .help(path.isEmpty ? emptyHelp : path)
 
-            if !appState.config.autoExportMarkdownFolderPath.isEmpty {
+            if !path.isEmpty {
                 Button {
-                    controller.updateConfig { $0.autoExportMarkdownFolderPath = "" }
+                    onClear()
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .semibold))
@@ -2467,12 +2550,12 @@ struct SettingsView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Clear destination folder")
-                .help("Clear destination folder")
+                .accessibilityLabel(clearLabel)
+                .help(clearLabel)
             }
 
             Button {
-                pickAutoExportFolder()
+                onChoose()
             } label: {
                 Image(systemName: "folder.badge.plus")
                     .font(.system(size: 12, weight: .medium))
@@ -2486,8 +2569,8 @@ struct SettingsView: View {
                     )
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Choose destination folder")
-            .help("Choose destination folder")
+            .accessibilityLabel(chooseLabel)
+            .help(chooseLabel)
         }
     }
 

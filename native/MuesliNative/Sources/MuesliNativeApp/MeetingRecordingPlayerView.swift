@@ -163,6 +163,7 @@ private extension Data {
 
 struct MeetingRecordingPlayerView: View {
     let recordingPath: String
+    let config: AppConfig
 
     @State private var waveform: RecordingWaveformData?
     @State private var player: AVAudioPlayer?
@@ -269,7 +270,13 @@ struct MeetingRecordingPlayerView: View {
         currentTime = 0
         isPlaying = false
 
-        let url = URL(fileURLWithPath: recordingPath)
+        guard let url = MeetingRecordingStorage.resolvedFileURL(
+            forStoredPath: recordingPath,
+            config: config
+        ) else {
+            loadFailed = true
+            return
+        }
         do {
             let loadedWaveform = try await Task.detached(priority: .utility) {
                 try await RecordingWaveformCache.shared.waveform(for: url)
