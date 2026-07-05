@@ -1,6 +1,9 @@
 import Foundation
 
 enum TranscriptOverlapMerger {
+    private static let overlapSearchWordLimit = 15
+    private static let retainedContextWordLimit = 80
+
     /// Merge transcripts from overlapping audio chunks by deduplicating shared content.
     /// Uses hash-based trigram matching near the previous tail and next head.
     static func merge(_ transcripts: [String]) -> String {
@@ -9,11 +12,13 @@ enum TranscriptOverlapMerger {
         }
 
         var merged = transcripts[0]
+        var context = retainedContext(from: merged)
         for transcript in transcripts.dropFirst() {
-            let addition = uniqueAddition(previous: merged, next: transcript)
+            let addition = uniqueAddition(previous: context, next: transcript)
             if !addition.isEmpty {
                 merged += (merged.isEmpty ? "" : " ") + addition
             }
+            context = retainedContextAfterAppending(addition, to: context)
         }
 
         return merged
@@ -26,10 +31,8 @@ enum TranscriptOverlapMerger {
             return next
         }
 
-        let normalize: (String) -> String = { $0.lowercased().filter(\.isLetter) }
-
-        let tailSize = min(prevWords.count, 40)
-        let tail = prevWords.suffix(tailSize).map { normalize($0) }
+        let tailSize = min(prevWords.count, overlapSearchWordLimit)
+        let tail = prevWords.suffix(tailSize).map(normalizedWord)
         var trigramIndex: [String: Int] = [:]
         if tail.count >= 3 {
             for j in 0...(tail.count - 3) {
@@ -38,8 +41,8 @@ enum TranscriptOverlapMerger {
             }
         }
 
-        let headSize = min(nextWords.count, 40)
-        let head = nextWords.prefix(headSize).map { normalize($0) }
+        let headSize = min(nextWords.count, overlapSearchWordLimit)
+        let head = nextWords.prefix(headSize).map(normalizedWord)
         var bestAnchorStart = -1
         var bestRunEnd = 0
 
@@ -63,7 +66,10 @@ enum TranscriptOverlapMerger {
             }
         }
 
-        guard bestAnchorStart >= 0 else { return next }
+        guard bestAnchorStart >= 0 else {
+            let overlap = suffixPrefixOverlap(prevWords, nextWords)
+            return nextWords.dropFirst(overlap).joined(separator: " ")
+        }
 
         let preAnchor = nextWords.prefix(bestAnchorStart).joined(separator: " ")
         let postOverlap = nextWords.dropFirst(bestRunEnd).joined(separator: " ")
@@ -72,19 +78,51 @@ enum TranscriptOverlapMerger {
 
     static func deduplicateSegments(_ segments: [SpeechSegment]) -> [SpeechSegment] {
         guard !segments.isEmpty else { return [] }
-        var mergedText = ""
+        var previousText = ""
         var result: [SpeechSegment] = []
 
         for segment in segments {
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
 
-            let addition = uniqueAddition(previous: mergedText, next: text)
+            let addition = uniqueAddition(previous: previousText, next: text)
             guard !addition.isEmpty else { continue }
-            mergedText += (mergedText.isEmpty ? "" : " ") + addition
+            previousText = retainedContextAfterAppending(addition, to: previousText)
             result.append(SpeechSegment(start: segment.start, end: segment.end, text: addition))
         }
 
         return result
+    }
+
+    static func retainedContextAfterAppending(_ addition: String, to previous: String) -> String {
+        guard !addition.isEmpty else {
+            return retainedContext(from: previous)
+        }
+        return retainedContext(from: [previous, addition].filter { !$0.isEmpty }.joined(separator: " "))
+    }
+
+    private static func normalizedWord(_ word: String) -> String {
+        word.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    private static func suffixPrefixOverlap(_ left: [String], _ right: [String]) -> Int {
+        let limit = min(overlapSearchWordLimit, left.count, right.count)
+        guard limit >= 2 else { return 0 }
+
+        for count in stride(from: limit, through: 2, by: -1) {
+            let leftSuffix = left.suffix(count).map(normalizedWord)
+            let rightPrefix = right.prefix(count).map(normalizedWord)
+            if !leftSuffix.contains(""), leftSuffix == rightPrefix {
+                return count
+            }
+        }
+
+        return 0
+    }
+
+    private static func retainedContext(from text: String) -> String {
+        let words = text.split(separator: " ")
+        guard words.count > retainedContextWordLimit else { return text }
+        return words.suffix(retainedContextWordLimit).joined(separator: " ")
     }
 }

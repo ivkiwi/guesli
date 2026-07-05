@@ -192,7 +192,7 @@ final class MeetingSession {
     private let backendLock = OSAllocatedUnfairLock(initialState: BackendOption.whisper)
     private let runtime: RuntimePaths
     private let config: AppConfig
-    private let liveChunkingConfiguration: LiveMeetingChunkingConfiguration
+    private var liveChunkingConfiguration: LiveMeetingChunkingConfiguration
     private let transcriptionCoordinator: TranscriptionCoordinator
     private let transcriptCleaner: any MeetingTranscriptCleaning
     private let systemAudioRecorder: SystemAudioCapturing
@@ -270,8 +270,14 @@ final class MeetingSession {
         }
     }
 
-    func updateBackend(_ backend: BackendOption) {
-        backendLock.withLock { $0 = backend }
+    @discardableResult
+    func updateBackend(_ backend: BackendOption) -> Bool {
+        chunkRotationQueue.sync {
+            guard !isRecording else { return false }
+            backendLock.withLock { $0 = backend }
+            liveChunkingConfiguration = Self.liveChunkingConfiguration(for: backend)
+            return true
+        }
     }
 
     func recordSpeakerObservation(_ observation: MeetSpeakerObservation) {
@@ -291,6 +297,18 @@ final class MeetingSession {
     static func liveChunkingConfiguration(for backend: BackendOption) -> LiveMeetingChunkingConfiguration {
         LiveMeetingChunkingConfiguration.configuration(for: backend)
     }
+
+#if DEBUG
+    func setRecordingForTesting(_ recording: Bool) {
+        chunkRotationQueue.sync {
+            isRecording = recording
+        }
+    }
+
+    func currentBackendForTesting() -> BackendOption {
+        currentBackend()
+    }
+#endif
 
     func start() async throws {
         let vadManager = await transcriptionCoordinator.getVadManager()

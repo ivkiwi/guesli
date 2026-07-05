@@ -1,3 +1,4 @@
+import CoreAudio
 import FluidAudio
 import Foundation
 import Testing
@@ -146,4 +147,91 @@ struct MeetingLiveOverlapPipelineTests {
 
         #expect(merged == "zero one two three four five six seven eight nine")
     }
+
+    @Test("live overlap context stays bounded")
+    func liveOverlapContextStaysBounded() throws {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        var overlapBySpeaker = [
+            "42|You": (0..<100).map { "p\($0)" }.joined(separator: " "),
+        ]
+
+        let entries = LiveTranscriptCheckpointAssembler.entries(
+            segments: [SpeechSegment(start: 8, end: 18, text: "p97 p98 p99 fresh words")],
+            speaker: "You",
+            meetingID: 42,
+            liveTranscriptStart: start,
+            shouldDeduplicate: true,
+            overlapByMeetingSpeaker: &overlapBySpeaker
+        )
+        let retained = try #require(overlapBySpeaker["42|You"])
+
+        #expect(entries.map(\.text) == ["fresh words"])
+        #expect(retained.split(separator: " ").count <= 80)
+        #expect(retained.hasSuffix("fresh words"))
+    }
+
+    @Test("late repeated trigram does not drop new words")
+    func lateRepeatedTrigramDoesNotDropNewWords() {
+        let filler = (0..<16).map { "fresh\($0)" }.joined(separator: " ")
+        let next = "\(filler) alpha beta gamma still new"
+
+        let addition = TranscriptOverlapMerger.uniqueAddition(
+            previous: "alpha beta gamma",
+            next: next
+        )
+
+        #expect(addition == next)
+    }
+
+#if DEBUG
+    @Test("backend update is rejected while recording")
+    func backendUpdateIsRejectedWhileRecording() {
+        let session = MeetingSession(
+            title: "Test",
+            calendarEventID: nil,
+            backend: .whisper,
+            runtime: RuntimePaths(
+                repoRoot: FileManager.default.temporaryDirectory,
+                menuIcon: nil,
+                appIcon: nil,
+                bundlePath: nil
+            ),
+            config: AppConfig(),
+            transcriptionCoordinator: TranscriptionCoordinator(),
+            meetingMicRecorder: FakeMeetingMicRecorder()
+        )
+
+        #expect(session.updateBackend(.gigaAMV3Russian))
+        #expect(session.currentBackendForTesting() == .gigaAMV3Russian)
+
+        session.setRecordingForTesting(true)
+
+        #expect(!session.updateBackend(.whisper))
+        #expect(session.currentBackendForTesting() == .gigaAMV3Russian)
+    }
+#endif
 }
+
+#if DEBUG
+private final class FakeMeetingMicRecorder: MeetingMicRecording {
+    var preferredInputDeviceID: AudioObjectID?
+    var onRawPCMSamples: (([Int16]) -> Void)?
+    var onRecordingFailed: ((Error) -> Void)?
+
+    func prepare() throws {}
+    func start() throws {}
+    func pause() {}
+    func resume() {}
+    func stop() -> URL? { nil }
+    func cancel() {}
+    func currentPower() -> Float { -80 }
+
+    func diagnosticsSnapshot() -> MeetingMicRecorderDiagnosticsSnapshot {
+        MeetingMicRecorderDiagnosticsSnapshot(
+            recorderKind: .systemDefaultStreaming,
+            preferredInputDeviceID: preferredInputDeviceID,
+            route: nil
+        )
+    }
+}
+#endif
