@@ -34,6 +34,10 @@ enum Qwen3DeletionCueDetector {
 }
 
 enum Qwen3PostProcessorOutputCleaner {
+    private static let closingSentenceDelimiters: Set<Character> = [
+        "\"", "'", "”", "’", "»", "›", ")", "]", "}", "）", "】", "」", "』", "》", "〉",
+    ]
+
     static func clean(_ text: String) -> String {
         guard !text.isEmpty else { return text }
 
@@ -105,6 +109,33 @@ enum Qwen3PostProcessorOutputCleaner {
             options: .regularExpression
         )
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func appendSentenceFinalPeriodIfNeeded(_ text: String) -> String {
+        guard let lastContentIndex = text.lastIndex(where: { !$0.isWhitespace }) else { return text }
+
+        var inspectedIndex = lastContentIndex
+        while closingSentenceDelimiters.contains(text[inspectedIndex]) {
+            guard inspectedIndex != text.startIndex else { return text }
+            inspectedIndex = text.index(before: inspectedIndex)
+        }
+
+        let terminal = text[inspectedIndex]
+        guard !isEmojiLikeTerminal(terminal) else { return text }
+        guard terminal.isLetter || terminal.isNumber else { return text }
+
+        var result = text
+        result.insert(".", at: result.index(after: lastContentIndex))
+        return result
+    }
+
+    private static func isEmojiLikeTerminal(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            scalar.properties.isEmojiPresentation
+                || scalar.value == 0xFE0F
+                || scalar.value == 0x20E3
+                || scalar.value == 0x200D
+        }
     }
 
     static func shouldFallbackToInput(cleaned: String, input: String) -> Bool {

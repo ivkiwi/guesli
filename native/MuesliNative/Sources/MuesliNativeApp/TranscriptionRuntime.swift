@@ -335,7 +335,11 @@ actor TranscriptionCoordinator {
             enabled: enablePostProcessor,
             appContext: appContext
         ) ?? removeFillersWithLogging(result)
-        let final = applyCustomWords(result, customWords: customWords)
+        let corrected = applyCustomWords(result, customWords: customWords)
+        let final = SpeechTranscriptionResult(
+            text: Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded(corrected.text),
+            segments: corrected.segments
+        )
         if !final.text.isEmpty {
             Qwen3PostProcessorLogging.logVerbose("Dictation final transcript: \(final.text)")
         }
