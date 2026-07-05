@@ -1,5 +1,6 @@
 @preconcurrency import CoreML
 import Foundation
+import MuesliCore
 
 struct GigaAMV3TranscriptionResult: Sendable {
     let text: String
@@ -61,9 +62,9 @@ enum GigaAMV3FileChunking {
 
     private static func suffixPrefixOverlap(_ left: [String], _ right: [String]) -> Int {
         let limit = min(40, left.count, right.count)
-        guard limit >= 2 else { return 0 }
+        guard limit >= 1 else { return 0 }
 
-        for count in stride(from: limit, through: 2, by: -1) {
+        for count in stride(from: limit, through: 1, by: -1) {
             let leftSuffix = left.suffix(count).map(normalizedWord)
             let rightPrefix = right.prefix(count).map(normalizedWord)
             if !leftSuffix.contains(""), leftSuffix == rightPrefix {
@@ -136,7 +137,10 @@ enum GigaAMV3ModelStore {
     ]
 
     static func cacheDirectory(fileManager: FileManager = .default) -> URL {
-        AppIdentity.supportDirectoryURL.appendingPathComponent(cacheRelativePath, isDirectory: true)
+        MuesliPaths.defaultSupportDirectoryURL(
+            appName: AppIdentity.supportDirectoryName,
+            fileManager: fileManager
+        ).appendingPathComponent(cacheRelativePath, isDirectory: true)
     }
 
     static func isAvailableLocally(fileManager: FileManager = .default) -> Bool {
@@ -813,7 +817,10 @@ actor GigaAMV3Transcriber {
         }
     }
 
-    private nonisolated static func readableTranscriptionError(_ error: Error) -> Error {
+    nonisolated static func readableTranscriptionError(_ error: Error) -> Error {
+        if let cancellationError = cancellationError(in: error) {
+            return cancellationError
+        }
         let nsError = error as NSError
         if nsError.domain == "GigaAMV3Transcriber" {
             return error
@@ -823,5 +830,16 @@ actor GigaAMV3Transcriber {
             NSLocalizedDescriptionKey: "GigaAM v3 transcription failed: \(error.localizedDescription)",
             NSUnderlyingErrorKey: error,
         ])
+    }
+
+    private nonisolated static func cancellationError(in error: Error) -> Error? {
+        if error is CancellationError {
+            return error
+        }
+        let nsError = error as NSError
+        if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return cancellationError(in: underlyingError)
+        }
+        return nil
     }
 }

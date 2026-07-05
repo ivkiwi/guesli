@@ -1,8 +1,8 @@
 import Foundation
 
 public enum MuesliPaths {
-    public static func defaultSupportDirectoryURL(appName: String = "Guesli") -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
+    public static func defaultSupportDirectoryURL(appName: String = "Guesli", fileManager: FileManager = .default) -> URL {
+        fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support", isDirectory: true)
             .appendingPathComponent(appName, isDirectory: true)
     }

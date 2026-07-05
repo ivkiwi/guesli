@@ -185,7 +185,7 @@ enum LiveTranscriptCheckpointAssembler {
                 .uniqueAddition(previous: previous, next: entry.text)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             overlapByMeetingSpeaker[key] = TranscriptOverlapMerger
-                .merge([previous, entry.text])
+                .retainedContextAfterAppending(addition, to: previous)
             guard !addition.isEmpty else { return nil }
             return LiveTranscriptCheckpointEntry(
                 timestampLabel: entry.timestampLabel,
