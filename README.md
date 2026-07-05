@@ -75,7 +75,6 @@ Download the latest `.dmg` from [Releases](https://github.com/Muesli-HQ/muesli/r
 ### Homebrew
 
 ```bash
-brew tap Muesli-HQ/muesli
 brew install --cask muesli
 ```
 
