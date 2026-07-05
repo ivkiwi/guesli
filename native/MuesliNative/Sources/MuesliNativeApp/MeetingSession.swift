@@ -7,6 +7,7 @@ import os
 final class MeetingChunkCollector {
     private struct PendingTask {
         let id: UUID
+        let sequence: Int
         let task: Task<[SpeechSegment], Never>
     }
 
@@ -16,6 +17,9 @@ final class MeetingChunkCollector {
         // accumulate for the full meeting duration.
         var pendingTasks: [PendingTask] = []
         var completedSegments: [SpeechSegment] = []
+        var nextSequence = 0
+        var nextLiveSequenceToEmit = 0
+        var completedLiveChunks: [Int: [SpeechSegment]] = [:]
         var isClosed = false
     }
 
@@ -27,7 +31,9 @@ final class MeetingChunkCollector {
         let id = UUID()
         let registered = lock.withLock { state in
             guard !state.isClosed else { return false }
-            state.pendingTasks.append(PendingTask(id: id, task: task))
+            let sequence = state.nextSequence
+            state.nextSequence += 1
+            state.pendingTasks.append(PendingTask(id: id, sequence: sequence, task: task))
             return true
         }
         return (registered, id)
@@ -35,12 +41,23 @@ final class MeetingChunkCollector {
 
     /// Move a completed task's result into the collector and drop the Task reference.
     /// Must be called from the watcher Task after awaiting the transcription task's value.
-    func retire(id: UUID, segments: [SpeechSegment]) -> Bool {
+    func retire(id: UUID, segments: [SpeechSegment]) -> [[SpeechSegment]]? {
         lock.withLock { state in
-            guard !state.isClosed else { return false }
+            guard !state.isClosed else { return nil }
+            guard let pendingIndex = state.pendingTasks.firstIndex(where: { $0.id == id }) else {
+                return []
+            }
+            let sequence = state.pendingTasks[pendingIndex].sequence
             state.completedSegments.append(contentsOf: segments)
-            state.pendingTasks.removeAll { $0.id == id }
-            return true
+            state.pendingTasks.remove(at: pendingIndex)
+
+            state.completedLiveChunks[sequence] = segments
+            var readyChunks: [[SpeechSegment]] = []
+            while let ready = state.completedLiveChunks.removeValue(forKey: state.nextLiveSequenceToEmit) {
+                readyChunks.append(ready)
+                state.nextLiveSequenceToEmit += 1
+            }
+            return readyChunks
         }
     }
 
@@ -51,6 +68,7 @@ final class MeetingChunkCollector {
             let completed = state.completedSegments
             state.pendingTasks.removeAll()
             state.completedSegments.removeAll()
+            state.completedLiveChunks.removeAll()
             return (tasks, completed)
         }
 
@@ -73,6 +91,7 @@ final class MeetingChunkCollector {
             let tasks = state.pendingTasks.map { $0.task }
             state.pendingTasks.removeAll()
             state.completedSegments.removeAll()
+            state.completedLiveChunks.removeAll()
             return tasks
         }
         tasksToCancel.forEach { $0.cancel() }
@@ -637,9 +656,10 @@ final class MeetingSession {
         if registered {
             Task { [weak self] in
                 let segments = await task.value
-                guard self?.micChunkCollector.retire(id: retireID, segments: segments) == true else { return }
-                guard !segments.isEmpty else { return }
-                self?.onChunkTranscribed?(segments, "You")
+                guard let readyChunks = self?.micChunkCollector.retire(id: retireID, segments: segments) else { return }
+                for readySegments in readyChunks where !readySegments.isEmpty {
+                    self?.onChunkTranscribed?(readySegments, "You")
+                }
             }
         } else {
             task.cancel()
@@ -705,9 +725,10 @@ final class MeetingSession {
         if registered {
             Task { [weak self] in
                 let segments = await task.value
-                guard self?.systemChunkCollector.retire(id: retireID, segments: segments) == true else { return }
-                guard !segments.isEmpty else { return }
-                self?.onChunkTranscribed?(segments, "Others")
+                guard let readyChunks = self?.systemChunkCollector.retire(id: retireID, segments: segments) else { return }
+                for readySegments in readyChunks where !readySegments.isEmpty {
+                    self?.onChunkTranscribed?(readySegments, "Others")
+                }
             }
         } else {
             task.cancel()

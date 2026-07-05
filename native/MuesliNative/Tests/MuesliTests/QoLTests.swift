@@ -279,6 +279,60 @@ struct MeetingChunkCollectorTests {
         #expect(segments.map(\.start) == [10, 30])
     }
 
+    @Test("collector releases live chunks in registration order")
+    func collectorReleasesLiveChunksInRegistrationOrder() {
+        let collector = MeetingChunkCollector()
+        let first = collector.add(Task { [SpeechSegment(start: 1, end: 2, text: "first")] })
+        let second = collector.add(Task { [SpeechSegment(start: 2, end: 3, text: "second")] })
+
+        let early = collector.retire(id: second.retireID, segments: [SpeechSegment(start: 2, end: 3, text: "second")])
+        let ready = collector.retire(id: first.retireID, segments: [SpeechSegment(start: 1, end: 2, text: "first")])
+
+        #expect(first.registered)
+        #expect(second.registered)
+        #expect(early?.isEmpty == true)
+        #expect(ready?.map { $0.map(\.text) } == [["first"], ["second"]])
+    }
+
+    @Test("collector empty chunks advance live release sequence")
+    func collectorEmptyChunksAdvanceLiveReleaseSequence() {
+        let collector = MeetingChunkCollector()
+        let first = collector.add(Task { [] })
+        let second = collector.add(Task { [SpeechSegment(start: 2, end: 3, text: "second")] })
+
+        let early = collector.retire(id: second.retireID, segments: [SpeechSegment(start: 2, end: 3, text: "second")])
+        let ready = collector.retire(id: first.retireID, segments: [])
+
+        #expect(first.registered)
+        #expect(second.registered)
+        #expect(early?.isEmpty == true)
+        #expect(ready?.map { $0.map(\.text) } == [[], ["second"]])
+    }
+
+    @Test("collector live release state is independent per track")
+    func collectorLiveReleaseStateIsIndependentPerTrack() {
+        let mic = MeetingChunkCollector()
+        let system = MeetingChunkCollector()
+        let micFirst = mic.add(Task { [SpeechSegment(start: 1, end: 2, text: "mic first")] })
+        let micSecond = mic.add(Task { [SpeechSegment(start: 2, end: 3, text: "mic second")] })
+        let systemFirst = system.add(Task { [SpeechSegment(start: 1, end: 2, text: "system first")] })
+        let systemSecond = system.add(Task { [SpeechSegment(start: 2, end: 3, text: "system second")] })
+
+        let blockedMic = mic.retire(id: micSecond.retireID, segments: [SpeechSegment(start: 2, end: 3, text: "mic second")])
+        let readySystem = system.retire(id: systemFirst.retireID, segments: [SpeechSegment(start: 1, end: 2, text: "system first")])
+        let readyMic = mic.retire(id: micFirst.retireID, segments: [SpeechSegment(start: 1, end: 2, text: "mic first")])
+        let laterSystem = system.retire(id: systemSecond.retireID, segments: [SpeechSegment(start: 2, end: 3, text: "system second")])
+
+        #expect(micFirst.registered)
+        #expect(micSecond.registered)
+        #expect(systemFirst.registered)
+        #expect(systemSecond.registered)
+        #expect(blockedMic?.isEmpty == true)
+        #expect(readySystem?.map { $0.map(\.text) } == [["system first"]])
+        #expect(readyMic?.map { $0.map(\.text) } == [["mic first"], ["mic second"]])
+        #expect(laterSystem?.map { $0.map(\.text) } == [["system second"]])
+    }
+
     @Test("collector rejects tasks after closing")
     func collectorRejectsLateTasks() async {
         let collector = MeetingChunkCollector()
@@ -297,8 +351,8 @@ struct MeetingChunkCollectorTests {
         lateTask.cancel()
     }
 
-    @Test("collector retire returns false after drain closes collector")
-    func collectorRetireReturnsFalseAfterDrain() async {
+    @Test("collector retire returns nil after drain closes collector")
+    func collectorRetireReturnsNilAfterDrain() async {
         let collector = MeetingChunkCollector()
         let task = Task<[SpeechSegment], Never> {
             try? await Task.sleep(for: .milliseconds(10))
@@ -311,7 +365,7 @@ struct MeetingChunkCollectorTests {
         let retired = collector.retire(id: registration.retireID, segments: await task.value)
 
         #expect(drained.map(\.text) == ["first"])
-        #expect(retired == false)
+        #expect(retired == nil)
     }
 
     @Test("collector flattens timed segments from a single chunk and sorts them")
