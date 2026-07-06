@@ -243,6 +243,16 @@ struct SenseVoiceFileChunkingTests {
         #expect(result == "今天我们讨论语音识别模型效果很好")
     }
 
+    @Test("merge preserves ASCII boundary in mixed CJK mode")
+    func mergePreservesASCIIBoundaryInMixedCJKMode() {
+        let result = SenseVoiceFileChunking.mergeTranscripts([
+            "今天 review ended",
+            "next 会议开始",
+        ])
+
+        #expect(result == "今天 review ended next 会议开始")
+    }
+
     @Test("window reader reads bounded chunks")
     func windowReaderReadsBoundedChunks() throws {
         let sampleRate = SenseVoiceFileChunking.sampleRate
@@ -258,6 +268,7 @@ struct SenseVoiceFileChunkingTests {
 
         #expect(first.count > 14 * sampleRate)
         #expect(first.count <= 15 * sampleRate)
+        #expect(second.count > 2 * sampleRate)
         #expect(second.count <= 3 * sampleRate + 64)
         #expect(first.count < reader.sampleCount)
     }

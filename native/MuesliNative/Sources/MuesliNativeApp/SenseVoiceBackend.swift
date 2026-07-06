@@ -72,7 +72,15 @@ private enum SenseVoiceTranscriptMerger {
             let next = Array(transcript.trimmingCharacters(in: .whitespacesAndNewlines))
             guard !next.isEmpty else { continue }
             let overlap = suffixPrefixCharacterOverlap(characters, next)
-            characters.append(contentsOf: next.dropFirst(overlap))
+            let tail = next.dropFirst(overlap)
+            if overlap == 0,
+               let last = characters.last,
+               let first = tail.first,
+               last.isASCII, first.isASCII,
+               (last.isLetter || last.isNumber), (first.isLetter || first.isNumber) {
+                characters.append(" ")
+            }
+            characters.append(contentsOf: tail)
         }
         return String(characters)
     }
