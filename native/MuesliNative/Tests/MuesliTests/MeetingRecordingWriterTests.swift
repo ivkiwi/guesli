@@ -169,6 +169,63 @@ struct MeetingRecordingWriterTests {
         #expect(try store.meeting(id: migratedID)?.savedRecordingPath == migratedPath)
     }
 
+    @Test("legacy wav migration continues after attributes failure")
+    func legacyWAVMigrationContinuesAfterAttributesFailure() throws {
+        let store = try makeStore()
+        let recordingsDirectory = makeTemporaryDirectory()
+        let failedWAVURL = recordingsDirectory.appendingPathComponent("failed.wav")
+        let migratedWAVURL = recordingsDirectory.appendingPathComponent("migrated.wav")
+        try Data(repeating: 1, count: 2_048).write(to: failedWAVURL)
+
+        let writer = try MeetingRecordingWriter()
+        writer.appendSystem(Array(repeating: 1200, count: 16_000))
+        let tempWAVURL = try #require(writer.stop())
+        try FileManager.default.moveItem(at: tempWAVURL, to: migratedWAVURL)
+
+        let now = Date(timeIntervalSince1970: 1_711_000_000)
+        let failedID = try store.insertMeeting(
+            title: "Failed",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "failed",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: failedWAVURL.path
+        )
+        let migratedID = try store.insertMeeting(
+            title: "Migrated",
+            calendarEventID: nil,
+            startTime: now.addingTimeInterval(120),
+            endTime: now.addingTimeInterval(180),
+            rawTranscript: "migrated",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: migratedWAVURL.path
+        )
+        let fileManager = StubAttributesFailureFileManager(failingURL: failedWAVURL)
+
+        let summary = try MeetingRecordingStorage.migrateLegacyWAVRecordings(
+            store: store,
+            recordingsDirectory: recordingsDirectory,
+            fileManager: fileManager
+        )
+
+        let failedMeeting = try #require(try store.meeting(id: failedID))
+        let migratedMeeting = try #require(try store.meeting(id: migratedID))
+        let migratedPath = try #require(migratedMeeting.savedRecordingPath)
+        #expect(summary.migrated == 1)
+        #expect(summary.deletedOrphanStubs == 0)
+        #expect(fileManager.failedAttributesAttempts == 1)
+        #expect(failedMeeting.savedRecordingPath == failedWAVURL.path)
+        #expect(migratedPath.hasSuffix(".m4a"))
+        #expect(FileManager.default.fileExists(atPath: failedWAVURL.path))
+        #expect(FileManager.default.fileExists(atPath: migratedWAVURL.path) == false)
+        #expect(try audioDuration(from: URL(fileURLWithPath: migratedPath)) > 0)
+    }
+
     private func makeTemporaryDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("meeting-writer-\(UUID().uuidString)", isDirectory: true)
@@ -199,5 +256,23 @@ struct MeetingRecordingWriterTests {
     private func audioDuration(from url: URL) throws -> TimeInterval {
         let file = try AVAudioFile(forReading: url)
         return Double(file.length) / file.processingFormat.sampleRate
+    }
+}
+
+private final class StubAttributesFailureFileManager: FileManager {
+    private let failingPath: String
+    private(set) var failedAttributesAttempts = 0
+
+    init(failingURL: URL) {
+        self.failingPath = failingURL.standardizedFileURL.path
+        super.init()
+    }
+
+    override func attributesOfItem(atPath path: String) throws -> [FileAttributeKey: Any] {
+        guard URL(fileURLWithPath: path).standardizedFileURL.path != failingPath else {
+            failedAttributesAttempts += 1
+            throw NSError(domain: "MeetingRecordingWriterTests", code: 3)
+        }
+        return try super.attributesOfItem(atPath: path)
     }
 }

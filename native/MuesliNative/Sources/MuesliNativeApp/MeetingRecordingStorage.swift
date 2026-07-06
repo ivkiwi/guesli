@@ -151,15 +151,16 @@ enum MeetingRecordingStorage {
             let sourceURL = URL(fileURLWithPath: candidate.path).standardizedFileURL
             guard sourceURL.pathExtension.lowercased() == "wav",
                   fileManager.fileExists(atPath: sourceURL.path) else { continue }
-            let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
-            let fileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-            guard fileSize >= 1024 else { continue }
 
             let destinationURL = sourceURL.deletingPathExtension().appendingPathExtension("m4a")
             let temporaryURL = sourceURL
                 .deletingLastPathComponent()
                 .appendingPathComponent(".\(destinationURL.lastPathComponent).migrating")
             do {
+                let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
+                let fileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+                guard fileSize >= 1024 else { continue }
+
                 try? fileManager.removeItem(at: temporaryURL)
                 try encodeWAVToM4A(sourceURL: sourceURL, destinationURL: temporaryURL)
                 if fileManager.fileExists(atPath: destinationURL.path) {
