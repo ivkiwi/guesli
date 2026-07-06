@@ -323,6 +323,59 @@ struct MeetingRecordingWriterTests {
         #expect(FileManager.default.fileExists(atPath: legacyWAVURL.path) == false)
     }
 
+    @Test("legacy wav migration keeps raw-path shared wav until sibling migrates")
+    func legacyWAVMigrationKeepsRawPathSharedWAVUntilSiblingMigrates() async throws {
+        let store = try makeStore()
+        let recordingsDirectory = makeTemporaryDirectory()
+        let legacyWAVURL = recordingsDirectory.appendingPathComponent("shared.wav")
+        let rawLegacyPath = recordingsDirectory.path + "/nested/../shared.wav"
+        try Data(repeating: 1, count: 2_048).write(to: legacyWAVURL)
+
+        #expect(rawLegacyPath != legacyWAVURL.path)
+        #expect(URL(fileURLWithPath: rawLegacyPath).standardizedFileURL == legacyWAVURL.standardizedFileURL)
+
+        let now = Date(timeIntervalSince1970: 1_711_000_000)
+        let firstID = try store.insertMeeting(
+            title: "First",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "first",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: rawLegacyPath
+        )
+        let secondID = try store.insertMeeting(
+            title: "Second",
+            calendarEventID: nil,
+            startTime: now.addingTimeInterval(120),
+            endTime: now.addingTimeInterval(180),
+            rawTranscript: "second",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: rawLegacyPath
+        )
+
+        let summary = try await MeetingRecordingWriter.migrateLegacyWAVRecordings(
+            store: store,
+            recordingsDirectory: recordingsDirectory,
+            encode: { sourceURL, destinationURL in
+                #expect(sourceURL == legacyWAVURL.standardizedFileURL)
+                try Data("m4a".utf8).write(to: destinationURL)
+            }
+        )
+
+        let firstPath = try #require(try store.meeting(id: firstID)?.savedRecordingPath)
+        let secondPath = try #require(try store.meeting(id: secondID)?.savedRecordingPath)
+        #expect(summary.migrated == 2)
+        #expect(firstPath == secondPath)
+        #expect(firstPath.hasSuffix(".m4a"))
+        #expect(FileManager.default.fileExists(atPath: firstPath))
+        #expect(FileManager.default.fileExists(atPath: legacyWAVURL.path) == false)
+    }
+
     @Test("legacy wav migration keeps wav and database path when encode fails")
     func legacyWAVMigrationKeepsWAVWhenEncodeFails() async throws {
         let store = try makeStore()

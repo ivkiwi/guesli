@@ -617,14 +617,26 @@ public final class DictationStore {
     }
 
     public func savedRecordingReferenceCount(path: String, excludingMeetingID: Int64? = nil) throws -> Int {
+        try savedRecordingReferenceCount(paths: [path], excludingMeetingID: excludingMeetingID)
+    }
+
+    public func savedRecordingReferenceCount(paths: [String], excludingMeetingID: Int64? = nil) throws -> Int {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
 
-        let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        var matchingPaths: [String] = []
+        for path in paths {
+            for candidatePath in [path, URL(fileURLWithPath: path).standardizedFileURL.path] where !matchingPaths.contains(candidatePath) {
+                matchingPaths.append(candidatePath)
+            }
+        }
+        guard !matchingPaths.isEmpty else { return 0 }
+
+        let placeholders = Array(repeating: "?", count: matchingPaths.count).joined(separator: ", ")
         var sql = """
         SELECT COUNT(*)
         FROM meetings
-        WHERE saved_recording_path IN (?, ?)
+        WHERE saved_recording_path IN (\(placeholders))
           AND deleted_at IS NULL
         """
         if excludingMeetingID != nil {
@@ -637,10 +649,11 @@ public final class DictationStore {
         }
         defer { sqlite3_finalize(statement) }
 
-        sqlite3_bind_text(statement, 1, (path as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(statement, 2, (standardizedPath as NSString).utf8String, -1, nil)
+        for (index, path) in matchingPaths.enumerated() {
+            sqlite3_bind_text(statement, Int32(index + 1), (path as NSString).utf8String, -1, nil)
+        }
         if let excludingMeetingID {
-            sqlite3_bind_int64(statement, 3, excludingMeetingID)
+            sqlite3_bind_int64(statement, Int32(matchingPaths.count + 1), excludingMeetingID)
         }
 
         guard sqlite3_step(statement) == SQLITE_ROW else {

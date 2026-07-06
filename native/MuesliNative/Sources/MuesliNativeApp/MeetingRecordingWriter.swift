@@ -180,7 +180,10 @@ final class MeetingRecordingWriter {
                 try Task.checkCancellation()
                 try atomicallyRenameItem(at: temporaryURL, to: destinationURL)
                 try store.updateMeetingSavedRecordingPath(id: candidate.id, path: destinationURL.path)
-                if try store.savedRecordingReferenceCount(path: sourceURL.path, excludingMeetingID: candidate.id) == 0 {
+                if try store.savedRecordingReferenceCount(
+                    paths: [candidate.path, sourceURL.path],
+                    excludingMeetingID: candidate.id
+                ) == 0 {
                     do {
                         try fileManager.removeItem(at: sourceURL)
                     } catch {
