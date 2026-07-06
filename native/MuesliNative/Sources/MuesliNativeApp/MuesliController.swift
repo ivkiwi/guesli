@@ -455,7 +455,8 @@ final class MuesliController: NSObject {
         let loadedConfig = configStore.load()
         self.runtime = runtime
         self.dictationStore = dictationStore ?? DictationStore(
-            databaseURL: MuesliPaths.defaultDatabaseURL(appName: AppIdentity.supportDirectoryName)
+            databaseURL: MuesliPaths.defaultDatabaseURL(appName: AppIdentity.supportDirectoryName),
+            diagnosticsLogger: { DiagnosticsLog.write($0) }
         )
         self.meetingHookDispatcher = meetingHookDispatcher
         self.meetingMarkdownAutoExporter = meetingMarkdownAutoExporter
@@ -4059,8 +4060,7 @@ final class MuesliController: NSObject {
     }
 
     func createMeetingFromCalendarEvent(_ event: UnifiedCalendarEvent, folderID: Int64?) {
-        // Check ALL folders for existing meeting with this calendar event ID
-        if let existing = try? dictationStore.meetingByCalendarEventID(event.id) {
+        if let existing = try? dictationStore.meetingByCalendarEventID(event.id, startTime: event.startDate) {
             if let folderID {
                 try? dictationStore.moveMeeting(id: existing.id, toFolder: folderID)
             }

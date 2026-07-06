@@ -49,6 +49,24 @@ struct DictationStoreTests {
         NSError(domain: "DictationStoreTests", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
+    private func makeStoreFromRawSQL(_ sql: String) throws -> DictationStore {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("muesli-raw-test-\(UUID().uuidString).db")
+        var db: OpaquePointer?
+        guard sqlite3_open(url.path, &db) == SQLITE_OK else {
+            throw sqliteTestError("failed to open raw test database")
+        }
+        defer { sqlite3_close(db) }
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+            throw sqliteTestError(String(cString: sqlite3_errmsg(db)))
+        }
+        return DictationStore(databaseURL: url)
+    }
+
+    private func date(_ isoString: String) throws -> Date {
+        try #require(ISO8601DateFormatter().date(from: isoString))
+    }
+
     private func setFolderParentRaw(folderID: Int64, parentID: Int64, store: DictationStore) throws {
         var db: OpaquePointer?
         guard sqlite3_open(store.databasePath().path, &db) == SQLITE_OK else {
@@ -134,6 +152,126 @@ struct DictationStoreTests {
     func migration() throws {
         let store = try makeStore()
         try store.migrateIfNeeded() // idempotent
+    }
+
+    @Test("migration keeps recurring calendar IDs unique per day")
+    func migrationKeepsRecurringCalendarIDsUniquePerDay() throws {
+        let store = try makeStoreFromRawSQL(
+            """
+            CREATE TABLE meetings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                calendar_event_id TEXT,
+                start_time TEXT NOT NULL,
+                end_time TEXT,
+                duration_seconds REAL,
+                raw_transcript TEXT,
+                formatted_notes TEXT,
+                mic_audio_path TEXT,
+                system_audio_path TEXT,
+                word_count INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'meeting',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            INSERT INTO meetings (title, calendar_event_id, start_time, end_time, duration_seconds, raw_transcript, formatted_notes, word_count)
+            VALUES
+                ('Daily first', 'daily-event', '2026-07-06T08:15:00Z', '2026-07-06T08:30:00Z', 900, '', '', 0),
+                ('Daily restart', 'daily-event', '2026-07-06T08:20:00Z', '2026-07-06T08:35:00Z', 900, '', '', 0),
+                ('Daily next day', 'daily-event', '2026-07-07T08:15:00Z', '2026-07-07T08:30:00Z', 900, '', '', 0);
+            """
+        )
+
+        try store.migrateIfNeeded()
+
+        let meetings = try store.recentMeetings(limit: nil)
+        #expect(meetings.count == 3)
+        let linked = meetings.filter { $0.calendarEventID == "daily-event" }
+        #expect(linked.count == 2)
+        #expect(Set(linked.map { String($0.startTime.prefix(10)) }) == ["2026-07-06", "2026-07-07"])
+        #expect(meetings.filter { $0.calendarEventID == nil }.count == 1)
+    }
+
+    @Test("recurring calendar ID can be inserted on different days")
+    func recurringCalendarIDCanBeInsertedOnDifferentDays() throws {
+        let store = try makeStore()
+        let firstStart = try date("2026-07-01T08:15:00Z")
+        let secondStart = try date("2026-07-06T08:15:00Z")
+
+        try store.createLiveMeeting(title: "Daily", calendarEventID: "daily-event", startTime: firstStart)
+        try store.createLiveMeeting(title: "Daily", calendarEventID: "daily-event", startTime: secondStart)
+
+        let linked = try store.recentMeetings(limit: nil).filter { $0.calendarEventID == "daily-event" }
+        #expect(linked.count == 2)
+        let first = try #require(try store.meetingByCalendarEventID("daily-event", startTime: firstStart))
+        let second = try #require(try store.meetingByCalendarEventID("daily-event", startTime: secondStart))
+        #expect(first.startTime == "2026-07-01T08:15:00Z")
+        #expect(second.startTime == "2026-07-06T08:15:00Z")
+    }
+
+    @Test("same-day calendar conflict drops linkage and still creates meeting")
+    func sameDayCalendarConflictDropsLinkageAndStillCreatesMeeting() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("muesli-conflict-test-\(UUID().uuidString).db")
+        var diagnostics: [String] = []
+        let store = DictationStore(databaseURL: url, diagnosticsLogger: { diagnostics.append($0) })
+        try store.migrateIfNeeded()
+        let firstStart = try date("2026-07-06T08:15:00Z")
+        let restartStart = try date("2026-07-06T08:20:00Z")
+
+        _ = try store.createLiveMeeting(title: "Daily", calendarEventID: "daily-event", startTime: firstStart)
+        let restartedID = try store.createLiveMeeting(title: "Daily Restart", calendarEventID: "daily-event", startTime: restartStart)
+
+        var restarted = try #require(try store.meeting(id: restartedID))
+        #expect(restarted.status == .recording)
+        #expect(restarted.calendarEventID == nil)
+        #expect(diagnostics.contains { $0.contains("create live meeting") && $0.contains("retrying without calendar linkage") })
+
+        try store.completeLiveMeeting(
+            id: restartedID,
+            title: "Daily Restart",
+            calendarEventID: "daily-event",
+            startTime: restartStart,
+            endTime: restartStart.addingTimeInterval(60),
+            rawTranscript: "hello again",
+            formattedNotes: "## Summary\nAgain",
+            micAudioPath: nil,
+            systemAudioPath: nil
+        )
+
+        restarted = try #require(try store.meeting(id: restartedID))
+        #expect(restarted.status == .completed)
+        #expect(restarted.calendarEventID == nil)
+        #expect(diagnostics.contains { $0.contains("complete live meeting") && $0.contains("retrying without calendar linkage") })
+    }
+
+    @Test("migration canonicalizes numeric meeting start time")
+    func migrationCanonicalizesNumericMeetingStartTime() throws {
+        let store = try makeStoreFromRawSQL(
+            """
+            CREATE TABLE meetings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                calendar_event_id TEXT,
+                start_time TEXT NOT NULL,
+                end_time TEXT,
+                duration_seconds REAL,
+                raw_transcript TEXT,
+                formatted_notes TEXT,
+                mic_audio_path TEXT,
+                system_audio_path TEXT,
+                word_count INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'meeting',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            INSERT INTO meetings (title, calendar_event_id, start_time, end_time, duration_seconds, raw_transcript, formatted_notes, word_count)
+            VALUES ('Epoch meeting', 'epoch-event', 1783325700, 1783326000, 300, '', '', 0);
+            """
+        )
+
+        try store.migrateIfNeeded()
+
+        let meeting = try #require(try store.recentMeetings(limit: 1).first)
+        #expect(meeting.startTime == "2026-07-06T08:15:00Z")
     }
 
     @Test("migration adds template columns to legacy meeting schema")

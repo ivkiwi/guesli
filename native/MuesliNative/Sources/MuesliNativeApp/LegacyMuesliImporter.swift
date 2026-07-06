@@ -79,12 +79,12 @@ final class LegacyMuesliImporter {
         }
 
         for meeting in meetings.reversed() {
+            let startTime = parseDate(meeting.startTime) ?? now()
             if let eventID = meeting.calendarEventID,
-               try targetStore.meetingByCalendarEventID(eventID) != nil {
+               try targetStore.meetingByCalendarEventID(eventID, startTime: startTime) != nil {
                 continue
             }
 
-            let startTime = parseDate(meeting.startTime) ?? now()
             let endTime = startTime.addingTimeInterval(max(meeting.durationSeconds, 0))
             let micAudioPath = copiedLegacyAudioPath(
                 meeting.micAudioPath,

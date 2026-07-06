@@ -96,30 +96,32 @@ struct MeetingHookIntegrationTests {
         #expect(invocation.config.autoExportMarkdownEnabled)
     }
 
-    @Test("no hook runs when meeting persistence fails")
-    func noHookRunsWhenPersistenceFails() throws {
+    @Test("calendar event conflict drops linkage and still dispatches hook")
+    func calendarEventConflictDropsLinkageAndStillDispatchesHook() throws {
         let store = try makeStore()
         let spy = MeetingHookDispatcherSpy()
         let controller = makeController(store: store, dispatcher: spy)
-        let now = Date()
+        let result = makeMeetingResult(calendarEventID: "duplicate-event")
         try store.insertMeeting(
             title: "Existing",
             calendarEventID: "duplicate-event",
-            startTime: now,
-            endTime: now.addingTimeInterval(60),
+            startTime: result.startTime,
+            endTime: result.endTime,
             rawTranscript: "Existing transcript",
             formattedNotes: "Existing notes",
             micAudioPath: nil,
             systemAudioPath: nil
         )
 
-        #expect(throws: Error.self) {
-            try controller.persistCompletedMeetingResultAndDispatchHook(
-                makeMeetingResult(calendarEventID: "duplicate-event"),
-                preparedRecordingSave: .none
-            )
-        }
-        #expect(spy.invocations.isEmpty)
+        let persistence = try controller.persistCompletedMeetingResultAndDispatchHook(
+            result,
+            preparedRecordingSave: .none
+        )
+
+        #expect(spy.invocations.count == 1)
+        #expect(spy.invocations.first?.meetingID == persistence.meetingID)
+        let persisted = try #require(try store.meeting(id: persistence.meetingID))
+        #expect(persisted.calendarEventID == nil)
     }
 
     private func makeController(
