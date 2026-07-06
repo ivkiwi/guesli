@@ -116,6 +116,25 @@ func nemotronValidateArray(
     return (shape, strides, storageSpan)
 }
 
+func nemotronPredictedToken(from logits: MLMultiArray) throws -> Int {
+    let layout = try nemotronValidateArray(
+        logits,
+        name: "logits",
+        dataType: .float32,
+        shape: [1, 1, 1, nil]
+    )
+    let logitsCount = layout.shape[3]
+    let logitsStride = layout.strides[3]
+    guard logitsStride > 0 else {
+        throw NemotronRNNTError.decodingFailed("logits stride must be positive, got strides \(layout.strides)")
+    }
+    let logitsPtr = logits.dataPointer.bindMemory(to: Float.self, capacity: layout.storageSpan)
+    var maxVal: Float = -Float.infinity
+    var maxIdx: vDSP_Length = 0
+    vDSP_maxvi(logitsPtr, vDSP_Stride(logitsStride), &maxVal, &maxIdx, vDSP_Length(logitsCount))
+    return Int(maxIdx) / logitsStride
+}
+
 /// Create a fresh streaming state with zero-initialized caches sized for `config`.
 func nemotronMakeStreamState(config: NemotronRNNTConfig) throws -> RNNTStreamState {
     let cacheChannel = try MLMultiArray(
@@ -325,17 +344,7 @@ func nemotronTranscribeChunk(
             guard let logits = jointOutput.featureValue(for: "logits")?.multiArrayValue else {
                 throw NemotronRNNTError.decodingFailed("No joint logits")
             }
-            guard logits.dataType == .float32, logits.count > 0 else {
-                throw NemotronRNNTError.decodingFailed("logits expected non-empty float32 array, got \(logits.dataType) count \(logits.count)")
-            }
-
-            // Argmax
-            let logitsCount = logits.count
-            let logitsPtr = logits.dataPointer.bindMemory(to: Float.self, capacity: logitsCount)
-            var maxVal: Float = -Float.infinity
-            var maxIdx: vDSP_Length = 0
-            vDSP_maxvi(logitsPtr, 1, &maxVal, &maxIdx, vDSP_Length(logitsCount))
-            let predictedToken = Int(maxIdx)
+            let predictedToken = try nemotronPredictedToken(from: logits)
 
             if predictedToken == config.blankTokenId {
                 break

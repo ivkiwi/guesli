@@ -936,6 +936,23 @@ struct NemotronRNNTShapeGuardTests {
         #expect(layout.storageSpan == 34)
     }
 
+    @Test("logits argmax follows validated last-axis stride")
+    func logitsArgmaxUsesLastAxisStride() throws {
+        let logits = try makeStridedFloatArray(
+            shape: [1, 1, 1, 4],
+            strides: [12, 12, 12, 3],
+            storageSpan: 10
+        )
+        let pointer = logits.dataPointer.bindMemory(to: Float.self, capacity: 10)
+        pointer[0] = 0.1
+        pointer[1] = 99
+        pointer[3] = 0.4
+        pointer[6] = 1.4
+        pointer[9] = 0.9
+
+        #expect(try nemotronPredictedToken(from: logits) == 2)
+    }
+
     private func makeStridedFloatArray(shape: [Int], strides: [Int], storageSpan: Int) throws -> MLMultiArray {
         let pointer = UnsafeMutableRawPointer.allocate(
             byteCount: storageSpan * MemoryLayout<Float>.stride,
