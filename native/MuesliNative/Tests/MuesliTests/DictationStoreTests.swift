@@ -5,7 +5,7 @@ import MuesliCore
 import SQLite3
 @testable import MuesliNativeApp
 
-@Suite("DictationStore", .serialized)
+@Suite("DictationStore", .serialized, .muesliHermeticSupport)
 struct DictationStoreTests {
 
     /// Creates a DictationStore backed by a temporary database file.

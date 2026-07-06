@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("AppScopedDictationRecorder")
+@Suite("AppScopedDictationRecorder", .muesliHermeticSupport)
 struct AppScopedDictationRecorderTests {
     @Test("cancelled queued explicit warmup does not prepare microphone")
     func cancelledQueuedExplicitWarmupDoesNotPrepareMicrophone() {

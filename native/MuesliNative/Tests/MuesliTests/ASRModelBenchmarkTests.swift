@@ -5,7 +5,7 @@ import SQLite3
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("ASR model efficiency benchmarks", .serialized)
+@Suite("ASR model efficiency benchmarks", .serialized, .muesliHermeticSupport)
 struct ASRModelEfficiencyBenchmarks {
     @Test("compare production ASR models on real meeting recordings")
     func compareProductionASRModelsOnRealRecordings() async throws {

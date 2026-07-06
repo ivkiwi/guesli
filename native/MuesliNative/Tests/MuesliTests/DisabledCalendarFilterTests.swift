@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import MuesliNativeApp
 
-@Suite("Per-calendar disable filter")
+@Suite("Per-calendar disable filter", .muesliHermeticSupport)
 @MainActor
 struct DisabledCalendarFilterTests {
 

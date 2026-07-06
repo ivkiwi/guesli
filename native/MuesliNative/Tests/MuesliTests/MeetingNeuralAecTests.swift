@@ -3,7 +3,7 @@ import LocalVQEBridge
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MeetingNeuralAec")
+@Suite("MeetingNeuralAec", .muesliHermeticSupport)
 struct MeetingNeuralAecTests {
 
     @Test("bundle candidates prefer Contents/Resources in packaged apps")

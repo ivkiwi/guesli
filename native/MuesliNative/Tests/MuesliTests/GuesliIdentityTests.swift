@@ -2,7 +2,7 @@ import Foundation
 import MuesliCore
 import Testing
 
-@Suite("Guesli identity")
+@Suite("Guesli identity", .muesliHermeticSupport)
 struct GuesliIdentityTests {
     @Test("core defaults use the Guesli support directory")
     func coreDefaultsUseGuesliSupportDirectory() {

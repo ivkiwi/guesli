@@ -2,7 +2,7 @@ import CoreAudio
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("DictationAudioRouteController")
+@Suite("DictationAudioRouteController", .muesliHermeticSupport)
 struct DictationAudioRouteControllerTests {
     @Test("dictation prefers built-in mic for headphone output")
     func dictationPrefersBuiltInMicForHeadphoneOutput() {

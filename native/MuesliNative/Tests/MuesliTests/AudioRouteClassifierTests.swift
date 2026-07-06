@@ -2,7 +2,7 @@ import CoreAudio
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("AudioRouteClassifier")
+@Suite("AudioRouteClassifier", .muesliHermeticSupport)
 struct AudioRouteClassifierTests {
     @Test("AirPods output is headphone-like")
     func airPodsOutputIsHeadphoneLike() {

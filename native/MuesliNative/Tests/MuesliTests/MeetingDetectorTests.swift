@@ -3,7 +3,7 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("MeetingDetector")
+@Suite("MeetingDetector", .muesliHermeticSupport)
 struct MeetingDetectorTests {
 
     private func makeDetector() -> MeetingDetector {

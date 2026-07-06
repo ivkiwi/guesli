@@ -1,7 +1,7 @@
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("ContributionMilestone")
+@Suite("ContributionMilestone", .muesliHermeticSupport)
 struct ContributionMilestoneTests {
 
     @Test("next milestone is strict thousand boundary")

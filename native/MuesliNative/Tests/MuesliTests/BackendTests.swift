@@ -3,7 +3,7 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("WhisperKitTranscriber")
+@Suite("WhisperKitTranscriber", .muesliHermeticSupport)
 struct WhisperKitTranscriberTests {
 
     @Test("whisper models use whisper backend")
@@ -25,7 +25,7 @@ struct WhisperKitTranscriberTests {
     }
 }
 
-@Suite("FluidAudioTranscriber")
+@Suite("FluidAudioTranscriber", .muesliHermeticSupport)
 struct FluidAudioTranscriberTests {
 
     @Test("parakeet models use FluidInference repo")
@@ -46,7 +46,7 @@ struct FluidAudioTranscriberTests {
     }
 }
 
-@Suite("SenseVoiceTranscriber")
+@Suite("SenseVoiceTranscriber", .muesliHermeticSupport)
 struct SenseVoiceTranscriberTests {
 
     @Test("sensevoice model uses FluidAudio CoreML repo")
@@ -76,7 +76,7 @@ struct SenseVoiceTranscriberTests {
     }
 }
 
-@Suite("Backend coverage")
+@Suite("Backend coverage", .muesliHermeticSupport)
 struct BackendCoverageTests {
 
     @Test("each backend has at least one model")

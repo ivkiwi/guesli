@@ -170,8 +170,10 @@ final class LegacyMuesliImporter {
         let destinationDirectory = targetSupportDirectory
             .appendingPathComponent("legacy-recordings", isDirectory: true)
         do {
+            MuesliPaths.preconditionSafeForTestWrite(destinationDirectory)
             try fileManager.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
             let destinationURL = uniqueDestinationURL(for: sourceURL, in: destinationDirectory)
+            MuesliPaths.preconditionSafeForTestWrite(destinationURL)
             try fileManager.copyItem(at: sourceURL, to: destinationURL)
             return destinationURL.path
         } catch {
@@ -210,6 +212,8 @@ final class LegacyMuesliImporter {
         sourceDatabaseURL: URL,
         targetSupportDirectory: URL
     ) throws {
+        MuesliPaths.preconditionSafeForTestWrite(targetSupportDirectory)
+        MuesliPaths.preconditionSafeForTestWrite(markerURL(targetSupportDirectory: targetSupportDirectory))
         try fileManager.createDirectory(at: targetSupportDirectory, withIntermediateDirectories: true)
         let marker = Marker(
             sourceDatabasePath: sourceDatabaseURL.path,

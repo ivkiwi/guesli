@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Meeting live overlap pipeline")
+@Suite("Meeting live overlap pipeline", .muesliHermeticSupport)
 struct MeetingLiveOverlapPipelineTests {
     @Test("meeting backend selection drives GigaAM chunking even when dictation backend differs")
     func meetingBackendSelectionDrivesChunking() throws {

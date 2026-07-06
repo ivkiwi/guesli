@@ -2,7 +2,7 @@ import Testing
 import AppKit
 @testable import MuesliNativeApp
 
-@Suite("SoundController")
+@Suite("SoundController", .muesliHermeticSupport)
 @MainActor
 struct SoundControllerTests {
 
@@ -28,7 +28,7 @@ struct SoundControllerTests {
     }
 }
 
-@Suite("MenuBarIconRenderer")
+@Suite("MenuBarIconRenderer", .muesliHermeticSupport)
 struct MenuBarIconRendererTests {
 
     @Test("make(choice:) returns a non-nil image for SF Symbol")

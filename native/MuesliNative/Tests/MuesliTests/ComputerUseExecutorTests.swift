@@ -1,7 +1,7 @@
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Computer Use executor", .serialized)
+@Suite("Computer Use executor", .serialized, .muesliHermeticSupport)
 struct ComputerUseExecutorTests {
     @Test("maps common app aliases to bundle identifiers")
     @MainActor

@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import MuesliNativeApp
 
-@Suite("Google Calendar integration")
+@Suite("Google Calendar integration", .muesliHermeticSupport)
 @MainActor
 struct GoogleCalendarTests {
 

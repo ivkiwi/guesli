@@ -3,7 +3,7 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("Filler Word Filter")
+@Suite("Filler Word Filter", .muesliHermeticSupport)
 struct FillerWordFilterTests {
 
     @Test("removes uh and um")

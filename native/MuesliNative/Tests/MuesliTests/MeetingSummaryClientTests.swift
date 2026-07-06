@@ -3,7 +3,7 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("MeetingSummaryClient")
+@Suite("MeetingSummaryClient", .muesliHermeticSupport)
 struct MeetingSummaryClientTests {
     private let customTemplate = MeetingTemplateSnapshot(
         id: "custom-follow-up",

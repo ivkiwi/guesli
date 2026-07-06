@@ -3,7 +3,7 @@ import Testing
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("MeetingMarkdownAutoExporter")
+@Suite("MeetingMarkdownAutoExporter", .muesliHermeticSupport)
 struct MeetingMarkdownAutoExporterTests {
 
     @Test("disabled config writes nothing")

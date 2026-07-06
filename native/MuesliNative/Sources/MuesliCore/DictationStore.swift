@@ -2478,6 +2478,7 @@ public final class DictationStore {
     }
 
     private func openDatabase() throws -> OpaquePointer? {
+        MuesliPaths.preconditionSafeForTestWrite(databaseURL)
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true

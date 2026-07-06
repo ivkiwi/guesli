@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("DictationAudioSessionManager")
+@Suite("DictationAudioSessionManager", .muesliHermeticSupport)
 struct DictationAudioSessionManagerTests {
     @Test("arm activates warm engine without starting capture")
     func armActivatesWarmEngineWithoutStartingCapture() {

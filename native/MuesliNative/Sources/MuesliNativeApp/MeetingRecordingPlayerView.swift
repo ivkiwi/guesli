@@ -1,5 +1,6 @@
 import AVFoundation
 import CryptoKit
+import MuesliCore
 import SwiftUI
 
 private struct RecordingWaveformData: Equatable {
@@ -121,6 +122,7 @@ enum RecordingWaveformCacheFiles {
             createDirectory: false
         )
         guard fileManager.fileExists(atPath: url.path) else { return }
+        MuesliPaths.preconditionSafeForTestWrite(url)
         try fileManager.removeItem(at: url)
     }
 
@@ -130,6 +132,7 @@ enum RecordingWaveformCacheFiles {
     ) throws {
         let directory = cacheDirectory(supportDirectory: supportDirectory)
         guard fileManager.fileExists(atPath: directory.path) else { return }
+        MuesliPaths.preconditionSafeForTestWrite(directory)
         try fileManager.removeItem(at: directory)
     }
 
@@ -154,6 +157,7 @@ enum RecordingWaveformCacheFiles {
         var removed = 0
         for entry in entries where entry.pathExtension.lowercased() == "mwf" && isOlder(entry, than: cutoff) {
             do {
+                MuesliPaths.preconditionSafeForTestWrite(entry)
                 try fileManager.removeItem(at: entry)
                 removed += 1
             } catch {
@@ -173,6 +177,7 @@ enum RecordingWaveformCacheFiles {
     }
 
     static func markCachedWaveformUsed(at url: URL, fileManager: FileManager = .default, now: Date = Date()) {
+        MuesliPaths.preconditionSafeForTestWrite(url)
         try? fileManager.setAttributes([.modificationDate: now], ofItemAtPath: url.path)
     }
 
@@ -191,6 +196,7 @@ enum RecordingWaveformCacheFiles {
     ) throws -> URL {
         let directory = cacheDirectory(supportDirectory: supportDirectory)
         if createDirectory {
+            MuesliPaths.preconditionSafeForTestWrite(directory)
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }
         let digest = SHA256.hash(data: Data(cacheKey.utf8))
@@ -239,6 +245,7 @@ private actor RecordingWaveformCache {
 
     private func persist(_ waveform: RecordingWaveformData, to cacheURL: URL) {
         do {
+            MuesliPaths.preconditionSafeForTestWrite(cacheURL)
             try waveform.encodedCacheData().write(to: cacheURL, options: .atomic)
         } catch {
             fputs("[meeting-recording-player] failed to persist waveform cache: \(error)\n", stderr)

@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MeetingNotificationController")
+@Suite("MeetingNotificationController", .muesliHermeticSupport)
 struct MeetingNotificationControllerTests {
     @Test("Slack candidates map to the Slack notification platform")
     func slackCandidateMapsToSlackNotificationPlatform() {

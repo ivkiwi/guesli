@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MediaPlaybackController")
+@Suite("MediaPlaybackController", .muesliHermeticSupport)
 struct MediaPlaybackControllerTests {
     @Test("disabled setting is a no-op")
     func disabledSettingIsNoOp() {

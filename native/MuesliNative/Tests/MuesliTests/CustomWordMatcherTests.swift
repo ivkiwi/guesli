@@ -3,7 +3,7 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("Jaro-Winkler Similarity")
+@Suite("Jaro-Winkler Similarity", .muesliHermeticSupport)
 struct JaroWinklerTests {
 
     @Test("identical strings return 1.0")
@@ -54,7 +54,7 @@ struct JaroWinklerTests {
     }
 }
 
-@Suite("Custom Word Matcher")
+@Suite("Custom Word Matcher", .muesliHermeticSupport)
 struct CustomWordMatcherApplyTests {
 
     @Test("exact match replaces word")

@@ -2,7 +2,7 @@ import FluidAudio
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MeetingMicRepairPlanner")
+@Suite("MeetingMicRepairPlanner", .muesliHermeticSupport)
 struct MeetingMicRepairPlannerTests {
 
     @Test("repairs offline speech regions with no mic coverage")

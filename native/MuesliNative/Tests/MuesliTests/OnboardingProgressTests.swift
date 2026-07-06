@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("OnboardingProgress")
+@Suite("OnboardingProgress", .muesliHermeticSupport)
 struct OnboardingProgressTests {
 
     @Test("missing Cohere language defaults to english")

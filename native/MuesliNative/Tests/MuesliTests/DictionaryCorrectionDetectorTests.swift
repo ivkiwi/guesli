@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Dictionary correction detector")
+@Suite("Dictionary correction detector", .muesliHermeticSupport)
 struct DictionaryCorrectionDetectorTests {
     @Test("contract surfaces one-word and two-token-to-one-word corrections only")
     func contractSurfacesSupportedCorrectionShapesOnly() {
@@ -470,7 +470,7 @@ struct DictionaryCorrectionDetectorTests {
     }
 }
 
-@Suite("Dictionary correction snapshot stabilizer")
+@Suite("Dictionary correction snapshot stabilizer", .muesliHermeticSupport)
 struct DictionaryCorrectionSnapshotStabilizerTests {
     @Test("waits for a quiet window before evaluating a changed snapshot")
     func waitsForQuietWindow() {
@@ -519,7 +519,7 @@ struct DictionaryCorrectionSnapshotStabilizerTests {
     }
 }
 
-@Suite("Dictionary suggestion config")
+@Suite("Dictionary suggestion config", .muesliHermeticSupport)
 struct DictionarySuggestionConfigTests {
     @Test("old configs decode with correction prompts disabled")
     func oldConfigDefaults() throws {

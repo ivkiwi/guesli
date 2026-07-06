@@ -2,6 +2,7 @@ import Accelerate
 @preconcurrency import CoreML
 import FluidAudio
 import Foundation
+import MuesliCore
 
 private enum CanaryQwenConfig {
     static let repoId = "phequals/canary-qwen-2.5b-coreml-int8"
@@ -74,6 +75,7 @@ enum CanaryProfilingLog {
     private static func appendToFile(_ line: String) {
         let directory = fileURL.deletingLastPathComponent()
         do {
+            MuesliPaths.preconditionSafeForTestWrite(fileURL)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             if !FileManager.default.fileExists(atPath: fileURL.path) {
                 try Data().write(to: fileURL)

@@ -73,6 +73,7 @@ enum MeetingRecordingStorage {
         destinationDirectory: URL,
         fileFormat: MeetingRecordingFileFormat = .m4a
     ) throws -> URL {
+        MuesliPaths.preconditionSafeForTestWrite(destinationDirectory)
         try FileManager.default.createDirectory(
             at: destinationDirectory,
             withIntermediateDirectories: true
@@ -145,6 +146,7 @@ enum MeetingRecordingStorage {
         recordingsDirectory: URL,
         fileManager: FileManager = .default
     ) throws -> (migrated: Int, deletedOrphanStubs: Int) {
+        MuesliPaths.preconditionSafeForTestWrite(recordingsDirectory)
         var migrated = 0
         for candidate in try store.legacyWAVMeetingRecordingPaths() {
             if Task.isCancelled { break }

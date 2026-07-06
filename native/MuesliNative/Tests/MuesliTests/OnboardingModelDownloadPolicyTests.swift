@@ -1,7 +1,7 @@
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Onboarding model download policy")
+@Suite("Onboarding model download policy", .muesliHermeticSupport)
 struct OnboardingModelDownloadPolicyTests {
     @Test("alternative models hide primary onboarding cards")
     func alternativeModelsHidePrimaryCards() {

@@ -1,7 +1,7 @@
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Meeting preview text")
+@Suite("Meeting preview text", .muesliHermeticSupport)
 struct MeetingPreviewTextTests {
 
     @Test("removes markdown structure from meeting previews")

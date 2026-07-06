@@ -2,7 +2,7 @@ import FluidAudio
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("SystemTurnNormalizer")
+@Suite("SystemTurnNormalizer", .muesliHermeticSupport)
 struct SystemTurnNormalizerTests {
 
     @Test("uses chunk text as the primary readable system transcript")

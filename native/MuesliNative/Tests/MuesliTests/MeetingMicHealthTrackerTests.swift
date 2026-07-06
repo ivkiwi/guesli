@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MeetingMicHealthTracker")
+@Suite("MeetingMicHealthTracker", .muesliHermeticSupport)
 struct MeetingMicHealthTrackerTests {
     @Test("all-zero raw mic with active system audio raises degraded warning")
     func allZeroRawMicWithActiveSystemAudioRaisesWarning() {

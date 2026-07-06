@@ -1,4 +1,5 @@
 import Foundation
+import MuesliCore
 
 struct AuthTokenFileStore {
     let primaryURL: URL
@@ -15,6 +16,8 @@ struct AuthTokenFileStore {
     }
 
     func save(_ data: Data, reason: String) throws {
+        MuesliPaths.preconditionSafeForTestWrite(primaryURL)
+        MuesliPaths.preconditionSafeForTestWrite(backupURL)
         let dir = primaryURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         try write(data, to: primaryURL, reason: reason)
@@ -33,6 +36,9 @@ struct AuthTokenFileStore {
     }
 
     func signOut() {
+        MuesliPaths.preconditionSafeForTestWrite(primaryURL)
+        MuesliPaths.preconditionSafeForTestWrite(backupURL)
+        MuesliPaths.preconditionSafeForTestWrite(signedOutURL)
         removeIfExists(signedOutURL, reason: "sign-out")
         if fileManager.fileExists(atPath: primaryURL.path) {
             move(primaryURL, to: signedOutURL, reason: "sign-out")
@@ -59,6 +65,7 @@ struct AuthTokenFileStore {
         fileManager: FileManager = .default
     ) throws {
         guard fileManager.fileExists(atPath: url.path) else { return }
+        MuesliPaths.preconditionSafeForTestWrite(url)
         let attributes = try fileManager.attributesOfItem(atPath: url.path)
         let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
         guard permissions != 0o600 else { return }
@@ -66,6 +73,7 @@ struct AuthTokenFileStore {
     }
 
     private func write(_ data: Data, to url: URL, reason: String) throws {
+        MuesliPaths.preconditionSafeForTestWrite(url)
         try data.write(to: url, options: .atomic)
         try Self.secureFilePermissions(at: url, fileManager: fileManager)
         try excludeFromBackup(url)
@@ -87,6 +95,8 @@ struct AuthTokenFileStore {
     }
 
     private func move(_ sourceURL: URL, to destinationURL: URL, reason: String) {
+        MuesliPaths.preconditionSafeForTestWrite(sourceURL)
+        MuesliPaths.preconditionSafeForTestWrite(destinationURL)
         do {
             try fileManager.moveItem(at: sourceURL, to: destinationURL)
             try Self.secureFilePermissions(at: destinationURL, fileManager: fileManager)
@@ -99,6 +109,7 @@ struct AuthTokenFileStore {
 
     private func removeIfExists(_ url: URL, reason: String) {
         guard fileManager.fileExists(atPath: url.path) else { return }
+        MuesliPaths.preconditionSafeForTestWrite(url)
         do {
             try fileManager.removeItem(at: url)
             log("deleted \(url.lastPathComponent) reason=\(reason)")

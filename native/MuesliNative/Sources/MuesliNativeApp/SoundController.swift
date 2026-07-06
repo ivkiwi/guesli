@@ -1,5 +1,6 @@
 import AppKit
 import AudioToolbox
+import MuesliCore
 
 /// Plays subtle system sounds for dictation lifecycle events.
 /// Sounds are skipped when `soundEnabled` is false.
@@ -96,6 +97,7 @@ enum SoundController {
     /// Copy a user-selected file into the app's support directory and return the destination path.
     static func importCustomClip(from sourceURL: URL, supportDir: URL) throws -> String {
         let audioDir = supportDir.appendingPathComponent("audio", isDirectory: true)
+        MuesliPaths.preconditionSafeForTestWrite(audioDir)
         try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
 
         // Use a stable filename ("custom.<ext>") to avoid accumulating old imports
@@ -103,6 +105,8 @@ enum SoundController {
         let dest = audioDir.appendingPathComponent("custom.\(ext)")
         // Atomic replacement: copy to temp, then move
         let tmp = audioDir.appendingPathComponent("custom_import_\(UUID().uuidString).\(ext)")
+        MuesliPaths.preconditionSafeForTestWrite(dest)
+        MuesliPaths.preconditionSafeForTestWrite(tmp)
         try FileManager.default.copyItem(at: sourceURL, to: tmp)
         _ = try FileManager.default.replaceItemAt(dest, withItemAt: tmp)
         return dest.path

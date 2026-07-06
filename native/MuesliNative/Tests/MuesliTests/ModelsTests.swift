@@ -4,7 +4,7 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("BackendOption")
+@Suite("BackendOption", .muesliHermeticSupport)
 struct BackendOptionTests {
 
     @Test("all options have unique models")
@@ -221,7 +221,7 @@ struct BackendOptionTests {
     }
 }
 
-@Suite("PostProcessorOption")
+@Suite("PostProcessorOption", .muesliHermeticSupport)
 struct PostProcessorOptionTests {
 
     @Test("all options have unique ids")
@@ -371,7 +371,7 @@ struct PostProcessorOptionTests {
     }
 }
 
-@Suite("SummaryModelPreset")
+@Suite("SummaryModelPreset", .muesliHermeticSupport)
 struct SummaryModelPresetTests {
 
     @Test("OpenAI presets have valid model IDs")
@@ -501,7 +501,7 @@ struct SummaryModelPresetTests {
     }
 }
 
-@Suite("MeetingSummaryBackendOption")
+@Suite("MeetingSummaryBackendOption", .muesliHermeticSupport)
 struct MeetingSummaryBackendTests {
 
     @Test("all options listed")
@@ -542,7 +542,7 @@ struct MeetingSummaryBackendTests {
     }
 }
 
-@Suite("AppConfig")
+@Suite("AppConfig", .muesliHermeticSupport)
 struct AppConfigTests {
 
     @Test("default values")
@@ -1222,7 +1222,7 @@ struct AppConfigTests {
     }
 }
 
-@Suite("HotkeyMonitor")
+@Suite("HotkeyMonitor", .muesliHermeticSupport)
 struct HotkeyMonitorTests {
     final class ManualHotkeyScheduler {
         private struct ScheduledItem {
@@ -1617,7 +1617,7 @@ struct HotkeyMonitorTests {
     }
 }
 
-@Suite("MeetingResummarizationPolicy")
+@Suite("MeetingResummarizationPolicy", .muesliHermeticSupport)
 struct MeetingResummarizationPolicyTests {
 
     @Test("resummarize preserves the existing meeting title")
@@ -1679,7 +1679,7 @@ struct MeetingResummarizationPolicyTests {
     }
 }
 
-@Suite("Meeting template resolution")
+@Suite("Meeting template resolution", .muesliHermeticSupport)
 struct MeetingTemplateResolutionTests {
 
     @Test("exact resolution returns nil for deleted custom templates")
@@ -1720,7 +1720,7 @@ struct MeetingTemplateResolutionTests {
     }
 }
 
-@Suite("DictationState")
+@Suite("DictationState", .muesliHermeticSupport)
 struct DictationStateTests {
     @Test("raw values")
     func rawValues() {
@@ -1731,7 +1731,7 @@ struct DictationStateTests {
     }
 }
 
-@Suite("CGPointCodable")
+@Suite("CGPointCodable", .muesliHermeticSupport)
 struct CGPointCodableTests {
 
     @Test("keyed round-trip")
@@ -1753,7 +1753,7 @@ struct CGPointCodableTests {
     }
 }
 
-@Suite("WordCount")
+@Suite("WordCount", .muesliHermeticSupport)
 struct WordCountTests {
 
     @Test("basic counting")
@@ -1770,7 +1770,7 @@ struct WordCountTests {
     }
 }
 
-@Suite("HotkeyConfig")
+@Suite("HotkeyConfig", .muesliHermeticSupport)
 struct HotkeyConfigTests {
 
     @Test("default is Right Option")
@@ -1924,7 +1924,7 @@ struct HotkeyConfigTests {
     }
 }
 
-@Suite("AppConfig — appearance fields")
+@Suite("AppConfig — appearance fields", .muesliHermeticSupport)
 struct AppConfigAppearanceTests {
 
     @Test("soundEnabled defaults to true")

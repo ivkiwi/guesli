@@ -3,7 +3,7 @@ import Testing
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("MeetingHookRunner")
+@Suite("MeetingHookRunner", .muesliHermeticSupport)
 struct MeetingHookRunnerTests {
 
     @Test("disabled hook is a no-op")

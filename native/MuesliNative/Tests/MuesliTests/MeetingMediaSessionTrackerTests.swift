@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MeetingMediaSessionTracker")
+@Suite("MeetingMediaSessionTracker", .muesliHermeticSupport)
 struct MeetingMediaSessionTrackerTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 

@@ -4,7 +4,7 @@ import MuesliCore
 @testable import MuesliNativeApp
 
 @MainActor
-@Suite("Meeting hook integration")
+@Suite("Meeting hook integration", .muesliHermeticSupport)
 struct MeetingHookIntegrationTests {
 
     @Test("meeting completion dispatches one hook event after persistence succeeds")

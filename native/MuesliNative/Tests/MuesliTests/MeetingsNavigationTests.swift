@@ -5,7 +5,7 @@ import MuesliCore
 @testable import MuesliNativeApp
 
 @MainActor
-@Suite("Meetings navigation")
+@Suite("Meetings navigation", .muesliHermeticSupport)
 struct MeetingsNavigationTests {
 
     private func makeController() -> MuesliController {
@@ -931,7 +931,7 @@ struct MeetingsNavigationTests {
     }
 }
 
-@Suite("Meeting browser logic")
+@Suite("Meeting browser logic", .muesliHermeticSupport)
 struct MeetingBrowserLogicTests {
 
     @Test("available filters expand with older meeting history")

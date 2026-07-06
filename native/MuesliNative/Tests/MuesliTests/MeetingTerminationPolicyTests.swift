@@ -1,7 +1,7 @@
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Meeting termination policy")
+@Suite("Meeting termination policy", .muesliHermeticSupport)
 struct MeetingTerminationPolicyTests {
     @Test("allows termination when no meeting lifecycle is active")
     func allowsIdleTermination() {

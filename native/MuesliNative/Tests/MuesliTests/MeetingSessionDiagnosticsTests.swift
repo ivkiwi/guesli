@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MeetingSessionDiagnostics")
+@Suite("MeetingSessionDiagnostics", .muesliHermeticSupport)
 struct MeetingSessionDiagnosticsTests {
 
     @Test("WAV measurement reads data chunk after metadata chunks")

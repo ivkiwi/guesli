@@ -4,7 +4,7 @@ import Testing
 @testable import MuesliNativeApp
 import MuesliCore
 
-@Suite("Meeting export")
+@Suite("Meeting export", .muesliHermeticSupport)
 struct MeetingExporterTests {
 
     private func makeMeeting(

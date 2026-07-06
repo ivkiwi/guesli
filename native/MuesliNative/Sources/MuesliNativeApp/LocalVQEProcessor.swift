@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import LocalVQEBridge
+import MuesliCore
 
 enum LocalVQEError: Error, LocalizedError {
     case modelMissing(URL)
@@ -73,6 +74,7 @@ enum LocalVQEModelStore {
         }
         guard downloadIfMissing else { throw LocalVQEError.modelMissing(url) }
 
+        MuesliPaths.preconditionSafeForTestWrite(url)
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true

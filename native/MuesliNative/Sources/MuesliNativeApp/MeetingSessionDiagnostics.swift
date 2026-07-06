@@ -1,5 +1,6 @@
 import FluidAudio
 import Foundation
+import MuesliCore
 import os
 
 struct AudioSampleStatsSnapshot: Codable {
@@ -192,9 +193,11 @@ final class MeetingSessionDiagnostics {
             .appendingPathComponent("\(timestamp)-\(safeTitle)-\(UUID().uuidString.prefix(8))", isDirectory: true)
 
         do {
+            MuesliPaths.preconditionSafeForTestWrite(runDirectory)
             try FileManager.default.createDirectory(at: runDirectory, withIntermediateDirectories: true)
             Self.pruneOldRuns(in: diagnosticsRoot, preserving: runDirectory)
             let cleanedURL = runDirectory.appendingPathComponent("cleaned-mic-aec.wav")
+            MuesliPaths.preconditionSafeForTestWrite(cleanedURL)
             FileManager.default.createFile(atPath: cleanedURL.path, contents: nil)
             let file = FileHandle(forWritingAtPath: cleanedURL.path)
             file?.write(WavWriter.header(dataSize: 0))
@@ -308,6 +311,7 @@ final class MeetingSessionDiagnostics {
     private func copyAudioFileAndMeasure(from sourceURL: URL?, to destinationURL: URL) -> AudioSampleStatsSnapshot? {
         guard let sourceURL, FileManager.default.fileExists(atPath: sourceURL.path) else { return nil }
         do {
+            MuesliPaths.preconditionSafeForTestWrite(destinationURL)
             if FileManager.default.fileExists(atPath: destinationURL.path) {
                 try FileManager.default.removeItem(at: destinationURL)
             }
@@ -321,6 +325,7 @@ final class MeetingSessionDiagnostics {
 
     private func writeText(_ text: String, to url: URL) {
         do {
+            MuesliPaths.preconditionSafeForTestWrite(url)
             try text.write(to: url, atomically: true, encoding: .utf8)
         } catch {
             fputs("[meeting-diagnostics] failed to write \(url.lastPathComponent): \(error)\n", stderr)
@@ -356,6 +361,7 @@ final class MeetingSessionDiagnostics {
                 retainedCount += 1
                 retainedBytes += run.byteSize
             } else {
+                MuesliPaths.preconditionSafeForTestWrite(run.url)
                 try? fileManager.removeItem(at: run.url)
             }
         }

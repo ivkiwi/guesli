@@ -1,7 +1,7 @@
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("OnboardingFlow")
+@Suite("OnboardingFlow", .muesliHermeticSupport)
 struct OnboardingFlowTests {
     @Test("voice notes orders push-to-talk steps without paste permission")
     func voiceNotesOrderedSteps() {

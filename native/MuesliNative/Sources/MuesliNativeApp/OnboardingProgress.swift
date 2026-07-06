@@ -1,4 +1,5 @@
 import Foundation
+import MuesliCore
 
 struct OnboardingPermissionSnapshot: Equatable {
     var microphone: Bool
@@ -116,6 +117,8 @@ struct OnboardingProgress: Codable {
     static func save(_ progress: OnboardingProgress) {
         do {
             let dir = AppIdentity.supportDirectoryURL
+            MuesliPaths.preconditionSafeForTestWrite(dir)
+            MuesliPaths.preconditionSafeForTestWrite(fileURL)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(progress)
             try data.write(to: fileURL, options: [.atomic])
@@ -143,6 +146,7 @@ struct OnboardingProgress: Codable {
     }
 
     static func clear() {
+        MuesliPaths.preconditionSafeForTestWrite(fileURL)
         try? FileManager.default.removeItem(at: fileURL)
     }
 }

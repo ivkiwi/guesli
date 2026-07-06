@@ -2,7 +2,7 @@ import CoreAudio
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("CoreAudioSystemRecorder")
+@Suite("CoreAudioSystemRecorder", .muesliHermeticSupport)
 struct CoreAudioSystemRecorderTests {
 
     @Test("global tap description captures process mix except Guesli")

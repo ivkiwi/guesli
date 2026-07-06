@@ -143,6 +143,7 @@ actor TranscriptionCoordinator {
     private func logPostProcPair(raw: String, processed: String, asr: String, model: String? = nil) {
         guard Qwen3PostProcessorLogging.isPairLoggingEnabled else { return }
         let logURL = AppIdentity.supportDirectoryURL.appendingPathComponent("postproc-pairs.jsonl")
+        MuesliPaths.preconditionSafeForTestWrite(logURL)
         let iso8601 = ISO8601DateFormatter()
         iso8601.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let ts = iso8601.string(from: Date())

@@ -19,7 +19,7 @@ private struct ImportThrowingMeetingTranscriptCleaner: MeetingTranscriptCleaning
     }
 }
 
-@Suite("AudioFileImportController")
+@Suite("AudioFileImportController", .muesliHermeticSupport)
 struct AudioFileImportControllerTests {
 
     // MARK: - WAV Conversion Tests

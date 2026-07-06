@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("BrowserMeetingActivityCollector")
+@Suite("BrowserMeetingActivityCollector", .muesliHermeticSupport)
 struct BrowserMeetingActivityCollectorTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 

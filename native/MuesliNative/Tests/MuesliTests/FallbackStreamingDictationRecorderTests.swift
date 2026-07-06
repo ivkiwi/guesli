@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("FallbackStreamingDictationRecorder")
+@Suite("FallbackStreamingDictationRecorder", .muesliHermeticSupport)
 struct FallbackStreamingDictationRecorderTests {
     @Test("prepare falls back when primary prepare fails")
     func prepareFallsBackWhenPrimaryPrepareFails() throws {

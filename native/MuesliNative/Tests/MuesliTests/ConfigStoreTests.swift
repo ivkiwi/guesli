@@ -3,7 +3,7 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("ConfigStore", .serialized)
+@Suite("ConfigStore", .serialized, .muesliHermeticSupport)
 struct ConfigStoreTests {
 
     private func makeStore() -> ConfigStore {

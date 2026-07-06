@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import MuesliCore
 import Network
 import Security
 
@@ -47,7 +48,9 @@ final class ChatGPTAuthManager {
 
     private init() {
         // Migrate from legacy keychain storage to file
-        migrateFromKeychain()
+        if !MuesliPaths.isRunningTests {
+            migrateFromKeychain()
+        }
     }
 
     // MARK: - Public API
@@ -67,8 +70,10 @@ final class ChatGPTAuthManager {
     func signOut() {
         deleteTokens()
         // Also clean up legacy keychain entries
-        for account in ["access_token", "refresh_token", "expires_at", "account_id"] {
-            keychainDeleteLegacy(account: account)
+        if !MuesliPaths.isRunningTests {
+            for account in ["access_token", "refresh_token", "expires_at", "account_id"] {
+                keychainDeleteLegacy(account: account)
+            }
         }
         DiagnosticsLog.write("[chatgpt-auth] signed out")
     }

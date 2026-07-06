@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Meeting auto-stop policy")
+@Suite("Meeting auto-stop policy", .muesliHermeticSupport)
 struct MeetingAutoStopPolicyTests {
     @Test("matches the original browser meeting candidate")
     func matchesOriginalBrowserMeetingCandidate() {

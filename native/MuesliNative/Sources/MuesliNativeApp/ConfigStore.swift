@@ -81,6 +81,7 @@ final class ConfigStore {
     }
 
     private func ensureDirectory() {
+        MuesliPaths.preconditionSafeForTestWrite(configURL)
         try? fileManager.createDirectory(
             at: configURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -385,6 +386,7 @@ final class ConfigStore {
             guard !fileManager.fileExists(atPath: destinationURL.path) else { continue }
             do {
                 let data = try Data(contentsOf: sourceURL)
+                MuesliPaths.preconditionSafeForTestWrite(destinationURL)
                 try AuthTokenFileStore(
                     primaryURL: destinationURL,
                     logPrefix: "config-store",

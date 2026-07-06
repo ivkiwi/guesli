@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("AudioDuckingController")
+@Suite("AudioDuckingController", .muesliHermeticSupport)
 struct AudioDuckingControllerTests {
     @Test("disabled setting is a no-op")
     func disabledSettingIsNoOp() {

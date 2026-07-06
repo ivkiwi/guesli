@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MeetingMediaSignalFilter")
+@Suite("MeetingMediaSignalFilter", .muesliHermeticSupport)
 struct MeetingMediaSignalFilterTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
     private let selfBundleID = "com.muesli.app"

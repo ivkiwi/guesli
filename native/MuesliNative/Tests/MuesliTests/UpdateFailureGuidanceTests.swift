@@ -3,7 +3,7 @@ import Sparkle
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Update failure guidance")
+@Suite("Update failure guidance", .muesliHermeticSupport)
 struct UpdateFailureGuidanceTests {
     @Test("classifies Sparkle no-update errors as up to date")
     func classifiesNoUpdateErrorCode() {
@@ -73,7 +73,7 @@ struct UpdateFailureGuidanceTests {
     }
 }
 
-@Suite("Update action routing")
+@Suite("Update action routing", .muesliHermeticSupport)
 struct UpdateActionRoutingTests {
     @Test("status-bar update action enters the standard Sparkle UI")
     func statusBarUpdateActionUsesStandardSparkleFlow() throws {
@@ -258,7 +258,7 @@ struct UpdateActionRoutingTests {
     }
 }
 
-@Suite("Sidebar hit areas")
+@Suite("Sidebar hit areas", .muesliHermeticSupport)
 struct SidebarHitAreaTests {
     @Test("primary sidebar rows use their full highlighted surface as the hit target")
     func primarySidebarRowsExpandBeforeApplyingHitShape() throws {

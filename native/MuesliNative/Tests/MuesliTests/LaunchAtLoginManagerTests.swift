@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Launch at login")
+@Suite("Launch at login", .muesliHermeticSupport)
 struct LaunchAtLoginManagerTests {
     @Test("startup reconciliation reflects actual enabled status when config is off")
     func startupReconciliationReflectsActualEnabledStatus() {

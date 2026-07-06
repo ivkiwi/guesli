@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Canary Qwen backend")
+@Suite("Canary Qwen backend", .muesliHermeticSupport)
 struct CanaryQwenBackendTests {
 
     @Test("local override directory is accepted when complete")

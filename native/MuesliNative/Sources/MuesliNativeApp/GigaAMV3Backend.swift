@@ -161,11 +161,13 @@ enum GigaAMV3ModelStore {
     static func deleteModelFiles(fileManager: FileManager = .default) throws {
         let directory = cacheDirectory(fileManager: fileManager)
         guard fileManager.fileExists(atPath: directory.path) else { return }
+        MuesliPaths.preconditionSafeForTestWrite(directory)
         try fileManager.removeItem(at: directory)
     }
 
     static func downloadIfNeeded(progress: ((Double, String?) -> Void)? = nil) async throws -> URL {
         let directory = cacheDirectory()
+        MuesliPaths.preconditionSafeForTestWrite(directory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         if isAvailableLocally() {
@@ -228,6 +230,7 @@ enum GigaAMV3ModelStore {
         progress: ((Double, String?) -> Void)? = nil,
         fileManager: FileManager = .default
     ) throws {
+        MuesliPaths.preconditionSafeForTestWrite(directory)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
         var copied = 0
@@ -239,6 +242,7 @@ enum GigaAMV3ModelStore {
                       !isCompleteLocalFile(at: destination, spec: spec, fileManager: fileManager) else {
                     continue
                 }
+                MuesliPaths.preconditionSafeForTestWrite(destination)
                 try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? fileManager.removeItem(at: destination)
                 try fileManager.copyItem(at: source, to: destination)

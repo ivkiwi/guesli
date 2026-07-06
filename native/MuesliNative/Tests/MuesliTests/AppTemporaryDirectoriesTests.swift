@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("AppTemporaryDirectories")
+@Suite("AppTemporaryDirectories", .muesliHermeticSupport)
 struct AppTemporaryDirectoriesTests {
     @Test("launch sweep covers app temp dirs and skips dead retranscription dir")
     func launchSweepDirectoryListCoversAppTempDirs() {
@@ -97,7 +97,7 @@ struct AppTemporaryDirectoriesTests {
     }
 }
 
-@Suite("RecordingWaveformCacheFiles")
+@Suite("RecordingWaveformCacheFiles", .muesliHermeticSupport)
 struct RecordingWaveformCacheFilesTests {
     @Test("stale sweep removes old waveform files only")
     func staleSweepRemovesOldWaveformFilesOnly() throws {

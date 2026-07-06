@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Meet speaker bridge")
+@Suite("Meet speaker bridge", .muesliHermeticSupport)
 struct MeetSpeakerBridgeTests {
     @Test("parses extension speaker observation JSON")
     func parsesObservationJSON() throws {

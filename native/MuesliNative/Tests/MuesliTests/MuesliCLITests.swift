@@ -3,7 +3,7 @@ import Testing
 import MuesliCore
 @testable import MuesliCLI
 
-@Suite("MuesliCLI", .serialized)
+@Suite("MuesliCLI", .serialized, .muesliHermeticSupport)
 struct MuesliCLITests {
     @Test("spec exposes the agent-facing command set")
     func specPayloadIncludesCommands() {

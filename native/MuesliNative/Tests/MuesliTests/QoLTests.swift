@@ -5,7 +5,7 @@ import MuesliCore
 
 // MARK: - ChatGPT File-based Token Storage
 
-@Suite("ChatGPT Token Storage")
+@Suite("ChatGPT Token Storage", .muesliHermeticSupport)
 struct ChatGPTTokenStorageTests {
 
     @Test("isAuthenticated returns false when no token file exists")
@@ -42,7 +42,7 @@ struct ChatGPTTokenStorageTests {
 
 // MARK: - Floating Indicator: showFloatingIndicator hides only idle state
 
-@Suite("FloatingIndicator visibility")
+@Suite("FloatingIndicator visibility", .muesliHermeticSupport)
 struct FloatingIndicatorVisibilityTests {
 
     @Test("config default shows floating indicator")
@@ -100,7 +100,7 @@ struct FloatingIndicatorVisibilityTests {
 
 // MARK: - Unified indicator frame sizes
 
-@Suite("Indicator frame sizes")
+@Suite("Indicator frame sizes", .muesliHermeticSupport)
 struct IndicatorFrameSizeTests {
 
     @Test("recording frame size is consistent for all non-meeting dictation")
@@ -210,7 +210,7 @@ struct IndicatorFrameSizeTests {
 
 // MARK: - OpenAI Logo Shape
 
-@Suite("OpenAI Logo Shape")
+@Suite("OpenAI Logo Shape", .muesliHermeticSupport)
 struct OpenAILogoShapeTests {
 
     @Test("shape produces non-empty path")
@@ -243,7 +243,7 @@ struct OpenAILogoShapeTests {
 
 // MARK: - DictationState
 
-@Suite("DictationState idle check")
+@Suite("DictationState idle check", .muesliHermeticSupport)
 struct DictationStateIdleTests {
 
     @Test("all dictation states are defined")
@@ -262,7 +262,7 @@ struct DictationStateIdleTests {
 
 // MARK: - Meeting chunk collection
 
-@Suite("Meeting chunk collection")
+@Suite("Meeting chunk collection", .muesliHermeticSupport)
 struct MeetingChunkCollectorTests {
 
     @Test("collector waits for tasks, keeps completed segments, and sorts by start")
@@ -388,7 +388,7 @@ struct MeetingChunkCollectorTests {
     }
 }
 
-@Suite("Meeting chunk timing")
+@Suite("Meeting chunk timing", .muesliHermeticSupport)
 struct MeetingChunkTimingTrackerTests {
 
     @Test("tracks chunk offsets from processed sample counts")

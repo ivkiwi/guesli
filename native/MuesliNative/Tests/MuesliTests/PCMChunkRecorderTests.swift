@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("PCMChunkRecorder")
+@Suite("PCMChunkRecorder", .muesliHermeticSupport)
 struct PCMChunkRecorderTests {
 
     @Test("rotateFile finalizes the current chunk and starts a new one")

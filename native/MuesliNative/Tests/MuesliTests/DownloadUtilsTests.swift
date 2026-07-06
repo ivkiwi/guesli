@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("DownloadUtils")
+@Suite("DownloadUtils", .muesliHermeticSupport)
 struct DownloadUtilsTests {
 
     @Test("failed move deletes temp")

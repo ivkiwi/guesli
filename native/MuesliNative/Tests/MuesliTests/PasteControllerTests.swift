@@ -3,7 +3,7 @@ import AppKit
 @testable import MuesliNativeApp
 
 // .serialized: some tests still post keyboard events into the active session.
-@Suite("PasteController — clipboard-preserving paste and keystroke simulation", .serialized)
+@Suite("PasteController — clipboard-preserving paste and keystroke simulation", .serialized, .muesliHermeticSupport)
 struct PasteControllerTests {
 
     private let clipboardPollInterval: TimeInterval = 0.05

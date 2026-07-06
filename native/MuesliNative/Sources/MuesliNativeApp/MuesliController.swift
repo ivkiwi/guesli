@@ -455,7 +455,7 @@ final class MuesliController: NSObject {
         let loadedConfig = configStore.load()
         self.runtime = runtime
         self.dictationStore = dictationStore ?? DictationStore(
-            databaseURL: MuesliPaths.defaultDatabaseURL(appName: AppIdentity.supportDirectoryName),
+            databaseURL: MuesliPaths.databaseURL(supportDirectory: configStore.supportDirectory()),
             diagnosticsLogger: { DiagnosticsLog.write($0) }
         )
         self.meetingHookDispatcher = meetingHookDispatcher
@@ -766,7 +766,7 @@ final class MuesliController: NSObject {
     }
 
     private func importLegacyMuesliHistoryIfNeeded() {
-        let defaultGuesliDatabase = MuesliPaths.defaultDatabaseURL(appName: AppIdentity.supportDirectoryName)
+        let defaultGuesliDatabase = MuesliPaths.databaseURL(supportDirectory: configStore.supportDirectory())
             .standardizedFileURL
         guard dictationStore.databasePath().standardizedFileURL == defaultGuesliDatabase else {
             return
@@ -774,7 +774,7 @@ final class MuesliController: NSObject {
         do {
             let summary = try LegacyMuesliImporter().importIfNeeded(
                 targetStore: dictationStore,
-                targetSupportDirectory: AppIdentity.supportDirectoryURL
+                targetSupportDirectory: configStore.supportDirectory()
             )
             if summary.didImport {
                 fputs(
@@ -4650,6 +4650,7 @@ final class MuesliController: NSObject {
     func audioFileImportContext() -> AudioFileImportController.ImportContext {
         AudioFileImportController.ImportContext(
             config: config,
+            supportDirectory: configStore.supportDirectory(),
             backend: selectedMeetingTranscriptionBackend,
             transcriptionCoordinator: transcriptionCoordinator,
             templateSnapshot: defaultMeetingTemplate()
@@ -5650,7 +5651,7 @@ final class MuesliController: NSObject {
             startedAt: result.startTime,
             destinationDirectory: MeetingRecordingStorage.directory(
                 config: config,
-                supportDirectory: AppIdentity.supportDirectoryURL
+                supportDirectory: configStore.supportDirectory()
             ),
             fileFormat: config.resolvedMeetingRecordingFileFormat
         ))

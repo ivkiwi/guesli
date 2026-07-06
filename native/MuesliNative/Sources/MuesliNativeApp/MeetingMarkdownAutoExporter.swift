@@ -235,6 +235,8 @@ final class MeetingMarkdownAutoExporter: MeetingMarkdownAutoExporting {
 
         logQueue.async { [self] in
             do {
+                MuesliPaths.preconditionSafeForTestWrite(supportDirectory)
+                MuesliPaths.preconditionSafeForTestWrite(logURL)
                 try fileManager.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
                 if !fileManager.fileExists(atPath: logURL.path) {
                     guard fileManager.createFile(atPath: logURL.path, contents: nil) else {

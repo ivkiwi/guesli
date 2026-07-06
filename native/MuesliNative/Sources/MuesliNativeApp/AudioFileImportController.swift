@@ -154,6 +154,7 @@ enum AudioFileImportController {
 
     struct ImportContext {
         let config: AppConfig
+        let supportDirectory: URL
         let backend: BackendOption
         let transcriptionCoordinator: TranscriptionCoordinator
         let templateSnapshot: MeetingTemplateSnapshot
@@ -308,7 +309,8 @@ enum AudioFileImportController {
             from: wavURL,
             meetingTitle: generatedTitle,
             startedAt: startTime,
-            config: config
+            config: config,
+            supportDirectory: context.supportDirectory
         ).path
         let meetingID = try await controller.persistImportedAudioMeeting(
             title: generatedTitle,

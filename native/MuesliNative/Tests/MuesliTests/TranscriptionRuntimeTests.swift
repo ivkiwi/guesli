@@ -3,7 +3,7 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("SpeechSegment")
+@Suite("SpeechSegment", .muesliHermeticSupport)
 struct SpeechSegmentTests {
 
     @Test("stores start, end, text")
@@ -15,7 +15,7 @@ struct SpeechSegmentTests {
     }
 }
 
-@Suite("SpeechTranscriptionResult")
+@Suite("SpeechTranscriptionResult", .muesliHermeticSupport)
 struct SpeechTranscriptionResultTests {
 
     @Test("stores text and segments")
@@ -39,7 +39,7 @@ struct SpeechTranscriptionResultTests {
     }
 }
 
-@Suite("Qwen3 inference gate")
+@Suite("Qwen3 inference gate", .muesliHermeticSupport)
 struct Qwen3InferenceGateTests {
 
     @Test("cancelled waiter is removed before next slot")
@@ -81,7 +81,7 @@ struct Qwen3InferenceGateTests {
     }
 }
 
-@Suite("TranscriptionCoordinator routing")
+@Suite("TranscriptionCoordinator routing", .muesliHermeticSupport)
 struct TranscriptionCoordinatorTests {
 
     @Test("coordinator initializes without crash")
@@ -182,7 +182,7 @@ private actor TranscriptCleanupCallRecorder {
     }
 }
 
-@Suite("CohereTranscribeLanguage")
+@Suite("CohereTranscribeLanguage", .muesliHermeticSupport)
 struct CohereTranscribeLanguageTests {
 
     @Test("english prompt ids match the current default prompt")
@@ -206,7 +206,7 @@ struct CohereTranscribeLanguageTests {
     }
 }
 
-@Suite("CohereTranscribeUtils")
+@Suite("CohereTranscribeUtils", .muesliHermeticSupport)
 struct CohereTranscribeUtilsTests {
 
     @Test("single transcript returns unchanged")
@@ -284,7 +284,7 @@ struct CohereTranscribeUtilsTests {
     }
 }
 
-@Suite("GigaAMV3FileChunking")
+@Suite("GigaAMV3FileChunking", .muesliHermeticSupport)
 struct GigaAMV3FileChunkingTests {
 
     @Test("short files use one passthrough window")
@@ -337,11 +337,15 @@ struct GigaAMV3FileChunkingTests {
 
     @Test("gigaam cache path stays under app support")
     func gigaAMCachePath() {
-        #expect(GigaAMV3ModelStore.cacheDirectory().path.hasSuffix("Library/Application Support/Guesli/Models/gigaam-v3-coreml"))
+        let expected = AppIdentity.supportDirectoryURL
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent("gigaam-v3-coreml", isDirectory: true)
+
+        #expect(GigaAMV3ModelStore.cacheDirectory() == expected)
     }
 }
 
-@Suite("GigaAMV3Transcriber errors")
+@Suite("GigaAMV3Transcriber errors", .muesliHermeticSupport)
 struct GigaAMV3TranscriberErrorTests {
 
     @Test("cancellation errors pass through")
@@ -363,7 +367,7 @@ struct GigaAMV3TranscriberErrorTests {
     }
 }
 
-@Suite("SenseVoiceFileChunking")
+@Suite("SenseVoiceFileChunking", .muesliHermeticSupport)
 struct SenseVoiceFileChunkingTests {
 
     @Test("short files use one passthrough window")
@@ -404,7 +408,7 @@ struct SenseVoiceFileChunkingTests {
     }
 }
 
-@Suite("TranscriptionEngineArtifactsFilter")
+@Suite("TranscriptionEngineArtifactsFilter", .muesliHermeticSupport)
 struct TranscriptionEngineArtifactsFilterTests {
 
     @Test("returns empty string for known artifact")
@@ -467,7 +471,7 @@ struct TranscriptionEngineArtifactsFilterTests {
     }
 }
 
-@Suite("Qwen3 post-processing output cleanup")
+@Suite("Qwen3 post-processing output cleanup", .muesliHermeticSupport)
 struct Qwen3PostProcessingOutputCleanerTests {
 
     @Test("removes think tags")
@@ -571,7 +575,7 @@ struct Qwen3PostProcessingOutputCleanerTests {
     }
 }
 
-@Suite("External transcript cleanup client")
+@Suite("External transcript cleanup client", .muesliHermeticSupport)
 struct ExternalTranscriptCleanupClientTests {
 
     @Test("normalizes OpenAI-compatible endpoints")

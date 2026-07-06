@@ -39,7 +39,7 @@ private final class StreamingVadBoundaryProbe: @unchecked Sendable {
     }
 }
 
-@Suite("StreamingVadController", .serialized)
+@Suite("StreamingVadController", .serialized, .muesliHermeticSupport)
 struct StreamingVadControllerTests {
     @Test("serializes streaming VAD processing to a single in-flight chunk")
     func serializesChunkProcessing() async throws {

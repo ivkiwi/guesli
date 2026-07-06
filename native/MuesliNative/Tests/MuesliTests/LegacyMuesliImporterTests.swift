@@ -3,7 +3,7 @@ import MuesliCore
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Legacy Muesli importer", .serialized)
+@Suite("Legacy Muesli importer", .serialized, .muesliHermeticSupport)
 struct LegacyMuesliImporterTests {
     @Test("imports legacy dictations, meetings, notes, and recordings once")
     func importsLegacyHistoryOnce() throws {

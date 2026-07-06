@@ -1,7 +1,7 @@
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Transcript chat message parsing")
+@Suite("Transcript chat message parsing", .muesliHermeticSupport)
 struct TranscriptChatMessageTests {
     @Test("timestamped speaker lines become chat messages")
     func timestampedSpeakerLinesBecomeChatMessages() {

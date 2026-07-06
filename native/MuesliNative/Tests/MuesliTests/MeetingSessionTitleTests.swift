@@ -1,7 +1,7 @@
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Meeting session title selection")
+@Suite("Meeting session title selection", .muesliHermeticSupport)
 struct MeetingSessionTitleTests {
     @Test("calendar event title is used when present")
     func calendarEventTitleCandidate() {

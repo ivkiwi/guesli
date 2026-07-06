@@ -2,7 +2,7 @@ import FluidAudio
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MicTurnNormalizer")
+@Suite("MicTurnNormalizer", .muesliHermeticSupport)
 struct MicTurnNormalizerTests {
 
     @Test("falls back to one chunk-level turn when backend timings are not meaningful")

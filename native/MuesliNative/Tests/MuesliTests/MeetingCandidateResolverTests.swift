@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MeetingCandidateResolver")
+@Suite("MeetingCandidateResolver", .muesliHermeticSupport)
 struct MeetingCandidateResolverTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 

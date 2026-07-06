@@ -1,4 +1,5 @@
 import Foundation
+import MuesliCore
 import os
 
 protocol MeetingHookDispatching {
@@ -217,6 +218,8 @@ final class MeetingHookRunner: MeetingHookDispatching {
 
         logQueue.sync {
             do {
+                MuesliPaths.preconditionSafeForTestWrite(supportDirectory)
+                MuesliPaths.preconditionSafeForTestWrite(logURL)
                 try fileManager.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
                 if !fileManager.fileExists(atPath: logURL.path) {
                     fileManager.createFile(atPath: logURL.path, contents: nil)

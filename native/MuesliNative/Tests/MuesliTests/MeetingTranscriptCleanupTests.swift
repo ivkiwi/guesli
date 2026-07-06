@@ -33,7 +33,7 @@ private actor MeetingChatGPTCleanupRequestRecorder {
     }
 }
 
-@Suite("Meeting transcript cleanup pipeline")
+@Suite("Meeting transcript cleanup pipeline", .muesliHermeticSupport)
 struct MeetingTranscriptCleanupTests {
     @Test("successful cleanup preserves original transcript")
     func successfulCleanupPreservesOriginalTranscript() async {

@@ -4,7 +4,7 @@ import MuesliCore
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MeetingRecordingWriter")
+@Suite("MeetingRecordingWriter", .muesliHermeticSupport)
 struct MeetingRecordingWriterTests {
 
     @Test("streaming writer merges mic and system samples incrementally")

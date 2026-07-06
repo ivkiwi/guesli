@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Diagnostics log")
+@Suite("Diagnostics log", .muesliHermeticSupport)
 struct DiagnosticsLogTests {
     @Test("rotates diagnostics log and keeps owner-only permissions")
     func rotatesDiagnosticsLogAndKeepsOwnerOnlyPermissions() throws {

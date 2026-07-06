@@ -4,7 +4,7 @@ import MuesliCore
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("Computer Use tool registry")
+@Suite("Computer Use tool registry", .muesliHermeticSupport)
 struct ComputerUseToolRegistryTests {
     @Test("emits schemas and descriptions for every tool")
     func emitsSchemasAndDescriptions() {
@@ -68,7 +68,7 @@ struct ComputerUseToolRegistryTests {
     }
 }
 
-@Suite("Computer Use observation capture")
+@Suite("Computer Use observation capture", .muesliHermeticSupport)
 struct ComputerUseObservationCaptureTests {
     @Test("uses display fallback for shallow window screenshots")
     func usesDisplayFallbackForShallowWindowScreenshots() {
@@ -85,7 +85,7 @@ struct ComputerUseObservationCaptureTests {
     }
 }
 
-@Suite("Computer Use planner response")
+@Suite("Computer Use planner response", .muesliHermeticSupport)
 struct ComputerUsePlannerResponseTests {
     @Test("decodes valid top-level tool call")
     func decodesValidToolCall() throws {
@@ -377,7 +377,7 @@ struct ComputerUsePlannerResponseTests {
     }
 }
 
-@Suite("Computer Use planner model")
+@Suite("Computer Use planner model", .muesliHermeticSupport)
 struct ComputerUsePlannerModelTests {
     @Test("uses dedicated CUA model instead of shared ChatGPT model")
     func usesDedicatedCUAModel() {
@@ -392,7 +392,7 @@ struct ComputerUsePlannerModelTests {
     }
 }
 
-@Suite("Computer Use observation shaping")
+@Suite("Computer Use observation shaping", .muesliHermeticSupport)
 struct ComputerUseObservationTests {
     @Test("candidate labels normalize")
     func labelsNormalize() {
@@ -422,7 +422,7 @@ struct ComputerUseObservationTests {
     }
 }
 
-@Suite("Computer Use request encoding")
+@Suite("Computer Use request encoding", .muesliHermeticSupport)
 struct ComputerUsePlannerRequestTests {
     @Test("persists screenshot metadata without image data")
     func persistsScreenshotMetadataWithoutImageData() throws {
@@ -443,7 +443,7 @@ struct ComputerUsePlannerRequestTests {
     }
 }
 
-@Suite("Computer Use trace formatting")
+@Suite("Computer Use trace formatting", .muesliHermeticSupport)
 struct ComputerUseTraceFormatterTests {
     @Test("hides redundant lifecycle statuses")
     func hidesRedundantLifecycleStatuses() {
@@ -462,7 +462,7 @@ struct ComputerUseTraceFormatterTests {
     }
 }
 
-@Suite("Computer Use planner runtime")
+@Suite("Computer Use planner runtime", .muesliHermeticSupport)
 struct ComputerUsePlannerRuntimeTests {
     @Test("finishes after finish tool")
     @MainActor

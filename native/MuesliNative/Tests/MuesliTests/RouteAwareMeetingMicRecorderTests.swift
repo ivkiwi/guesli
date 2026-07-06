@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("RouteAwareMeetingMicRecorder")
+@Suite("RouteAwareMeetingMicRecorder", .muesliHermeticSupport)
 struct RouteAwareMeetingMicRecorderTests {
     @Test("default input uses system default recorder")
     func defaultInputUsesSystemDefaultRecorder() throws {

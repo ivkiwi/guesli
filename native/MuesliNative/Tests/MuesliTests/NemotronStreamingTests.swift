@@ -4,7 +4,7 @@ import CoreAudio
 import CoreML
 @testable import MuesliNativeApp
 
-@Suite("StreamingDictationController")
+@Suite("StreamingDictationController", .muesliHermeticSupport)
 struct StreamingDictationControllerTests {
 
     @available(macOS 15, *)
@@ -587,7 +587,7 @@ private final class FailureCounter {
     }
 }
 
-@Suite("Delta paste logic")
+@Suite("Delta paste logic", .muesliHermeticSupport)
 struct DeltaPasteTests {
 
     @Test("delta from empty previous text")
@@ -639,7 +639,7 @@ struct DeltaPasteTests {
     }
 }
 
-@Suite("Transcript accumulation")
+@Suite("Transcript accumulation", .muesliHermeticSupport)
 struct TranscriptAccumulationTests {
 
     @Test("SentencePiece leading space preserved in concatenation")
@@ -693,7 +693,7 @@ struct TranscriptAccumulationTests {
     }
 }
 
-@Suite("StreamingDictationController lifecycle")
+@Suite("StreamingDictationController lifecycle", .muesliHermeticSupport)
 struct StreamingDictationControllerLifecycleTests {
 
     @available(macOS 15, *)
@@ -741,7 +741,7 @@ private func makeTestNemotronStreamState() throws -> RNNTStreamState {
     )
 }
 
-@Suite("Nemotron dictation mode policy")
+@Suite("Nemotron dictation mode policy", .muesliHermeticSupport)
 struct NemotronDictationModePolicyTests {
 
     @Test("Nemotron 3.5 is the only streaming dictation backend")
@@ -778,7 +778,7 @@ struct NemotronDictationModePolicyTests {
     }
 }
 
-@Suite("Nemotron35 backend")
+@Suite("Nemotron35 backend", .muesliHermeticSupport)
 struct Nemotron35StreamStateTests {
 
     @available(macOS 15, *)
@@ -830,7 +830,7 @@ struct Nemotron35StreamStateTests {
     }
 }
 
-@Suite("Nemotron RNNT shape guards")
+@Suite("Nemotron RNNT shape guards", .muesliHermeticSupport)
 struct NemotronRNNTShapeGuardTests {
 
     @Test("mel validation rejects wrong rank with descriptive error")
@@ -907,7 +907,7 @@ struct NemotronRNNTShapeGuardTests {
     }
 }
 
-@Suite("Nemotron35 backend metadata")
+@Suite("Nemotron35 backend metadata", .muesliHermeticSupport)
 struct Nemotron35BackendMetadataTests {
 
     @Test("nemotron35 description warns about limitations and lists languages")
@@ -928,7 +928,7 @@ struct Nemotron35BackendMetadataTests {
     }
 }
 
-@Suite("Nemotron35 language selection")
+@Suite("Nemotron35 language selection", .muesliHermeticSupport)
 struct Nemotron35LanguageTests {
 
     @Test("prompt ids match the model's prompt_dictionary")

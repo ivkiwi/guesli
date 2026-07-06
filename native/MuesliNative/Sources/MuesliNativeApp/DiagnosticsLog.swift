@@ -1,4 +1,5 @@
 import Foundation
+import MuesliCore
 
 enum DiagnosticsLog {
     static let defaultMaxBytes: UInt64 = 2 * 1024 * 1024
@@ -50,6 +51,7 @@ enum DiagnosticsLog {
         date: Date,
         fileManager: FileManager
     ) throws {
+        MuesliPaths.preconditionSafeForTestWrite(fileURL)
         let data = Data("\(timestamp(date)) \(message)\n".utf8)
         let directory = fileURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)

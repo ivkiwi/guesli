@@ -3,7 +3,7 @@ import Testing
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("TranscriptReconciler")
+@Suite("TranscriptReconciler", .muesliHermeticSupport)
 struct TranscriptReconcilerTests {
 
     @Test("keeps overlapping mic turns when preserving local speech is safer")

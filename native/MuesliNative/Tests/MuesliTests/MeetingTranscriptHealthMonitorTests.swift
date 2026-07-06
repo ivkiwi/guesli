@@ -2,7 +2,7 @@ import FluidAudio
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MeetingTranscriptHealthMonitor")
+@Suite("MeetingTranscriptHealthMonitor", .muesliHermeticSupport)
 struct MeetingTranscriptHealthMonitorTests {
 
     @Test("accepts healthy mic coverage without repair")

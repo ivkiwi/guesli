@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("MuesliBridgeDeviceIdentity", .serialized)
+@Suite("MuesliBridgeDeviceIdentity", .serialized, .muesliHermeticSupport)
 struct MuesliBridgeDeviceIdentityTests {
     private enum DefaultsKey {
         static let localDeviceID = "muesli.sync.bridge.localDeviceID.v1"
@@ -288,7 +288,7 @@ struct MuesliBridgeDeviceIdentityTests {
     }
 }
 
-@Suite("ICloudBridgeAppState")
+@Suite("ICloudBridgeAppState", .muesliHermeticSupport)
 struct ICloudBridgeAppStateTests {
     @MainActor
     @Test("companion device name only returns iOS and iPadOS remotes")
@@ -309,7 +309,7 @@ struct ICloudBridgeAppStateTests {
     }
 }
 
-@Suite("MuesliBridgeDeviceRefreshPolicy")
+@Suite("MuesliBridgeDeviceRefreshPolicy", .muesliHermeticSupport)
 struct MuesliBridgeDeviceRefreshPolicyTests {
     @Test("user initiated sync forces bridge device refresh")
     func userInitiatedSyncForcesBridgeDeviceRefresh() {

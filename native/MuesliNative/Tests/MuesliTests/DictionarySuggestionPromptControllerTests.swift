@@ -1,7 +1,7 @@
 import Testing
 @testable import MuesliNativeApp
 
-@Suite("DictionarySuggestionPromptController")
+@Suite("DictionarySuggestionPromptController", .muesliHermeticSupport)
 struct DictionarySuggestionPromptControllerTests {
     @Test("Auto-dismiss decision is made when timer fires")
     @MainActor

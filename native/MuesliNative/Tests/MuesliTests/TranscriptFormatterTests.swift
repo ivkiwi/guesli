@@ -4,7 +4,7 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
-@Suite("TranscriptFormatter")
+@Suite("TranscriptFormatter", .muesliHermeticSupport)
 struct TranscriptFormatterTests {
 
     @Test("merges mic and system segments sorted by time")

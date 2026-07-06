@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import MuesliNativeApp
 
-@Suite("Upcoming meetings window")
+@Suite("Upcoming meetings window", .muesliHermeticSupport)
 struct UpcomingMeetingsWindowTests {
     @Test("today only ends at the next local day")
     func todayOnlyEndsAtNextLocalDay() throws {
