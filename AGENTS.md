@@ -83,4 +83,5 @@ osascript -e 'tell application "Guesli" to quit' 2>/dev/null; sleep 2
 open /Applications/Guesli.app && sleep 3 && pgrep -x Guesli    # must print a PID
 ```
 
-6. Report all four results (Authority, deep verify, relaunch PID, app version from Info.plist). A build task is NOT done until the freshly built app is running.
+6. Relaunch verification is strict: capture the running PID BEFORE the quit; after `open`, the new PID must DIFFER from the old one AND `ps -o lstart= -p <pid>` must be LATER than the new binary's mtime (`stat -f %m /Applications/Guesli.app/Contents/MacOS/Guesli`). If the old PID survived the AppleScript quit, `pkill -x Guesli`, wait, and relaunch — reporting the old PID as success is a task failure.
+7. Report all four results (Authority, deep verify, relaunch PID + its start time vs binary mtime, app version from Info.plist). A build task is NOT done until the FRESH binary is the one running.
