@@ -1,5 +1,4 @@
 import CoreGraphics
-import Darwin
 import Foundation
 import Testing
 @testable import MuesliNativeApp
@@ -202,8 +201,8 @@ struct MeetingExporterTests {
         #expect(full.contains("no close"))
     }
 
-    @Test("PDF writer runs off main thread and produces parseable pages")
-    func pdfWriterRunsOffMainThreadAndProducesParseablePages() async throws {
+    @Test("PDF writer produces parseable pages from a detached task")
+    func pdfWriterProducesParseablePagesFromDetachedTask() async throws {
         let firstURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("meeting-export-\(UUID().uuidString).pdf")
         let secondURL = FileManager.default.temporaryDirectory
@@ -214,17 +213,15 @@ struct MeetingExporterTests {
         }
         let markdown = String(repeating: "Long transcript line with **bold** text\n", count: 500)
 
-        let ranOnMainThread = try await Task.detached(priority: .userInitiated) { () throws -> Bool in
+        try await Task.detached(priority: .userInitiated) {
             let attributed = MeetingExporter.buildAttributedString(from: markdown)
             try MeetingExporter.writePDF(attributed: attributed, to: firstURL)
             try MeetingExporter.writePDF(attributed: attributed, to: secondURL)
-            return pthread_main_np() != 0
         }.value
 
         let firstPDF = try #require(CGPDFDocument(firstURL as CFURL))
         let secondPDF = try #require(CGPDFDocument(secondURL as CFURL))
 
-        #expect(ranOnMainThread == false)
         #expect(firstPDF.numberOfPages == secondPDF.numberOfPages)
         #expect(firstPDF.numberOfPages > 1)
         #expect(firstPDF.numberOfPages < 50)

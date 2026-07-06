@@ -162,6 +162,7 @@ struct MeetingExporter {
               let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
             throw CocoaError(.fileWriteUnknown)
         }
+        defer { context.closePDF() }
 
         let framesetter = CTFramesetterCreateWithAttributedString(attributed)
         let length = attributed.length
@@ -190,7 +191,6 @@ struct MeetingExporter {
             range.location += visible.length
         } while range.location < length
 
-        context.closePDF()
     }
 
     // MARK: - Save panel
@@ -273,7 +273,7 @@ struct MeetingExporter {
     private static func lineWithInlineBold(_ text: String, baseFont: NSFont) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let baseAttrs: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: textColor]
-        let boldFont = NSFontManager.shared.convert(baseFont, toHaveTrait: .boldFontMask)
+        let boldFont = NSFont.systemFont(ofSize: baseFont.pointSize, weight: .bold)
         let boldAttrs: [NSAttributedString.Key: Any] = [.font: boldFont, .foregroundColor: textColor]
 
         var remaining = text[text.startIndex...]

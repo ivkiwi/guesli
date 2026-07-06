@@ -270,7 +270,7 @@ Muesli needs these macOS permissions (guided during onboarding):
 | Calendar | Google Calendar API (OAuth 2.0) |
 | Sync | CloudKit private database for text-only iCloud sync |
 | Automation | Computer Use planner and post-meeting executable hooks |
-| Export | PDF (NSPrintOperation, paginated US Letter) + Markdown |
+| Export | PDF (CoreText/CoreGraphics, paginated US Letter) + Markdown |
 | Word correction | Jaro-Winkler similarity (native Swift) |
 | Storage | SQLite (WAL mode) |
 | Signing | Developer ID + hardened runtime (notarization ready) |
