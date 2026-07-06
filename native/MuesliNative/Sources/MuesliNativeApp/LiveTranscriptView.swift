@@ -15,6 +15,12 @@ private struct LiveTranscriptGroup: Identifiable {
 }
 
 struct LiveTranscriptView: View {
+    enum TranscriptMergeDecision: Equatable {
+        case unchanged
+        case append(String)
+        case resetAndAppend(String)
+    }
+
     let transcript: String
     @State private var groups: [LiveTranscriptGroup] = []
     // Tracks how many characters of transcript have been parsed into groups.
@@ -64,19 +70,29 @@ struct LiveTranscriptView: View {
     }
 
     private func mergeNewContent(from newTranscript: String) {
-        if newTranscript.count < parsedLength || !newTranscript.hasPrefix(parsedTranscript) {
+        let decision = Self.transcriptMergeDecision(
+            newTranscript: newTranscript,
+            parsedTranscript: parsedTranscript,
+            parsedLength: parsedLength
+        )
+
+        let newContent: String
+        switch decision {
+        case .unchanged:
+            return
+        case .append(let suffix):
+            newContent = suffix
+        case .resetAndAppend(let transcript):
             groups = []
             parsedLength = 0
             parsedTranscript = ""
+            newContent = transcript
         }
-        guard newTranscript.count > parsedLength else {
-            return
-        }
-        let startIndex = newTranscript.index(newTranscript.startIndex, offsetBy: parsedLength)
+
         parsedLength = newTranscript.count
         parsedTranscript = newTranscript
 
-        let newMessages = TranscriptChatMessage.messages(from: String(newTranscript[startIndex...]))
+        let newMessages = TranscriptChatMessage.messages(from: newContent)
         for msg in newMessages {
             if let last = groups.last, last.speaker == msg.speaker {
                 groups[groups.count - 1] = LiveTranscriptGroup(
@@ -96,6 +112,21 @@ struct LiveTranscriptView: View {
                 ))
             }
         }
+    }
+
+    static func transcriptMergeDecision(
+        newTranscript: String,
+        parsedTranscript: String,
+        parsedLength: Int
+    ) -> TranscriptMergeDecision {
+        if newTranscript.count < parsedLength || !newTranscript.hasPrefix(parsedTranscript) {
+            return .resetAndAppend(newTranscript)
+        }
+        guard newTranscript.count > parsedLength else {
+            return .unchanged
+        }
+        let startIndex = newTranscript.index(newTranscript.startIndex, offsetBy: parsedLength)
+        return .append(String(newTranscript[startIndex...]))
     }
 
     @ViewBuilder

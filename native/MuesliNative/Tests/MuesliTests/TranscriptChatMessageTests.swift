@@ -34,3 +34,54 @@ struct TranscriptChatMessageTests {
         #expect(messages[1].text == "This line has no speaker.")
     }
 }
+
+@Suite("Live transcript merge decision")
+struct LiveTranscriptMergeDecisionTests {
+    @Test("appends only unread suffix")
+    func appendsOnlyUnreadSuffix() {
+        let parsedTranscript = "[10:00:00] You: Hello.\n"
+        let decision = LiveTranscriptView.transcriptMergeDecision(
+            newTranscript: parsedTranscript + "[10:00:02] Others: Hi.\n",
+            parsedTranscript: parsedTranscript,
+            parsedLength: parsedTranscript.count
+        )
+
+        #expect(decision == .append("[10:00:02] Others: Hi.\n"))
+    }
+
+    @Test("returns unchanged for already parsed transcript")
+    func returnsUnchangedForAlreadyParsedTranscript() {
+        let parsedTranscript = "[10:00:00] You: Hello.\n"
+        let decision = LiveTranscriptView.transcriptMergeDecision(
+            newTranscript: parsedTranscript,
+            parsedTranscript: parsedTranscript,
+            parsedLength: parsedTranscript.count
+        )
+
+        #expect(decision == .unchanged)
+    }
+
+    @Test("resets when transcript shrinks")
+    func resetsWhenTranscriptShrinks() {
+        let parsedTranscript = "[10:00:00] You: Hello.\n"
+        let decision = LiveTranscriptView.transcriptMergeDecision(
+            newTranscript: "",
+            parsedTranscript: parsedTranscript,
+            parsedLength: parsedTranscript.count
+        )
+
+        #expect(decision == .resetAndAppend(""))
+    }
+
+    @Test("resets when parsed prefix diverges")
+    func resetsWhenParsedPrefixDiverges() {
+        let parsedTranscript = "[10:00:00] You: Hello.\n"
+        let decision = LiveTranscriptView.transcriptMergeDecision(
+            newTranscript: "[10:00:01] You: Corrected.\n",
+            parsedTranscript: parsedTranscript,
+            parsedLength: parsedTranscript.count
+        )
+
+        #expect(decision == .resetAndAppend("[10:00:01] You: Corrected.\n"))
+    }
+}
