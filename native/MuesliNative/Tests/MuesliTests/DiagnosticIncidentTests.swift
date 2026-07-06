@@ -142,18 +142,7 @@ struct DiagnosticIncidentTests {
         #expect(url.absoluteString.hasPrefix("https://github.com/Muesli-HQ/muesli/issues/new?"))
         #expect(url.absoluteString.contains("title="))
         #expect(url.absoluteString.contains("body="))
-    }
-}
-
-@Suite("AppIdentity diagnostics")
-struct AppIdentityDiagnosticTests {
-
-    @Test("development diagnostics are gated to dev identities")
-    func detectsDevelopmentIdentity() {
-        #expect(AppIdentity.isDevelopmentBuild(bundleID: "com.muesli.dev", displayName: "MuesliDev"))
-        #expect(AppIdentity.isDevelopmentBuild(bundleID: "com.muesli.dev.a", displayName: "MuesliDevA"))
-        #expect(AppIdentity.isDevelopmentBuild(bundleID: "com.example.local", displayName: "MuesliDev"))
-        #expect(!AppIdentity.isDevelopmentBuild(bundleID: "com.muesli", displayName: "Muesli"))
+        #expect(DiagnosticIncident.githubIssueFallbackURL.absoluteString == "https://github.com/Muesli-HQ/muesli/issues/new")
     }
 }
 

@@ -219,6 +219,8 @@ struct DiagnosticIncident: Codable, Equatable, Identifiable, Sendable {
         return components?.url
     }
 
+    static let githubIssueFallbackURL = URL(string: "https://github.com/Muesli-HQ/muesli/issues/new")!
+
     static func sanitizeToken(_ value: String) -> String {
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-")
         let scalars = value.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars

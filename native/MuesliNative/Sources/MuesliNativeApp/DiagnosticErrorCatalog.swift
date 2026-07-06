@@ -57,9 +57,6 @@ enum DiagnosticErrorCatalog {
     ]
 
     private static let exactMeanings: [String: [String: DiagnosticErrorMeaning]] = [
-        "MuesliDiagnosticsSimulation": [
-            "9001": DiagnosticErrorMeaning(summary: "Simulated diagnostic failure", area: "diagnostic_test"),
-        ],
         "MuesliTranscriptionRuntime": [
             "1": DiagnosticErrorMeaning(summary: "Nemotron 3.5 requires a newer macOS version", area: "transcription_runtime"),
             "2": DiagnosticErrorMeaning(summary: "Qwen3 ASR requires a newer macOS version", area: "transcription_runtime"),

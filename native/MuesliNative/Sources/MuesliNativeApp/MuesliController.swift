@@ -5192,20 +5192,9 @@ final class MuesliController: NSObject {
     }
 
     func openDiagnosticIncidentIssue(_ incident: DiagnosticIncident) {
-        if let url = incident.githubIssueURL {
-            NSWorkspace.shared.open(url)
-        }
+        let url = incident.githubIssueURL ?? DiagnosticIncident.githubIssueFallbackURL
+        NSWorkspace.shared.open(url)
         diagnosticIncidentReporter.dismissCurrentPrompt()
-    }
-
-    func simulateDiagnosticIncidentForDevelopment() {
-        guard AppIdentity.isDevelopmentBuild else { return }
-        _ = recordDiagnosticIncident(
-            kind: .dictationTranscriptionFailed,
-            stage: "simulated_standard_dictation_transcribe",
-            backend: selectedBackend,
-            error: NSError(domain: "MuesliDiagnosticsSimulation", code: 9001)
-        )
     }
 
     @discardableResult

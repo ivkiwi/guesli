@@ -20,18 +20,6 @@ enum AppIdentity {
         MuesliPaths.defaultSupportDirectoryURL(appName: supportDirectoryName)
     }
 
-    static var isDevelopmentBuild: Bool {
-        isDevelopmentBuild(bundleID: Bundle.main.bundleIdentifier, displayName: displayName)
-    }
-
-    static func isDevelopmentBuild(bundleID: String?, displayName: String) -> Bool {
-        if let bundleID,
-           bundleID.hasPrefix("com.muesli.dev") {
-            return true
-        }
-        return displayName.localizedCaseInsensitiveContains("dev")
-    }
-
     private static func stringValue(for key: String) -> String? {
         guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
             return nil

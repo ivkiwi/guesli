@@ -86,16 +86,6 @@ struct AboutView: View {
                             controller.openManualDiagnosticReport()
                         }
                     }
-
-                    if AppIdentity.isDevelopmentBuild {
-                        Divider().background(MuesliTheme.surfaceBorder)
-
-                        aboutRow("Simulate Diagnostic Failure") {
-                            actionButton("Simulate", icon: "exclamationmark.triangle") {
-                                controller.simulateDiagnosticIncidentForDevelopment()
-                            }
-                        }
-                    }
                 }
 
                 // MARK: - Data
