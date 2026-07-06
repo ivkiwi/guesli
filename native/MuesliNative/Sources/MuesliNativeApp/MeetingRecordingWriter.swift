@@ -165,15 +165,16 @@ final class MeetingRecordingWriter {
             let sourceURL = URL(fileURLWithPath: candidate.path).standardizedFileURL
             guard sourceURL.pathExtension.lowercased() == "wav",
                   fileManager.fileExists(atPath: sourceURL.path) else { continue }
-            let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
-            let fileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-            guard fileSize >= 1024 else { continue }
 
             let destinationURL = sourceURL.deletingPathExtension().appendingPathExtension("m4a")
             let temporaryURL = sourceURL
                 .deletingLastPathComponent()
                 .appendingPathComponent(".\(sourceURL.deletingPathExtension().lastPathComponent).migrating.m4a")
             do {
+                let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
+                let fileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+                guard fileSize >= 1024 else { continue }
+
                 try? fileManager.removeItem(at: temporaryURL)
                 try await encode(sourceURL, temporaryURL)
                 try Task.checkCancellation()

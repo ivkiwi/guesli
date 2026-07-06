@@ -218,6 +218,63 @@ struct MeetingRecordingWriterTests {
         #expect(FileManager.default.fileExists(atPath: migratedSiblingURL.path))
     }
 
+    @Test("legacy wav migration continues after one attributes failure")
+    func legacyWAVMigrationContinuesAfterAttributesFailure() async throws {
+        let store = try makeStore()
+        let recordingsDirectory = makeTemporaryDirectory()
+        let failedWAVURL = recordingsDirectory.appendingPathComponent("failed.wav")
+        let migratedWAVURL = recordingsDirectory.appendingPathComponent("migrated.wav")
+        try Data(repeating: 1, count: 2_048).write(to: failedWAVURL)
+        try Data(repeating: 2, count: 2_048).write(to: migratedWAVURL)
+
+        let now = Date(timeIntervalSince1970: 1_711_000_000)
+        let failedID = try store.insertMeeting(
+            title: "Failed",
+            calendarEventID: nil,
+            startTime: now,
+            endTime: now.addingTimeInterval(60),
+            rawTranscript: "failed",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: failedWAVURL.path
+        )
+        let migratedID = try store.insertMeeting(
+            title: "Migrated",
+            calendarEventID: nil,
+            startTime: now.addingTimeInterval(120),
+            endTime: now.addingTimeInterval(180),
+            rawTranscript: "migrated",
+            formattedNotes: "",
+            micAudioPath: nil,
+            systemAudioPath: nil,
+            savedRecordingPath: migratedWAVURL.path
+        )
+        let fileManager = StubAttributesFailureFileManager(failingURL: failedWAVURL)
+
+        let summary = try await MeetingRecordingWriter.migrateLegacyWAVRecordings(
+            store: store,
+            recordingsDirectory: recordingsDirectory,
+            fileManager: fileManager,
+            encode: { sourceURL, destinationURL in
+                #expect(sourceURL == migratedWAVURL.standardizedFileURL)
+                try Data("m4a".utf8).write(to: destinationURL)
+            }
+        )
+
+        let failedMeeting = try #require(try store.meeting(id: failedID))
+        let migratedMeeting = try #require(try store.meeting(id: migratedID))
+        let migratedPath = try #require(migratedMeeting.savedRecordingPath)
+        #expect(summary.migrated == 1)
+        #expect(summary.deletedOrphanStubs == 0)
+        #expect(fileManager.failedAttributesAttempts == 1)
+        #expect(failedMeeting.savedRecordingPath == failedWAVURL.path)
+        #expect(migratedPath.hasSuffix(".m4a"))
+        #expect(FileManager.default.fileExists(atPath: failedWAVURL.path))
+        #expect(FileManager.default.fileExists(atPath: migratedWAVURL.path) == false)
+        #expect(try Data(contentsOf: URL(fileURLWithPath: migratedPath)) == Data("m4a".utf8))
+    }
+
     @Test("legacy wav migration deletes shared wav only after last reference migrates")
     func legacyWAVMigrationDeletesSharedWAVAfterLastReferenceMigrates() async throws {
         let store = try makeStore()
@@ -403,5 +460,23 @@ private final class StubDeleteFailureFileManager: FileManager {
             throw NSError(domain: "MeetingRecordingWriterTests", code: 2)
         }
         try super.removeItem(at: URL)
+    }
+}
+
+private final class StubAttributesFailureFileManager: FileManager {
+    private let failingPath: String
+    private(set) var failedAttributesAttempts = 0
+
+    init(failingURL: URL) {
+        self.failingPath = failingURL.standardizedFileURL.path
+        super.init()
+    }
+
+    override func attributesOfItem(atPath path: String) throws -> [FileAttributeKey: Any] {
+        guard URL(fileURLWithPath: path).standardizedFileURL.path != failingPath else {
+            failedAttributesAttempts += 1
+            throw NSError(domain: "MeetingRecordingWriterTests", code: 3)
+        }
+        return try super.attributesOfItem(atPath: path)
     }
 }
