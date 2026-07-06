@@ -1,3 +1,4 @@
+import CoreAudio
 import FluidAudio
 import Foundation
 import Testing
@@ -125,6 +126,70 @@ struct MeetSpeakerBridgeTests {
         #expect(context.contains("Slide title: Roadmap"))
     }
 
+#if DEBUG
+    @Test("bridge ingest attaches observation to active meeting session")
+    func bridgeIngestAttachesObservationToActiveMeetingSession() throws {
+        let start = Date(timeIntervalSince1970: 1_710_000_000)
+        let data = """
+        {"meetingURL":"https://meet.google.com/abc-defg-hij","speakerName":"Alice Owner","participants":[{"name":"Alice Owner"},{"name":"Bob Reviewer"}],"observedAtMs":1710000001000,"source":"google-meet-extension"}
+        """.data(using: .utf8)!
+        let observation = try #require(MeetSpeakerBridgeServer.parseObservations(data).first)
+        let session = makeSession()
+        session.setRecordingForTesting(true)
+
+        let route = MeetSpeakerObservationRouting.route(
+            matchesActiveSource: true,
+            hasActiveRecordingSession: session.isRecording,
+            canBufferForPendingMeeting: false
+        )
+        #expect(route == .recordToActiveMeeting)
+        if route == .recordToActiveMeeting {
+            session.recordSpeakerObservation(observation)
+        }
+
+        let stored = session.speakerObservationsForTesting()
+        #expect(stored.count == 1)
+        #expect(session.speakerObservationStats() == MeetSpeakerObservationStats(
+            observationsReceived: 1,
+            speakerEvents: 1,
+            participantSnapshots: 1
+        ))
+
+        let speakerMap = MeetingSession.speakerNameMap(
+            diarizationSegments: [makeDiarSeg(speakerId: "spk_0", start: 0.0, end: 3.0)],
+            observations: stored,
+            meetingStart: start
+        )
+        #expect(speakerMap["spk_0"] == "Alice Owner")
+        #expect(MeetingSession.observedParticipants(from: stored).map(\.name) == ["Alice Owner", "Bob Reviewer"])
+    }
+#endif
+
+    @Test("bridge routing drops observations when no meeting is active")
+    func bridgeRoutingDropsObservationsWhenNoMeetingIsActive() throws {
+        let data = """
+        {"meetingURL":"https://meet.google.com/abc-defg-hij","speakerName":"Alice Owner","source":"google-meet-extension"}
+        """.data(using: .utf8)!
+        let observation = try #require(MeetSpeakerBridgeServer.parseObservation(data))
+        let route = MeetSpeakerObservationRouting.route(
+            matchesActiveSource: true,
+            hasActiveRecordingSession: false,
+            canBufferForPendingMeeting: false
+        )
+        var stats = MeetSpeakerBridgeRoutingStats()
+
+        stats.recordReceived(observation)
+        if route == .dropNoActiveMeeting {
+            stats.droppedNoActiveMeeting += 1
+        }
+
+        #expect(route == .dropNoActiveMeeting)
+        #expect(stats.received.observationsReceived == 1)
+        #expect(stats.received.speakerEvents == 1)
+        #expect(stats.droppedNoActiveMeeting == 1)
+        #expect(stats.matchedToMeeting == 0)
+    }
+
     private func makeDiarSeg(speakerId: String, start: Float, end: Float) -> TimedSpeakerSegment {
         TimedSpeakerSegment(
             speakerId: speakerId,
@@ -134,4 +199,47 @@ struct MeetSpeakerBridgeTests {
             qualityScore: 1.0
         )
     }
+
+#if DEBUG
+    private func makeSession() -> MeetingSession {
+        MeetingSession(
+            title: "Bridge test",
+            calendarEventID: nil,
+            backend: .whisper,
+            runtime: RuntimePaths(
+                repoRoot: FileManager.default.temporaryDirectory,
+                menuIcon: nil,
+                appIcon: nil,
+                bundlePath: nil
+            ),
+            config: AppConfig(),
+            transcriptionCoordinator: TranscriptionCoordinator(),
+            meetingMicRecorder: MeetSpeakerBridgeFakeMeetingMicRecorder()
+        )
+    }
+#endif
 }
+
+#if DEBUG
+private final class MeetSpeakerBridgeFakeMeetingMicRecorder: MeetingMicRecording {
+    var preferredInputDeviceID: AudioObjectID?
+    var onRawPCMSamples: (([Int16]) -> Void)?
+    var onRecordingFailed: ((Error) -> Void)?
+
+    func prepare() throws {}
+    func start() throws {}
+    func pause() {}
+    func resume() {}
+    func stop() -> URL? { nil }
+    func cancel() {}
+    func currentPower() -> Float { -80 }
+
+    func diagnosticsSnapshot() -> MeetingMicRecorderDiagnosticsSnapshot {
+        MeetingMicRecorderDiagnosticsSnapshot(
+            recorderKind: .systemDefaultStreaming,
+            preferredInputDeviceID: preferredInputDeviceID,
+            route: nil
+        )
+    }
+}
+#endif
