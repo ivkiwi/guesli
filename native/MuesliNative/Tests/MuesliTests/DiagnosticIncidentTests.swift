@@ -158,10 +158,12 @@ struct DiagnosticIncidentReporterTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         var sent: [DiagnosticIncident] = []
+        var prompted: [DiagnosticIncident] = []
         let reporter = DiagnosticIncidentReporter(
             appState: appState,
             defaults: defaults,
-            telemetrySink: { sent.append($0) }
+            telemetrySink: { sent.append($0) },
+            onPrompt: { prompted.append($0) }
         )
 
         let first = reporter.record(
@@ -171,6 +173,7 @@ struct DiagnosticIncidentReporterTests {
             error: NSError(domain: "Recorder", code: 1)
         )
         #expect(sent.map(\.id) == [first.id])
+        #expect(prompted.map(\.id) == [first.id])
         #expect(appState.pendingDiagnosticIncident?.id == first.id)
 
         appState.pendingDiagnosticIncident = nil
@@ -181,6 +184,7 @@ struct DiagnosticIncidentReporterTests {
             error: NSError(domain: "Recorder", code: 2)
         )
         #expect(sent.map(\.id) == [first.id, second.id])
+        #expect(prompted.map(\.id) == [first.id])
         #expect(appState.pendingDiagnosticIncident == nil)
     }
 }

@@ -4,22 +4,26 @@ import TelemetryDeck
 @MainActor
 final class DiagnosticIncidentReporter {
     typealias TelemetrySink = @MainActor (DiagnosticIncident) -> Void
+    typealias PromptHandler = @MainActor (DiagnosticIncident) -> Void
 
     private let defaults: UserDefaults
     private let appState: AppState
     private let telemetrySink: TelemetrySink
+    private let onPrompt: PromptHandler
     private let calendar: Calendar
 
     init(
         appState: AppState,
         defaults: UserDefaults = .standard,
         calendar: Calendar = .current,
-        telemetrySink: @escaping TelemetrySink = DiagnosticIncidentReporter.sendTelemetry
+        telemetrySink: @escaping TelemetrySink = DiagnosticIncidentReporter.sendTelemetry,
+        onPrompt: @escaping PromptHandler = { _ in }
     ) {
         self.appState = appState
         self.defaults = defaults
         self.calendar = calendar
         self.telemetrySink = telemetrySink
+        self.onPrompt = onPrompt
     }
 
     @discardableResult
@@ -41,6 +45,7 @@ final class DiagnosticIncidentReporter {
         telemetrySink(incident)
         if promptUser, shouldPrompt(for: incident) {
             markPrompted(for: incident)
+            onPrompt(incident)
             appState.pendingDiagnosticIncident = incident
         }
         return incident

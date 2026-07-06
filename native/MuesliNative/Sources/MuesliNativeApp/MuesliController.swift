@@ -258,7 +258,12 @@ final class MuesliController: NSObject {
     private let dictationLatencyLogWriter = DictationLatencyLogWriter(
         url: AppIdentity.supportDirectoryURL.appendingPathComponent("dictation-latency.log")
     )
-    private lazy var diagnosticIncidentReporter = DiagnosticIncidentReporter(appState: appState)
+    private lazy var diagnosticIncidentReporter = DiagnosticIncidentReporter(
+        appState: appState,
+        onPrompt: { [weak self] _ in
+            self?.presentHistoryWindow(tab: .about)
+        }
+    )
     private let dictationLatencyTimestampFormatter = ISO8601DateFormatter()
     private let indicator: FloatingIndicatorController
     private let calendarMonitor = CalendarMonitor()
@@ -7431,14 +7436,15 @@ final class MuesliController: NSObject {
             } catch {
                 fputs("[muesli-native] transcription failed: \(error)\n", stderr)
                 await MainActor.run {
-                    self.recordDiagnosticIncident(
-                        kind: .dictationTranscriptionFailed,
-                        stage: "standard_dictation_transcribe",
-                        backend: transcriptionBackend,
-                        error: error
-                    )
                     if self.isDictationTestMode {
                         self.dictationTestFailureCallback?(self.userFacingDictationTestError(error))
+                    } else {
+                        self.recordDiagnosticIncident(
+                            kind: .dictationTranscriptionFailed,
+                            stage: "standard_dictation_transcribe",
+                            backend: transcriptionBackend,
+                            error: error
+                        )
                     }
                     self.clearCapturedDictationSessionContext()
                     self.resetDictationOutputMode()
