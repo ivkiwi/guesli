@@ -137,7 +137,7 @@ struct DiagnosticIncident: Codable, Equatable, Identifiable, Sendable {
         severity: DiagnosticIncidentSeverity = .error,
         occurredAt: Date = Date(),
         stage: String,
-        backend: BackendOption?,
+        backendOption: BackendOption?,
         error: Error? = nil,
         metadata: DiagnosticAppMetadata = .current()
     ) {
@@ -147,8 +147,8 @@ struct DiagnosticIncident: Codable, Equatable, Identifiable, Sendable {
             severity: severity,
             occurredAt: occurredAt,
             stage: stage,
-            backend: backend?.backend,
-            model: backend?.model,
+            backend: backendOption?.backend,
+            model: backendOption?.model,
             error: error,
             metadata: metadata
         )

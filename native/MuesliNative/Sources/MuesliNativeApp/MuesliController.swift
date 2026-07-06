@@ -6825,12 +6825,14 @@ final class MuesliController: NSObject {
             break
         case .failed(_, let error):
             fputs("[muesli-native] recorder start failed: \(error)\n", stderr)
-            recordDiagnosticIncident(
-                kind: .dictationAudioFailed,
-                stage: "dictation_audio_session",
-                backend: selectedBackend,
-                error: error
-            )
+            if !isDictationTestMode {
+                recordDiagnosticIncident(
+                    kind: .dictationAudioFailed,
+                    stage: "dictation_audio_session",
+                    backend: selectedBackend,
+                    error: error
+                )
+            }
             resetDictationOutputMode()
             dictationStartedAt = nil
             pendingDictationStopSessionID = nil

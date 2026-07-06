@@ -39,7 +39,7 @@ final class DiagnosticIncidentReporter {
             kind: kind,
             severity: severity,
             stage: stage,
-            backend: backend,
+            backendOption: backend,
             error: error
         )
         telemetrySink(incident)

@@ -186,5 +186,22 @@ struct DiagnosticIncidentReporterTests {
         #expect(sent.map(\.id) == [first.id, second.id])
         #expect(prompted.map(\.id) == [first.id])
         #expect(appState.pendingDiagnosticIncident == nil)
+
+        var restartedPrompted: [DiagnosticIncident] = []
+        let restartedReporter = DiagnosticIncidentReporter(
+            appState: appState,
+            defaults: defaults,
+            telemetrySink: { sent.append($0) },
+            onPrompt: { restartedPrompted.append($0) }
+        )
+        let third = restartedReporter.record(
+            kind: .dictationAudioFailed,
+            stage: "dictation_audio_session",
+            backend: nil,
+            error: NSError(domain: "Recorder", code: 3)
+        )
+        #expect(sent.map(\.id) == [first.id, second.id, third.id])
+        #expect(restartedPrompted.isEmpty)
+        #expect(appState.pendingDiagnosticIncident == nil)
     }
 }
