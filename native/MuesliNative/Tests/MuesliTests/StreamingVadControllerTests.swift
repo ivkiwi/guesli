@@ -71,6 +71,36 @@ struct StreamingVadControllerTests {
         #expect(await probe.maxConcurrentCount == 1)
     }
 
+    @Test("keeps queued VAD chunks when processing falls behind")
+    func keepsQueuedChunksWhenProcessingFallsBehind() async throws {
+        let probe = StreamingVadTestProbe()
+        let controller = StreamingVadController(
+            minChunkDuration: 0,
+            maxChunkDuration: 3600,
+            makeInitialState: { VadStreamState.initial() },
+            processStreamChunk: { _, state in
+                await probe.processingStarted()
+                try? await Task.sleep(for: .milliseconds(15))
+                await probe.processingFinished()
+                return VadStreamResult(state: state, event: nil, probability: 0.0)
+            }
+        )
+
+        controller.start()
+        for _ in 0..<25 {
+            controller.processAudio([Float](repeating: 0, count: VadManager.chunkSize))
+        }
+
+        let deadline = ContinuousClock.now + .seconds(3)
+        while await probe.processedCount < 25, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        controller.stop()
+
+        #expect(await probe.processedCount == 25)
+        #expect(await probe.maxConcurrentCount == 1)
+    }
+
     @Test("buffers chunks that arrive before stream state initialization completes")
     func buffersChunksBeforeStateReady() async throws {
         let probe = StreamingVadTestProbe()

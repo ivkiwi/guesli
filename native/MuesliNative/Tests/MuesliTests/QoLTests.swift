@@ -350,6 +350,65 @@ struct MeetingChunkCollectorTests {
         #expect(ready?.map { $0.map(\.text) } == [["first"], ["second"]])
     }
 
+    @Test("collector releases tail after a failed earlier chunk retires empty")
+    func collectorFailureRetiresSlotAndReleasesTail() async {
+        let collector = MeetingChunkCollector()
+        let failedChunk = Task { [SpeechSegment]() }
+        let tailChunk = Task { [SpeechSegment(start: 3, end: 4, text: "tail")] }
+
+        let failed = collector.add(failedChunk)
+        let tail = collector.add(tailChunk)
+
+        #expect(collector.retire(id: tail.retireID, segments: await tailChunk.value)?.isEmpty == true)
+        let ready = collector.retire(id: failed.retireID, segments: await failedChunk.value)
+
+        #expect(failed.registered)
+        #expect(tail.registered)
+        #expect(ready?.map { $0.map(\.text) } == [[], ["tail"]])
+    }
+
+    @Test("collector drain flushes buffered chunks when an earlier slot stalls")
+    func collectorDrainFlushesBufferedChunksPastStalledSlot() async {
+        let collector = MeetingChunkCollector()
+        let stalled = Task<[SpeechSegment], Never> {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            return []
+        }
+        let tailChunk = Task { [SpeechSegment(start: 3, end: 4, text: "tail")] }
+
+        let stalledRegistration = collector.add(stalled)
+        let tailRegistration = collector.add(tailChunk)
+
+        #expect(stalledRegistration.registered)
+        #expect(tailRegistration.registered)
+        #expect(collector.retire(id: tailRegistration.retireID, segments: await tailChunk.value)?.isEmpty == true)
+
+        var logs: [String] = []
+        let drained = await collector.closeAndDrainSortedSegments(inactivityTimeout: 0.05) { logs.append($0) }
+
+        #expect(drained.map(\.text) == ["tail"])
+        #expect(logs.contains { $0.contains("[live-collector] dropped pending chunk sequence=0 reason=drain_timeout") })
+    }
+
+    @Test("collector drain keeps slow backlog while chunks keep completing")
+    func collectorDrainKeepsProgressingBacklog() async {
+        let collector = MeetingChunkCollector()
+        for index in 0..<4 {
+            _ = collector.add(
+                Task {
+                    try? await Task.sleep(for: .milliseconds(100 * (index + 1)))
+                    return [SpeechSegment(start: Double(index), end: Double(index + 1), text: "chunk \(index)")]
+                }
+            )
+        }
+
+        let drained = await collector.closeAndDrainSortedSegments(inactivityTimeout: 0.25)
+
+        #expect(drained.map(\.text) == (0..<4).map { "chunk \($0)" })
+    }
+
     @Test("collector retire returns nil after cancel closes collector")
     func collectorRetireReturnsNilAfterCancel() async {
         let collector = MeetingChunkCollector()
