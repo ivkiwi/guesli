@@ -290,6 +290,10 @@ final class MeetingSession {
         }
     }
 
+    func speakerObservationStats() -> MeetSpeakerObservationStats {
+        speakerObservationLock.withLock { MeetSpeakerObservationStats.make(from: $0) }
+    }
+
     private func currentBackend() -> BackendOption {
         backendLock.withLock { $0 }
     }
@@ -303,6 +307,10 @@ final class MeetingSession {
         chunkRotationQueue.sync {
             isRecording = recording
         }
+    }
+
+    func speakerObservationsForTesting() -> [MeetSpeakerObservation] {
+        speakerObservationLock.withLock { $0 }
     }
 
     func currentBackendForTesting() -> BackendOption {

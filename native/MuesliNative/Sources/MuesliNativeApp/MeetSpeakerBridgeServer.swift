@@ -9,6 +9,28 @@ struct MeetSpeakerObservation: Equatable, Sendable {
     let source: String
 }
 
+struct MeetSpeakerObservationStats: Equatable, Sendable {
+    var observationsReceived = 0
+    var speakerEvents = 0
+    var participantSnapshots = 0
+
+    mutating func record(_ observation: MeetSpeakerObservation) {
+        observationsReceived += 1
+        if observation.speakerName != nil {
+            speakerEvents += 1
+        }
+        if !observation.participants.isEmpty {
+            participantSnapshots += 1
+        }
+    }
+
+    static func make(from observations: [MeetSpeakerObservation]) -> MeetSpeakerObservationStats {
+        var stats = MeetSpeakerObservationStats()
+        observations.forEach { stats.record($0) }
+        return stats
+    }
+}
+
 final class MeetSpeakerBridgeServer {
     static let port: NWEndpoint.Port = 1477
     static let path = "/v1/meet-speaker"
@@ -21,7 +43,7 @@ final class MeetSpeakerBridgeServer {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: Self.port)
         guard let listener = try? NWListener(using: params) else {
-            fputs("[meet-speaker] failed to start bridge on 127.0.0.1:\(Self.port)\n", stderr)
+            DiagnosticsLog.write("[meet-speaker] bridge start failed port=\(Self.port)")
             return
         }
 
@@ -41,16 +63,19 @@ final class MeetSpeakerBridgeServer {
         }
         listener.stateUpdateHandler = { state in
             if case .failed(let error) = state {
-                fputs("[meet-speaker] bridge failed: \(error)\n", stderr)
+                DiagnosticsLog.write("[meet-speaker] bridge failed error=\(error)")
             }
         }
         listener.start(queue: .main)
         self.listener = listener
+        DiagnosticsLog.write("[meet-speaker] bridge start port=\(Self.port)")
     }
 
     func stop() {
-        listener?.cancel()
-        listener = nil
+        guard let listener else { return }
+        listener.cancel()
+        self.listener = nil
+        DiagnosticsLog.write("[meet-speaker] bridge stop port=\(Self.port)")
     }
 
     private func handle(_ data: Data?) -> String {

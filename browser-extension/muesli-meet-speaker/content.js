@@ -9,6 +9,7 @@ const BACKUP_FLUSH_MAX_BYTES = 48000;
 const BACKUP_FLUSH_INTERVAL_MS = 5000;
 const SCAN_DEBOUNCE_MS = 750;
 const MIN_SCAN_INTERVAL_MS = 1000;
+const BACKGROUND_MIN_SCAN_INTERVAL_MS = 5000;
 
 let lastSpeaker = "";
 let lastSentAt = 0;
@@ -28,6 +29,10 @@ function isVisible(element) {
 
 function isDocumentVisible() {
   return document.visibilityState === "visible" && !document.hidden;
+}
+
+function scanIntervalFloorMs() {
+  return isDocumentVisible() ? MIN_SCAN_INTERVAL_MS : BACKGROUND_MIN_SCAN_INTERVAL_MS;
 }
 
 function cleanName(value) {
@@ -304,11 +309,11 @@ function selectBackupBatch(observations) {
 }
 
 function sample() {
-  if (!isDocumentVisible()) return;
   const now = Date.now();
   const elapsed = now - lastScanAt;
-  if (elapsed < MIN_SCAN_INTERVAL_MS) {
-    scheduleSample(MIN_SCAN_INTERVAL_MS - elapsed);
+  const floorMs = scanIntervalFloorMs();
+  if (elapsed < floorMs) {
+    scheduleSample(floorMs - elapsed);
     return;
   }
   if (pendingScanTimer) {
@@ -320,12 +325,11 @@ function sample() {
 }
 
 function scheduleSample(delayMs = SCAN_DEBOUNCE_MS) {
-  if (!isDocumentVisible()) return;
   if (pendingScanTimer) {
     clearTimeout(pendingScanTimer);
   }
   const elapsed = Date.now() - lastScanAt;
-  const waitMs = Math.max(delayMs, MIN_SCAN_INTERVAL_MS - elapsed, 0);
+  const waitMs = Math.max(delayMs, scanIntervalFloorMs() - elapsed, 0);
   pendingScanTimer = setTimeout(() => {
     pendingScanTimer = 0;
     sample();
@@ -334,9 +338,7 @@ function scheduleSample(delayMs = SCAN_DEBOUNCE_MS) {
 
 function handleVisibilityChange() {
   persistBackupObservationsNow();
-  if (isDocumentVisible()) {
-    scheduleSample(0);
-  }
+  scheduleSample(0);
 }
 
 const observer = new MutationObserver(() => scheduleSample());

@@ -102,6 +102,38 @@ struct PendingMeetingCompletionNotification {
     let title: String
 }
 
+struct MeetSpeakerBridgeRoutingStats: Equatable, Sendable {
+    var received = MeetSpeakerObservationStats()
+    var matchedToMeeting = 0
+    var bufferedNoActiveMeeting = 0
+    var droppedNoActiveMeeting = 0
+    var droppedSourceMismatch = 0
+
+    mutating func recordReceived(_ observation: MeetSpeakerObservation) {
+        received.record(observation)
+    }
+}
+
+enum MeetSpeakerObservationRoute: Equatable {
+    case recordToActiveMeeting
+    case bufferPendingMeeting
+    case dropNoActiveMeeting
+    case dropSourceMismatch
+}
+
+enum MeetSpeakerObservationRouting {
+    static func route(
+        matchesActiveSource: Bool,
+        hasActiveRecordingSession: Bool,
+        canBufferForPendingMeeting: Bool
+    ) -> MeetSpeakerObservationRoute {
+        guard matchesActiveSource else { return .dropSourceMismatch }
+        if hasActiveRecordingSession { return .recordToActiveMeeting }
+        if canBufferForPendingMeeting { return .bufferPendingMeeting }
+        return .dropNoActiveMeeting
+    }
+}
+
 enum MeetingRetranscriptionError: Error, LocalizedError {
     case controllerUnavailable
     case recordingUnavailable
@@ -365,6 +397,7 @@ final class MuesliController: NSObject {
     private var activeMeetingID: Int64?
     private var activeMeetingAudioWarning: ActiveMeetingAudioWarning?
     private var pendingMeetSpeakerObservations: [MeetSpeakerObservation] = []
+    private var meetSpeakerBridgeStats = MeetSpeakerBridgeRoutingStats()
     private var liveMeetingTitleCache: [Int64: String] = [:]
     private var liveManualNotesCache: [Int64: String] = [:]
     private var liveManualNotesLastPersistedAt: [Int64: Date] = [:]
@@ -2273,12 +2306,27 @@ final class MuesliController: NSObject {
 
     private func handleMeetSpeakerObservation(_ observation: MeetSpeakerObservation) {
         prunePendingMeetSpeakerObservations()
-        guard meetSpeakerObservationMatchesActiveSource(observation) else { return }
-        guard let activeMeetingSession, activeMeetingSession.isRecording else {
+        meetSpeakerBridgeStats.recordReceived(observation)
+        switch MeetSpeakerObservationRouting.route(
+            matchesActiveSource: meetSpeakerObservationMatchesActiveSource(observation),
+            hasActiveRecordingSession: activeMeetingSession?.isRecording == true,
+            canBufferForPendingMeeting: canBufferMeetSpeakerObservationForPendingMeeting
+        ) {
+        case .recordToActiveMeeting:
+            activeMeetingSession?.recordSpeakerObservation(observation)
+            meetSpeakerBridgeStats.matchedToMeeting += 1
+        case .bufferPendingMeeting:
             bufferMeetSpeakerObservation(observation)
-            return
+            meetSpeakerBridgeStats.bufferedNoActiveMeeting += 1
+        case .dropNoActiveMeeting:
+            meetSpeakerBridgeStats.droppedNoActiveMeeting += 1
+        case .dropSourceMismatch:
+            meetSpeakerBridgeStats.droppedSourceMismatch += 1
         }
-        activeMeetingSession.recordSpeakerObservation(observation)
+    }
+
+    private var canBufferMeetSpeakerObservationForPendingMeeting: Bool {
+        isStartingMeetingRecording || meetingStartMeetingID != nil || activeMeetingID != nil
     }
 
     private func meetSpeakerObservationMatchesActiveSource(_ observation: MeetSpeakerObservation) -> Bool {
@@ -2317,7 +2365,20 @@ final class MuesliController: NSObject {
                   observation.observedAt <= latestUsefulObservation,
                   meetSpeakerObservationMatchesActiveSource(observation) else { continue }
             session.recordSpeakerObservation(observation)
+            meetSpeakerBridgeStats.matchedToMeeting += 1
         }
+    }
+
+    private func resetMeetSpeakerBridgeStatsForMeeting() {
+        meetSpeakerBridgeStats = MeetSpeakerBridgeRoutingStats()
+    }
+
+    private func logMeetSpeakerBridgeMeetingStop(session: MeetingSession) {
+        let stats = meetSpeakerBridgeStats
+        let sessionStats = session.speakerObservationStats()
+        DiagnosticsLog.write("""
+        [meet-speaker] meeting stop observationsReceived=\(stats.received.observationsReceived) speakerEvents=\(stats.received.speakerEvents) participantSnapshots=\(stats.received.participantSnapshots) matchedToMeeting=\(stats.matchedToMeeting) bufferedNoActiveMeeting=\(stats.bufferedNoActiveMeeting) droppedNoActiveMeeting=\(stats.droppedNoActiveMeeting) droppedSourceMismatch=\(stats.droppedSourceMismatch) sessionObservations=\(sessionStats.observationsReceived) sessionSpeakerEvents=\(sessionStats.speakerEvents) sessionParticipantSnapshots=\(sessionStats.participantSnapshots)
+        """)
     }
 
     private func startMeetingFeatureMonitors(includeMaraudersMap: Bool) {
@@ -4758,6 +4819,7 @@ final class MuesliController: NSObject {
         backend: BackendOption,
         endDate: Date?
     ) async throws {
+        resetMeetSpeakerBridgeStatsForMeeting()
         var shouldRetryAfterPermissionRequest = config.useCoreAudioTap
         statusBarController?.setStatus("Meeting transcription will start shortly.")
         statusBarController?.refresh()
@@ -5379,6 +5441,7 @@ final class MuesliController: NSObject {
         }
         isStoppingMeetingRecording = true
         disarmMeetingAutoStop()
+        logMeetSpeakerBridgeMeetingStop(session: sessionToStop)
         meetingEndTimer?.invalidate()
         meetingEndTimer = nil
         meetingNotification.close()
