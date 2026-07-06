@@ -189,6 +189,50 @@ struct CohereTranscribeUtilsTests {
     }
 }
 
+@Suite("SenseVoiceFileChunking")
+struct SenseVoiceFileChunkingTests {
+
+    @Test("short files use one passthrough window")
+    func shortFilesUseOnePassthroughWindow() {
+        let sampleCount = 15 * SenseVoiceFileChunking.sampleRate
+        #expect(SenseVoiceFileChunking.windows(sampleCount: sampleCount) == [0..<sampleCount])
+        #expect(!SenseVoiceFileChunking.shouldChunk(sampleCount: sampleCount))
+        #expect(!SenseVoiceFileChunking.shouldChunk(duration: 15))
+    }
+
+    @Test("long files use overlapping windows")
+    func longFilesUseOverlappingWindows() {
+        let sampleRate = SenseVoiceFileChunking.sampleRate
+        let sampleCount = 46 * sampleRate
+
+        #expect(SenseVoiceFileChunking.windows(sampleCount: sampleCount) == [
+            0..<(15 * sampleRate),
+            (13 * sampleRate)..<(28 * sampleRate),
+            (26 * sampleRate)..<(41 * sampleRate),
+            (39 * sampleRate)..<(46 * sampleRate),
+        ])
+    }
+
+    @Test("empty input stays empty")
+    func emptyInputStaysEmpty() {
+        #expect(SenseVoiceFileChunking.windows(sampleCount: 0).isEmpty)
+        #expect(!SenseVoiceFileChunking.shouldChunk(sampleCount: 0))
+        #expect(SenseVoiceFileChunking.mergeTranscripts([]) == "")
+        #expect(SenseVoiceFileChunking.mergeTranscripts(["", "   "]) == "")
+    }
+
+    @Test("merge deduplicates suffix prefix overlap")
+    func mergeDeduplicatesSuffixPrefixOverlap() {
+        let result = SenseVoiceFileChunking.mergeTranscripts([
+            "alpha beta gamma delta epsilon",
+            "gamma delta epsilon zeta eta",
+            "epsilon zeta eta theta iota",
+        ])
+
+        #expect(result == "alpha beta gamma delta epsilon zeta eta theta iota")
+    }
+}
+
 @Suite("TranscriptionEngineArtifactsFilter")
 struct TranscriptionEngineArtifactsFilterTests {
 
