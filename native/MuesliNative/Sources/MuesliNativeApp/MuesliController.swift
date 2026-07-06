@@ -2313,7 +2313,7 @@ final class MuesliController: NSObject {
             )
 
             // Show "starts in X min" notification now
-            handleUpcomingMeeting(upcomingEvent)
+            handleUpcomingMeeting(upcomingEvent, notificationKey: key)
 
             // Schedule a second "Meeting starting now" notification at event start time for pre-start prompts.
             let delay = event.startDate.timeIntervalSinceNow
@@ -7479,7 +7479,7 @@ final class MuesliController: NSObject {
         }
     }
 
-    private func handleUpcomingMeeting(_ event: UpcomingMeetingEvent) {
+    private func handleUpcomingMeeting(_ event: UpcomingMeetingEvent, notificationKey: String? = nil) {
         // Look up end date and meeting URL from unified calendar events
         let calendarEvent = appState.upcomingCalendarEvents
             .first(where: { $0.id == event.id })
@@ -7514,6 +7514,7 @@ final class MuesliController: NSObject {
             onStartRecording: { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.startForegroundMeetingRecording(
                     title: title,
                     calendarEventID: event.id,
@@ -7525,16 +7526,19 @@ final class MuesliController: NSObject {
             onJoinAndRecord: meetingURL != nil ? { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.joinAndRecord(title: title, meetingURL: meetingURL!, endDate: calendarEndDate, calendarEventID: event.id)
             } : nil,
             onJoinOnly: meetingURL != nil ? { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.joinOnly(meetingURL: meetingURL!, endDate: calendarEndDate)
             } : nil,
             onDismiss: { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
+                self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 let remaining = calendarEndDate.map { max($0.timeIntervalSinceNow, 120) } ?? 120
                 self.meetingMonitor.suppress(for: remaining)
                 self.meetingMonitor.refreshState()
@@ -7544,6 +7548,12 @@ final class MuesliController: NSObject {
                 self?.showPendingMeetingCompletionNotificationIfPossible()
             }
         )
+    }
+
+    private func cancelMeetingStartingNowTimer(notificationKey: String?) {
+        guard let notificationKey else { return }
+        meetingStartingNowTimers[notificationKey]?.invalidate()
+        meetingStartingNowTimers.removeValue(forKey: notificationKey)
     }
 
     private func scheduleMeetingEndNotification(endDate: Date?, title: String) {
