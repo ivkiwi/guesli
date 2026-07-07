@@ -115,7 +115,8 @@ final class MeetingChunkCollector {
 
     func closeAndDrainSortedSegments(
         inactivityTimeout: TimeInterval = 120,
-        logger: ((String) -> Void)? = nil
+        logger: ((String) -> Void)? = nil,
+        onDrainTimeoutDroppedChunkCount: ((Int) -> Void)? = nil
     ) async -> [SpeechSegment] {
         let (tasksToAwait, alreadyCompleted) = lock.withLock { state in
             state.isClosed = true
@@ -153,6 +154,7 @@ final class MeetingChunkCollector {
                 tasksToAwait.forEach { $0.task.cancel() }
                 watcherTasks.forEach { $0.cancel() }
                 logger?("[live-collector] drain timeout pending=\(remainingTaskCount) flushedSegments=\(segments.count)")
+                onDrainTimeoutDroppedChunkCount?(pendingSequences.count)
                 for sequence in pendingSequences.sorted() {
                     logger?("[live-collector] dropped pending chunk sequence=\(sequence) reason=drain_timeout")
                 }
@@ -202,6 +204,7 @@ struct MeetingSessionResult {
     let retainedRecordingError: Error?
     let systemRecordingURL: URL?
     let templateSnapshot: MeetingTemplateSnapshot
+    let liveCollectorDrainTimeoutDroppedChunkCount: Int
 
     init(
         title: String,
@@ -216,7 +219,8 @@ struct MeetingSessionResult {
         retainedRecordingURL: URL?,
         retainedRecordingError: Error?,
         systemRecordingURL: URL?,
-        templateSnapshot: MeetingTemplateSnapshot
+        templateSnapshot: MeetingTemplateSnapshot,
+        liveCollectorDrainTimeoutDroppedChunkCount: Int = 0
     ) {
         self.title = title
         self.originalTitle = originalTitle
@@ -231,6 +235,7 @@ struct MeetingSessionResult {
         self.retainedRecordingError = retainedRecordingError
         self.systemRecordingURL = systemRecordingURL
         self.templateSnapshot = templateSnapshot
+        self.liveCollectorDrainTimeoutDroppedChunkCount = liveCollectorDrainTimeoutDroppedChunkCount
     }
 }
 
@@ -640,7 +645,11 @@ final class MeetingSession {
             "[live-collector] stop mic registered=\(micCollectorSnapshot.registeredChunkCount) retired=\(micCollectorSnapshot.retiredChunkCount) pending=\(micCollectorSnapshot.pendingChunkCount) buffered=\(micCollectorSnapshot.bufferedLiveChunkCount) failed=\(micHealthSnapshot.failedChunkCount); system registered=\(systemCollectorSnapshot.registeredChunkCount) retired=\(systemCollectorSnapshot.retiredChunkCount) pending=\(systemCollectorSnapshot.pendingChunkCount) buffered=\(systemCollectorSnapshot.bufferedLiveChunkCount) failed=\(systemHealthSnapshot.failedChunkCount)"
         )
 
-        micSegments.append(contentsOf: await micChunkCollector.closeAndDrainSortedSegments(logger: { DiagnosticsLog.write($0) }))
+        var drainTimeoutDroppedChunkCount = 0
+        micSegments.append(contentsOf: await micChunkCollector.closeAndDrainSortedSegments(
+            logger: { DiagnosticsLog.write($0) },
+            onDrainTimeoutDroppedChunkCount: { drainTimeoutDroppedChunkCount += $0 }
+        ))
         micSegments.sort { lhs, rhs in
             if lhs.start == rhs.start {
                 return lhs.text < rhs.text
@@ -648,7 +657,10 @@ final class MeetingSession {
             return lhs.start < rhs.start
         }
 
-        systemSegments.append(contentsOf: await systemChunkCollector.closeAndDrainSortedSegments(logger: { DiagnosticsLog.write($0) }))
+        systemSegments.append(contentsOf: await systemChunkCollector.closeAndDrainSortedSegments(
+            logger: { DiagnosticsLog.write($0) },
+            onDrainTimeoutDroppedChunkCount: { drainTimeoutDroppedChunkCount += $0 }
+        ))
         systemSegments.sort { lhs, rhs in
             if lhs.start == rhs.start {
                 return lhs.text < rhs.text
@@ -808,7 +820,10 @@ final class MeetingSession {
             retainedRecordingURL: retainedRecordingURL,
             retainedRecordingError: retainedRecordingWriterError,
             systemRecordingURL: systemAudioURL,
-            templateSnapshot: templateSnapshot
+            templateSnapshot: templateSnapshot,
+            liveCollectorDrainTimeoutDroppedChunkCount: liveChunkingConfiguration.deduplicatesText
+                ? drainTimeoutDroppedChunkCount
+                : 0
         )
     }
 

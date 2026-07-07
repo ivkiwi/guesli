@@ -89,6 +89,7 @@ final class AppState {
     var activeMeetingAudioWarning: ActiveMeetingAudioWarning?
     var dictationState: DictationState = .idle
     var lastTranscriptCleanupWarning: String?
+    var pendingDiagnosticIncident: DiagnosticIncident?
     var isVoiceNoteRecording: Bool = false
     var isChatGPTAuthenticated: Bool = false
     var isGoogleCalendarAvailable: Bool = false

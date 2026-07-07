@@ -386,9 +386,15 @@ struct MeetingChunkCollectorTests {
         #expect(collector.retire(id: tailRegistration.retireID, segments: await tailChunk.value)?.isEmpty == true)
 
         var logs: [String] = []
-        let drained = await collector.closeAndDrainSortedSegments(inactivityTimeout: 0.05) { logs.append($0) }
+        var droppedCount = 0
+        let drained = await collector.closeAndDrainSortedSegments(
+            inactivityTimeout: 0.05,
+            logger: { logs.append($0) },
+            onDrainTimeoutDroppedChunkCount: { droppedCount += $0 }
+        )
 
         #expect(drained.map(\.text) == ["tail"])
+        #expect(droppedCount == 1)
         #expect(logs.contains { $0.contains("[live-collector] dropped pending chunk sequence=0 reason=drain_timeout") })
     }
 
