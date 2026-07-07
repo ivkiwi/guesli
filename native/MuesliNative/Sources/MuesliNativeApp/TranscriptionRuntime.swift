@@ -15,14 +15,13 @@ struct SpeechTranscriptionResult: Sendable {
 
 actor TranscriptionCoordinator {
     static let explicitlyRoutedBackendIdentifiers: Set<String> = [
-        "whisper", "nemotron35", "gigaam_v3", "qwen", "canary", "cohere", "sensevoice",
+        "whisper", "nemotron35", "gigaam_v3", "qwen", "cohere", "sensevoice",
     ]
 
     private let fluidTranscriber = FluidAudioTranscriber()
     private let whisperTranscriber = WhisperKitTranscriber()
     private var _qwen3Transcriber: Any?
     private var _qwen3PostProcessor: Any?
-    private var _canaryQwenTranscriber: Any?
     private var _cohereTranscriber: Any?
     private let gigaAMV3Transcriber = GigaAMV3Transcriber()
     private let senseVoiceTranscriber = SenseVoiceTranscriber()
@@ -77,14 +76,6 @@ actor TranscriptionCoordinator {
             _qwen3Transcriber = Qwen3AsrTranscriber()
         }
         return _qwen3Transcriber as! Qwen3AsrTranscriber
-    }
-
-    @available(macOS 15, *)
-    private var canaryQwenTranscriber: CanaryQwenTranscriber {
-        if _canaryQwenTranscriber == nil {
-            _canaryQwenTranscriber = CanaryQwenTranscriber()
-        }
-        return _canaryQwenTranscriber as! CanaryQwenTranscriber
     }
 
     private var postProcessorModelURL: URL = PostProcessorOption.defaultOption.modelURL
@@ -265,14 +256,6 @@ actor TranscriptionCoordinator {
                     NSLocalizedDescriptionKey: "Qwen3 ASR requires macOS 15 or later.",
                 ])
             }
-        case "canary":
-            if #available(macOS 15, *) {
-                try await canaryQwenTranscriber.prepare(progress: progress)
-            } else {
-                throw NSError(domain: "MuesliTranscriptionRuntime", code: 3, userInfo: [
-                    NSLocalizedDescriptionKey: "Canary Qwen requires macOS 15 or later.",
-                ])
-            }
         case "cohere":
             if #available(macOS 15, *) {
                 try await cohereTranscriber.prepare(progress: progress)
@@ -417,7 +400,6 @@ actor TranscriptionCoordinator {
             if let postProcessor = _qwen3PostProcessor as? Qwen3PostProcessor {
                 await postProcessor.shutdown()
             }
-            await canaryQwenTranscriber.shutdown()
             await cohereTranscriber.shutdown()
         }
     }
@@ -557,8 +539,6 @@ actor TranscriptionCoordinator {
             return try await transcribeWithGigaAMV3(url: url, samples: samples)
         case "qwen":
             return try await transcribeWithQwen3(url: url, samples: samples)
-        case "canary":
-            return try await transcribeWithCanaryQwen(url: url, samples: samples)
         case "cohere":
             return try await transcribeWithCohere(url: url, samples: samples, language: cohereLanguage)
         case "sensevoice":
@@ -656,29 +636,6 @@ actor TranscriptionCoordinator {
             // FluidAudio's SenseVoice API returns plain text only, so timestamped segments are not available here.
             segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: 0, text: text)]
         )
-    }
-
-    private func transcribeWithCanaryQwen(url: URL, samples: [Float]? = nil) async throws -> SpeechTranscriptionResult {
-        if #available(macOS 15, *) {
-            fputs("[muesli-native] transcribing with Canary Qwen: \(url.lastPathComponent)\n", stderr)
-            let result: (text: String, processingTime: Double, profile: CanaryProfilingSummary)
-            if let samples {
-                result = try await canaryQwenTranscriber.transcribe(audioSamples: samples)
-            } else {
-                result = try await canaryQwenTranscriber.transcribe(wavURL: url)
-            }
-            fputs("[muesli-native] Canary Qwen result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
-            CanaryProfilingLog.write("[muesli-native] Canary Qwen profile: \(result.profile.logDescription(prefix: "profile"))")
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return SpeechTranscriptionResult(
-                text: text,
-                segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: 0, text: text)]
-            )
-        } else {
-            throw NSError(domain: "Muesli", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "Canary Qwen requires macOS 15 or later.",
-            ])
-        }
     }
 
     // MARK: - Cohere Transcribe (CoreML)

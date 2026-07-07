@@ -1,6 +1,22 @@
 import Foundation
 import MuesliCore
 
+private enum RemovedCanaryQwenMigration {
+    static let backend = "canary"
+    static let model = "phequals/canary-qwen-2.5b-coreml-int8"
+    static let fallback = BackendOption.gigaAMV3Russian
+
+    static func matches(backend: String, model: String) -> Bool {
+        backend == Self.backend || model == Self.model
+    }
+
+    static func cacheDirectory(fileManager: FileManager) -> URL {
+        fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/muesli/models", isDirectory: true)
+            .appendingPathComponent("canary-qwen-2.5b-coreml-int8", isDirectory: true)
+    }
+}
+
 final class ConfigStore {
     private struct LegacySettingsImportResult {
         let didAttempt: Bool
@@ -22,6 +38,7 @@ final class ConfigStore {
     private let configURL: URL
     private let supportURL: URL
     private let legacySupportURL: URL
+    private let removedCanaryQwenModelCacheURL: URL
     private let fileManager: FileManager
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -29,10 +46,13 @@ final class ConfigStore {
     init(
         supportURL: URL = AppIdentity.supportDirectoryURL,
         legacySupportURL: URL = MuesliPaths.defaultSupportDirectoryURL(appName: "Muesli"),
+        removedCanaryQwenModelCacheURL: URL? = nil,
         fileManager: FileManager = .default
     ) {
         self.supportURL = supportURL.standardizedFileURL
         self.legacySupportURL = legacySupportURL.standardizedFileURL
+        self.removedCanaryQwenModelCacheURL = removedCanaryQwenModelCacheURL
+            ?? RemovedCanaryQwenMigration.cacheDirectory(fileManager: fileManager)
         self.fileManager = fileManager
         self.configURL = supportURL.appendingPathComponent("config.json")
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -49,11 +69,15 @@ final class ConfigStore {
         }
 
         let legacyImport = importLegacySettingsIfNeeded(into: &config)
-        if legacyImport.didChangeConfig {
+        let didMigrateRemovedCanaryQwen = migrateRemovedCanaryQwenSelection(in: &config)
+        if legacyImport.didChangeConfig || didMigrateRemovedCanaryQwen {
             save(config)
         }
         if legacyImport.didAttempt {
             writeLegacySettingsMarker(importResult: legacyImport)
+        }
+        if didMigrateRemovedCanaryQwen {
+            removeRemovedCanaryQwenModelCache()
         }
         return config
     }
@@ -86,6 +110,33 @@ final class ConfigStore {
             at: configURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+    }
+
+    private func migrateRemovedCanaryQwenSelection(in config: inout AppConfig) -> Bool {
+        var didMigrate = false
+
+        func migrate(_ field: String, backend: inout String, model: inout String) {
+            guard RemovedCanaryQwenMigration.matches(backend: backend, model: model) else { return }
+            backend = RemovedCanaryQwenMigration.fallback.backend
+            model = RemovedCanaryQwenMigration.fallback.model
+            didMigrate = true
+            DiagnosticsLog.write("[config-store] migrated removed Canary Qwen \(field) backend to \(RemovedCanaryQwenMigration.fallback.label)")
+        }
+
+        migrate("dictation", backend: &config.sttBackend, model: &config.sttModel)
+        migrate("meeting", backend: &config.meetingTranscriptionBackend, model: &config.meetingTranscriptionModel)
+        return didMigrate
+    }
+
+    private func removeRemovedCanaryQwenModelCache() {
+        guard fileManager.fileExists(atPath: removedCanaryQwenModelCacheURL.path) else { return }
+        MuesliPaths.preconditionSafeForTestWrite(removedCanaryQwenModelCacheURL)
+        do {
+            try fileManager.removeItem(at: removedCanaryQwenModelCacheURL)
+            DiagnosticsLog.write("[config-store] removed Canary Qwen model cache at \(removedCanaryQwenModelCacheURL.path)")
+        } catch {
+            DiagnosticsLog.write("[config-store] failed to remove Canary Qwen model cache at \(removedCanaryQwenModelCacheURL.path): \(error.localizedDescription)")
+        }
     }
 
     private func importLegacySettingsIfNeeded(into config: inout AppConfig) -> LegacySettingsImportResult {

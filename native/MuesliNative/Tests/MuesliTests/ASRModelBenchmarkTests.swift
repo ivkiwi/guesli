@@ -204,7 +204,6 @@ private struct BenchmarkConfig {
             ("sensevoice", BackendOption.senseVoiceSmall),
             ("nemotron35", BackendOption.nemotron35Multilingual),
             ("qwen3", BackendOption.qwen3Asr),
-            ("canary-qwen", BackendOption.canaryQwen),
             ("cohere", BackendOption.cohereTranscribe),
         ]
         return all.compactMap { id, option in
@@ -225,7 +224,6 @@ private struct BenchmarkConfig {
         case "sensevoice": return .senseVoiceSmall
         case "nemotron35": return .nemotron35Multilingual
         case "qwen3": return .qwen3Asr
-        case "canary-qwen": return .canaryQwen
         case "cohere": return .cohereTranscribe
         default: return nil
         }

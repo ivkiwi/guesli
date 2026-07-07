@@ -31,7 +31,6 @@ case "${shard}" in
       WhisperCppTranscriberTests
       FluidAudioTranscriberTests
       BackendCoverageTests
-      CanaryQwenBackendTests
       FillerWordFilterTests
       JaroWinklerTests
       CustomWordMatcherApplyTests

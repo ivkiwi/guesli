@@ -59,6 +59,53 @@ struct ConfigStoreTests {
         store.save(original)
     }
 
+    @Test("load migrates removed Canary Qwen backend and deletes cache")
+    func loadMigratesRemovedCanaryQwenBackendAndDeletesCache() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("canary-qwen-migration-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let supportURL = root.appendingPathComponent("Guesli", isDirectory: true)
+        let legacySupportURL = root.appendingPathComponent("Muesli", isDirectory: true)
+        let cacheURL = root
+            .appendingPathComponent("cache", isDirectory: true)
+            .appendingPathComponent("canary-qwen-2.5b-coreml-int8", isDirectory: true)
+
+        let store = ConfigStore(
+            supportURL: supportURL,
+            legacySupportURL: legacySupportURL,
+            removedCanaryQwenModelCacheURL: cacheURL
+        )
+        try FileManager.default.createDirectory(at: supportURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
+        try Data("stale model".utf8)
+            .write(to: cacheURL.appendingPathComponent("canary_embeddings.bin"))
+        try Data(
+            """
+            {
+              "stt_backend": "canary",
+              "stt_model": "phequals/canary-qwen-2.5b-coreml-int8",
+              "meeting_transcription_backend": "canary",
+              "meeting_transcription_model": "phequals/canary-qwen-2.5b-coreml-int8"
+            }
+            """.utf8
+        ).write(to: store.configPath())
+
+        let loaded = store.load()
+
+        #expect(loaded.sttBackend == BackendOption.gigaAMV3Russian.backend)
+        #expect(loaded.sttModel == BackendOption.gigaAMV3Russian.model)
+        #expect(loaded.meetingTranscriptionBackend == BackendOption.gigaAMV3Russian.backend)
+        #expect(loaded.meetingTranscriptionModel == BackendOption.gigaAMV3Russian.model)
+        #expect(!FileManager.default.fileExists(atPath: cacheURL.path))
+
+        let saved = try JSONDecoder().decode(AppConfig.self, from: Data(contentsOf: store.configPath()))
+        #expect(saved.sttBackend == BackendOption.gigaAMV3Russian.backend)
+        #expect(saved.sttModel == BackendOption.gigaAMV3Russian.model)
+        #expect(saved.meetingTranscriptionBackend == BackendOption.gigaAMV3Russian.backend)
+        #expect(saved.meetingTranscriptionModel == BackendOption.gigaAMV3Russian.model)
+    }
+
     @Test("cleanup prompt selection and custom prompt persist")
     func cleanupPromptSelectionAndCustomPromptPersist() {
         let store = makeStore()

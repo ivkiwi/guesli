@@ -504,7 +504,7 @@ final class MuesliController: NSObject {
         self.selectedBackend = BackendOption.resolve(
             backend: loadedConfig.sttBackend,
             model: loadedConfig.sttModel
-        ) ?? .whisper
+        ) ?? .gigaAMV3Russian
         let configuredMeetingBackend = BackendOption.resolve(
             backend: loadedConfig.meetingTranscriptionBackend,
             model: loadedConfig.meetingTranscriptionModel
@@ -7514,8 +7514,6 @@ final class MuesliController: NSObject {
                 return "Nemotron requires macOS 15 or later. Choose another model to test dictation."
             case 2:
                 return "Qwen3 ASR requires macOS 15 or later. Choose another model to test dictation."
-            case 3:
-                return "Canary Qwen requires macOS 15 or later. Choose another model to test dictation."
             case 4:
                 return "Cohere Transcribe requires macOS 15 or later. Choose another model to test dictation."
             default:

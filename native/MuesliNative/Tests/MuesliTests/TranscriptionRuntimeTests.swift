@@ -442,19 +442,19 @@ struct TranscriptionEngineArtifactsFilterTests {
         #expect(TranscriptionEngineArtifactsFilter.apply(text) == text)
     }
 
-    @Test("strips leaked canary prompt suffix from transcript")
-    func stripsCanaryPromptSuffix() {
+    @Test("strips leaked prompt suffix from transcript")
+    func stripsLeakedPromptSuffix() {
         let text = """
-        I'm actually now using the canary qwen model for dictation. If a word is unclear, use the most likely word that fits well within the context of the overall sentence transcription.
+        I'm testing local dictation. If a word is unclear, use the most likely word that fits well within the context of the overall sentence transcription.
         """
         #expect(
             TranscriptionEngineArtifactsFilter.apply(text) ==
-                "I'm actually now using the canary qwen model for dictation."
+                "I'm testing local dictation."
         )
     }
 
-    @Test("strips leaked canary prompt prefix from transcript")
-    func stripsCanaryPromptPrefix() {
+    @Test("strips leaked prompt prefix from transcript")
+    func stripsLeakedPromptPrefix() {
         let text = "Transcribe the spoken audio accurately. Testing whether this works or not."
         #expect(
             TranscriptionEngineArtifactsFilter.apply(text) ==

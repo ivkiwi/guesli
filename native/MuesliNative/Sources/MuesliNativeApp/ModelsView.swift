@@ -159,7 +159,7 @@ struct ModelsView: View {
                                 .foregroundStyle(MuesliTheme.textSecondary)
                         }
 
-                        Text("SenseVoice, Qwen, Canary, and legacy streaming backends. Hidden by default because these are still slower and less polished.")
+                        Text("SenseVoice, Qwen, and legacy streaming backends. Hidden by default because these are still slower and less polished.")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(MuesliTheme.textPrimary)
                             .opacity(0.8)
@@ -577,7 +577,6 @@ struct ModelsView: View {
         case "gigaam_v3": return nil
         case "qwen": return "qwen-logo"
         case "nemotron35": return "nvidia-logo"
-        case "canary": return "qwen-logo"
         case "sensevoice": return "qwen-logo"
         default: return nil
         }
@@ -1079,8 +1078,6 @@ struct ModelsView: View {
             let path = fm.homeDirectoryForCurrentUser
                 .appendingPathComponent(".cache/muesli/models/nemotron35-multilingual-2240ms")
             try removeItemIfPresent(at: path, fileManager: fm)
-        case "canary":
-            try removeItemIfPresent(at: CanaryQwenModelStore.cacheDirectory(), fileManager: fm)
         case "cohere":
             try removeItemIfPresent(at: CohereTranscribeModelStore.cacheDirectory(), fileManager: fm)
         case "gigaam_v3":
@@ -1172,8 +1169,6 @@ struct ModelsView: View {
                 .appendingPathComponent("Library/Application Support/FluidAudio/Models/qwen3-asr-0.6b-coreml")
             return fm.fileExists(atPath: supportDir.appendingPathComponent("int8/vocab.json").path)
                 || fm.fileExists(atPath: supportDir.appendingPathComponent("f32/vocab.json").path)
-        case "canary":
-            return CanaryQwenModelStore.isAvailableLocally()
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
         case "gigaam_v3":

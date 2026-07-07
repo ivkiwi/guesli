@@ -115,7 +115,7 @@
 
 - Status: complete.
 - Change: imported audio conversion now returns one reusable 16k mono sample buffer alongside the temporary WAV. Import transcription receives that buffer for sample-capable backends, diarization reuses it, and the buffer is released before cleanup/title/summary work.
-- Change: sample-capable meeting transcription paths now accept preloaded samples for Qwen3, Canary, Cohere, Nemotron, and long-file GigaAM/SenseVoice paths; URL-only and short URL-preserving paths still use the WAV URL.
+- Change: sample-capable meeting transcription paths now accept preloaded samples for Qwen3, Cohere, Nemotron, and long-file GigaAM/SenseVoice paths; URL-only and short URL-preserving paths still use the WAV URL.
 - Change: live meeting system-audio post-processing reuses a previously loaded full-session buffer across diarization, VAD health repair, and full-session fallback where available, then releases it before transcript reconciliation.
 - Tests:
   - `swift test --package-path native/MuesliNative --scratch-path /private/tmp/muesli-spm-lane-settings --filter AudioFileImportControllerTests` - passed, 17 tests.

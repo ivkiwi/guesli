@@ -24,7 +24,7 @@ struct BackendOptionTests {
 
     @Test("backend field is one of the known backends")
     func knownBackends() {
-        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron35", "gigaam_v3", "canary", "cohere", "sensevoice"]
+        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron35", "gigaam_v3", "cohere", "sensevoice"]
         for option in BackendOption.all {
             #expect(known.contains(option.backend), "Unknown backend: \(option.backend)")
         }
@@ -114,7 +114,6 @@ struct BackendOptionTests {
         #expect(BackendOption.all.contains(.whisperMedium))
         #expect(BackendOption.all.contains(.whisperLargeTurbo))
         #expect(BackendOption.all.contains(.qwen3Asr))
-        #expect(BackendOption.all.contains(.canaryQwen))
         #expect(BackendOption.all.contains(.cohereTranscribe))
         #expect(BackendOption.all.contains(.gigaAMV3Russian))
         #expect(BackendOption.all.contains(.senseVoiceSmall))
