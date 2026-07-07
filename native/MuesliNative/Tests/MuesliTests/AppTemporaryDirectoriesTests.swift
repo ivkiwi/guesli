@@ -39,6 +39,7 @@ struct AppTemporaryDirectoriesTests {
         let oldDate = now.addingTimeInterval(-7_200)
         let freshDate = now.addingTimeInterval(-60)
         var oldURLs: [URL] = []
+        var protectedOldMeetingRecordingURLs: [URL] = []
         var freshURLs: [URL] = []
 
         for directoryName in AppTemporaryDirectories.launchSweepDirectoryNames {
@@ -50,7 +51,11 @@ struct AppTemporaryDirectoriesTests {
             try Data([2]).write(to: freshURL)
             try setModificationDate(oldDate, for: oldURL)
             try setModificationDate(freshDate, for: freshURL)
-            oldURLs.append(oldURL)
+            if directoryName == AppTemporaryDirectories.meetingRecordings {
+                protectedOldMeetingRecordingURLs.append(oldURL)
+            } else {
+                oldURLs.append(oldURL)
+            }
             freshURLs.append(freshURL)
         }
 
@@ -83,6 +88,9 @@ struct AppTemporaryDirectoriesTests {
         #expect(result.removedEntryCount == oldURLs.count + 1)
         for oldURL in oldURLs {
             #expect(!fileManager.fileExists(atPath: oldURL.path))
+        }
+        for protectedURL in protectedOldMeetingRecordingURLs {
+            #expect(fileManager.fileExists(atPath: protectedURL.path))
         }
         for freshURL in freshURLs {
             #expect(fileManager.fileExists(atPath: freshURL.path))

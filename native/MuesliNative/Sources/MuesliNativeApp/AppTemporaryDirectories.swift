@@ -16,6 +16,7 @@ enum AppTemporaryDirectories {
     static let nativeDictationStreaming = "muesli-native-dictation-streaming"
     static let legacyImportPrefix = "legacy-muesli-import-"
     static let launchSweepMinimumAge: TimeInterval = 60 * 60
+    static let meetingRecordingLaunchSweepMinimumAge: TimeInterval = 24 * 60 * 60
 
     static let launchSweepDirectoryNames = [
         systemAudio,
@@ -60,10 +61,13 @@ enum AppTemporaryDirectories {
         minimumAge: TimeInterval = launchSweepMinimumAge,
         logger: ((String) -> Void)? = { fputs("\($0)\n", stderr) }
     ) -> SweepResult {
-        let cutoff = now.addingTimeInterval(-max(0, minimumAge))
         var removedEntryCount = 0
 
         for directoryName in launchSweepDirectoryNames {
+            let directoryMinimumAge = directoryName == meetingRecordings
+                ? max(minimumAge, meetingRecordingLaunchSweepMinimumAge)
+                : minimumAge
+            let cutoff = now.addingTimeInterval(-max(0, directoryMinimumAge))
             let directoryURL = url(named: directoryName, temporaryDirectory: temporaryDirectory)
             removedEntryCount += removeOldContents(
                 in: directoryURL,
@@ -72,9 +76,10 @@ enum AppTemporaryDirectories {
             )
         }
 
+        let prefixedCutoff = now.addingTimeInterval(-max(0, minimumAge))
         removedEntryCount += removeOldPrefixedDirectories(
             in: temporaryDirectory,
-            olderThan: cutoff,
+            olderThan: prefixedCutoff,
             fileManager: fileManager
         )
 

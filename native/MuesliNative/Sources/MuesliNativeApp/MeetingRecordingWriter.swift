@@ -2,6 +2,11 @@ import Foundation
 import os
 
 final class MeetingRecordingWriter {
+    static let minimumRecoverableDuration: TimeInterval = 1
+    private static let sampleRate = 16_000
+    private static let bytesPerSample = MemoryLayout<Int16>.size
+    private static let filePrefix = "live-meeting"
+
     private struct State {
         var fileHandle: FileHandle?
         var fileURL: URL?
@@ -12,11 +17,17 @@ final class MeetingRecordingWriter {
 
     private let lock = OSAllocatedUnfairLock(initialState: State())
 
-    init() throws {
+    init(meetingID: Int64? = nil) throws {
         let tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(AppTemporaryDirectories.meetingRecordings, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
-        let fileURL = tempDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        let stem: String
+        if let meetingID {
+            stem = "\(Self.filePrefix)-\(meetingID)-\(UUID().uuidString)"
+        } else {
+            stem = UUID().uuidString
+        }
+        let fileURL = tempDirectory.appendingPathComponent(stem).appendingPathExtension("wav")
         FileManager.default.createFile(atPath: fileURL.path, contents: nil)
         guard let fileHandle = FileHandle(forWritingAtPath: fileURL.path) else {
             throw NSError(
@@ -93,6 +104,63 @@ final class MeetingRecordingWriter {
         )
     }
 
+    static func recoveryCandidates(
+        forMeetingID meetingID: Int64?,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory
+    ) -> [URL] {
+        let directory = temporaryDirectory.appendingPathComponent(
+            AppTemporaryDirectories.meetingRecordings,
+            isDirectory: true
+        )
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        let prefix = meetingID.map { "\(filePrefix)-\($0)-" }
+        return entries
+            .filter { url in
+                guard url.pathExtension.lowercased() == "wav" else { return false }
+                guard let prefix else { return true }
+                return url.deletingPathExtension().lastPathComponent.hasPrefix(prefix)
+            }
+            .sorted { lhs, rhs in
+                modificationDate(lhs) > modificationDate(rhs)
+            }
+    }
+
+    @discardableResult
+    static func finalizePartialRecordingIfNonTrivial(at url: URL) throws -> Bool {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let fileSize = (attributes[.size] as? NSNumber)?.intValue ?? 0
+        let dataSize = max(fileSize - 44, 0)
+        guard Double(dataSize) / Double(sampleRate * bytesPerSample) > minimumRecoverableDuration else {
+            return false
+        }
+
+        let handle = try FileHandle(forUpdating: url)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: 0)
+        handle.write(wavHeader(dataSize: UInt32(dataSize)))
+        return true
+    }
+
+#if DEBUG
+    func partialURLForTesting() -> URL? {
+        lock.withLock { $0.fileURL }
+    }
+
+    func closeWithoutFinalizingForTesting() {
+        lock.withLock { state in
+            state.fileHandle?.closeFile()
+            state.fileHandle = nil
+        }
+    }
+#endif
+
     private func append(_ samples: [Int16], toMic: Bool) {
         guard !samples.isEmpty else { return }
         lock.withLock { state in
@@ -142,7 +210,7 @@ final class MeetingRecordingWriter {
     }
 
     private static func wavHeader(dataSize: UInt32) -> Data {
-        let sampleRate: UInt32 = 16_000
+        let sampleRate: UInt32 = UInt32(Self.sampleRate)
         let channels: UInt16 = 1
         let bitsPerSample: UInt16 = 16
         let byteRate = sampleRate * UInt32(channels) * UInt32(bitsPerSample / 8)
@@ -164,5 +232,9 @@ final class MeetingRecordingWriter {
         header.append(contentsOf: "data".utf8)
         header.append(contentsOf: withUnsafeBytes(of: dataSize.littleEndian) { Array($0) })
         return header
+    }
+
+    private static func modificationDate(_ url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
     }
 }

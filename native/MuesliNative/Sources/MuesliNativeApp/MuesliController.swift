@@ -246,7 +246,8 @@ struct MeetingRecordingSaveRequest: Sendable {
 
 enum MeetingRecordingSavePlan {
     case none
-    case discard(tempURL: URL)
+    case discard(url: URL)
+    case alreadySaved(URL)
     case save(MeetingRecordingSaveRequest)
     case failed(MeetingLifecycleError)
 }
@@ -1053,8 +1054,15 @@ final class MuesliController: NSObject {
             return
         }
 
+        let fallbackPartial = fallbackRetainedRecordingPartial(for: meetings)
         for meeting in meetings {
             do {
+                if try recoverRetainedRecordingPartialIfNeeded(
+                    for: meeting,
+                    fallbackCandidate: fallbackPartial
+                ) {
+                    scheduleICloudSyncAfterLocalChange()
+                }
                 let recovered = try dictationStore.recoverLiveMeetingFromTranscriptCheckpoints(id: meeting.id)
                 if recovered {
                     scheduleICloudSyncAfterLocalChange()
@@ -1070,6 +1078,66 @@ final class MuesliController: NSObject {
 
         if !meetings.isEmpty {
             syncAppState()
+        }
+    }
+
+    private func recoverRetainedRecordingPartialIfNeeded(
+        for meeting: MeetingRecord,
+        fallbackCandidate: URL?
+    ) throws -> Bool {
+        guard meeting.savedRecordingPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true else {
+            return false
+        }
+        let exactCandidate = MeetingRecordingWriter.recoveryCandidates(forMeetingID: meeting.id).first
+        guard let candidate = exactCandidate ?? fallbackCandidate else { return false }
+
+        do {
+            guard try MeetingRecordingWriter.finalizePartialRecordingIfNonTrivial(at: candidate) else {
+                return false
+            }
+            let savedURL = try MeetingRecordingStorage.persistTemporaryRecording(
+                from: candidate,
+                meetingTitle: meeting.title,
+                startedAt: ISO8601DateFormatter().date(from: meeting.startTime) ?? Date(),
+                config: config,
+                supportDirectory: configStore.supportDirectory()
+            )
+            try dictationStore.updateMeetingSavedRecordingPath(id: meeting.id, path: savedURL.path)
+            DiagnosticsLog.write(
+                "[meeting-stop] recovered_retained_recording meeting_id=\(meeting.id) path=\(savedURL.path)"
+            )
+            return true
+        } catch {
+            let recoveredURL = moveRetainedRecordingPartialToRecovered(candidate, meetingID: meeting.id)
+            DiagnosticsLog.write(
+                "[meeting-stop] retained_recording_recovery_failed meeting_id=\(meeting.id) partial=\(candidate.path) recovered=\(recoveredURL?.path ?? "nil") error=\(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
+    private func fallbackRetainedRecordingPartial(for meetings: [MeetingRecord]) -> URL? {
+        let missingPathMeetings = meetings.filter {
+            $0.savedRecordingPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+        }
+        guard missingPathMeetings.count == 1 else { return nil }
+        let candidates = MeetingRecordingWriter.recoveryCandidates(forMeetingID: nil)
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    private func moveRetainedRecordingPartialToRecovered(_ url: URL, meetingID: Int64) -> URL? {
+        let recoveredDirectory = MeetingRecordingStorage
+            .directory(config: config, supportDirectory: configStore.supportDirectory())
+            .appendingPathComponent("recovered", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: recoveredDirectory, withIntermediateDirectories: true)
+            let recoveredURL = recoveredDirectory.appendingPathComponent(
+                "meeting-\(meetingID)-\(UUID().uuidString)-\(url.lastPathComponent)"
+            )
+            try FileManager.default.moveItem(at: url, to: recoveredURL)
+            return recoveredURL
+        } catch {
+            return nil
         }
     }
 
@@ -4865,6 +4933,7 @@ final class MuesliController: NSObject {
             let meetingSession = MeetingSession(
                 title: title,
                 calendarEventID: calendarEventID,
+                liveMeetingID: meetingID,
                 participantCandidates: participantCandidates,
                 backend: backend,
                 runtime: runtime,
@@ -4885,6 +4954,13 @@ final class MuesliController: NSObject {
                         guard let self else { return nil }
                         return self.liveMeetingTitle(id: meetingID)
                     }
+                }
+                meetingSession.onRetainedRecordingReady = { [weak self] request in
+                    guard let self else { return nil }
+                    return try await self.finalizeRetainedMeetingRecordingEarly(
+                        request,
+                        meetingID: meetingID
+                    )
                 }
                 meetingSession.onChunkTranscribed = { [weak self, weak meetingSession] segments, speaker in
                     Task { @MainActor [weak self, weak meetingSession] in
@@ -5505,8 +5581,15 @@ final class MuesliController: NSObject {
             return
         }
         isStoppingMeetingRecording = true
+        var didWriteMeetSpeakerStopDiagnostics = false
+        func writeMeetSpeakerStopDiagnosticsOnce() {
+            guard !didWriteMeetSpeakerStopDiagnostics else { return }
+            didWriteMeetSpeakerStopDiagnostics = true
+            logMeetSpeakerBridgeMeetingStop(session: sessionToStop)
+        }
+        defer { writeMeetSpeakerStopDiagnosticsOnce() }
         disarmMeetingAutoStop()
-        logMeetSpeakerBridgeMeetingStop(session: sessionToStop)
+        writeMeetSpeakerStopDiagnosticsOnce()
         meetingEndTimer?.invalidate()
         meetingEndTimer = nil
         meetingNotification.close()
@@ -5543,7 +5626,7 @@ final class MuesliController: NSObject {
         meetingMonitor.refreshState()
         syncDictationRecorderWarmup(intent: .idlePrewarm(.meetingStateChanged))
 
-        Task { [weak self] in
+        Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             var meetingTitle = "Meeting"
             var completedMeetingID: Int64?
@@ -5614,10 +5697,14 @@ final class MuesliController: NSObject {
                     self.presentErrorAlert(title: "Meeting Recording", message: message)
                 }
             }
+            let finalFailedLiveMeetingID = failedLiveMeetingID
+            let finalMeetingResult = meetingResult
+            let finalCompletedMeetingID = completedMeetingID
+            let finalMeetingTitle = meetingTitle
             await MainActor.run {
                 self.backgroundMeetingProcessingCount -= 1
-                if let failedLiveMeetingID {
-                    self.resolveLiveMeetingAfterStopFailure(id: failedLiveMeetingID)
+                if let finalFailedLiveMeetingID {
+                    self.resolveLiveMeetingAfterStopFailure(id: finalFailedLiveMeetingID)
                 }
                 if !self.isMeetingRecording() && !self.isStartingMeetingRecording && self.backgroundMeetingProcessingCount == 0 {
                     self.setState(.idle)
@@ -5631,13 +5718,13 @@ final class MuesliController: NSObject {
                     self.appState.liveMeetingTranscriptOwnerID = nil
                 }
                 self.liveTranscriptOverlapByMeetingSpeaker.removeAll()
-                if let meetingResult {
-                    self.cleanupTemporaryMeetingAudioFiles(for: meetingResult)
+                if let finalMeetingResult {
+                    self.cleanupTemporaryMeetingAudioFiles(for: finalMeetingResult)
                 }
 
                 self.enqueueOrShowMeetingCompletionNotification(
-                    meetingID: completedMeetingID,
-                    title: meetingTitle
+                    meetingID: finalCompletedMeetingID,
+                    title: finalMeetingTitle
                 )
                 self.updateMeetingNotificationVisibility()
             }
@@ -5753,6 +5840,26 @@ final class MuesliController: NSObject {
         return persistenceResult
     }
 
+    private func finalizeRetainedMeetingRecordingEarly(
+        _ request: RetainedMeetingRecordingFinalizeRequest,
+        meetingID: Int64
+    ) async throws -> URL {
+        let meetingTitle = liveMeetingTitle(id: meetingID) ?? request.meetingTitle
+        let outputURL = try await MeetingRecordingStorage.persistTemporaryRecordingAsync(
+            from: request.tempURL,
+            meetingTitle: meetingTitle,
+            startedAt: request.startedAt,
+            config: config,
+            supportDirectory: configStore.supportDirectory()
+        )
+        try dictationStore.updateMeetingSavedRecordingPath(id: meetingID, path: outputURL.path)
+        scheduleICloudSyncAfterLocalChange()
+        DiagnosticsLog.write(
+            "[meeting-stop] retained_recording_linked meeting_id=\(meetingID) path=\(outputURL.path)"
+        )
+        return outputURL
+    }
+
     private func dispatchMeetingMarkdownAutoExport(meetingID: Int64) {
         guard config.autoExportMarkdownEnabled else { return }
         do {
@@ -5785,10 +5892,17 @@ final class MuesliController: NSObject {
         }
 
         guard shouldSave else {
+            if let retainedRecordingSavedURL = result.retainedRecordingSavedURL {
+                return .discard(url: retainedRecordingSavedURL)
+            }
             if let retainedRecordingURL = result.retainedRecordingURL {
-                return .discard(tempURL: retainedRecordingURL)
+                return .discard(url: retainedRecordingURL)
             }
             return .none
+        }
+
+        if let retainedRecordingSavedURL = result.retainedRecordingSavedURL {
+            return .alreadySaved(retainedRecordingSavedURL)
         }
 
         if let retainedRecordingError = result.retainedRecordingError {
@@ -5825,9 +5939,11 @@ final class MuesliController: NSObject {
         switch plan {
         case .none:
             return .none
-        case .discard(let tempURL):
-            try? FileManager.default.removeItem(at: tempURL)
+        case .discard(let url):
+            try? FileManager.default.removeItem(at: url)
             return .none
+        case .alreadySaved(let url):
+            return PreparedMeetingRecordingSave(path: url.path, error: nil)
         case .failed(let error):
             return PreparedMeetingRecordingSave(path: nil, error: error)
         case .save(let request):
@@ -5892,7 +6008,8 @@ final class MuesliController: NSObject {
     @MainActor
     private func recordingSaveDecision(for result: MeetingSessionResult) async -> Bool? {
         guard config.meetingRecordingSavePolicy == .prompt else { return nil }
-        guard result.retainedRecordingURL != nil, result.retainedRecordingError == nil else { return nil }
+        guard result.retainedRecordingURL != nil || result.retainedRecordingSavedURL != nil,
+              result.retainedRecordingError == nil else { return nil }
         return await promptToSaveMeetingRecording(for: result.title)
     }
 

@@ -1526,14 +1526,15 @@ public final class DictationStore {
     public func updateMeetingSavedRecordingPath(id: Int64, path: String?) throws {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
-        let sql = "UPDATE meetings SET saved_recording_path = ? WHERE id = ?"
+        let sql = "UPDATE meetings SET saved_recording_path = ?, updated_at = ?, sync_dirty = 1 WHERE id = ?"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
             throw lastError(db)
         }
         defer { sqlite3_finalize(statement) }
         bindOptionalText(path, at: 1, statement: statement)
-        sqlite3_bind_int64(statement, 2, id)
+        sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
+        sqlite3_bind_int64(statement, 3, id)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw lastError(db)
         }

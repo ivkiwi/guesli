@@ -1,5 +1,6 @@
 import Testing
 import AppKit
+import AVFoundation
 import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
@@ -64,6 +65,11 @@ struct MeetingsNavigationTests {
         let writer = try MeetingRecordingWriter()
         writer.appendSystem([1_200, -800, 400, -200])
         return try #require(writer.stop())
+    }
+
+    private func audioDuration(from url: URL) throws -> TimeInterval {
+        let file = try AVAudioFile(forReading: url)
+        return Double(file.length) / file.processingFormat.sampleRate
     }
 
     @Test("app state defaults meetings to browser mode")
@@ -658,6 +664,41 @@ struct MeetingsNavigationTests {
         #expect(FileManager.default.fileExists(atPath: retainedRecordingURL.path) == false)
     }
 
+    @Test("persistCompletedMeetingResult keeps early saved recording path")
+    func persistCompletedMeetingResultKeepsEarlySavedRecordingPath() async throws {
+        let store = try makeStore()
+        let controller = makeController(dictationStore: store)
+        controller.updateConfig { $0.meetingRecordingSavePolicy = .always }
+        let savedRecordingURL = try makeRetainedRecordingURL()
+        defer { try? FileManager.default.removeItem(at: savedRecordingURL) }
+
+        let result = MeetingSessionResult(
+            title: "Early Saved",
+            originalTitle: "Meeting",
+            calendarEventID: nil,
+            startTime: Date(),
+            endTime: Date().addingTimeInterval(30),
+            durationSeconds: 30,
+            rawTranscript: "Early saved transcript.",
+            formattedNotes: "## Summary\nEarly saved notes.",
+            retainedRecordingURL: nil,
+            retainedRecordingError: nil,
+            retainedRecordingSavedURL: savedRecordingURL,
+            systemRecordingURL: nil,
+            templateSnapshot: MeetingTemplates.auto.snapshot
+        )
+
+        let preparedRecordingSave = await controller.prepareMeetingRecordingSave(for: result)
+        let persistenceResult = try controller.persistCompletedMeetingResult(
+            result,
+            preparedRecordingSave: preparedRecordingSave
+        )
+
+        let storedMeeting = try #require(try store.meeting(id: persistenceResult.meetingID))
+        #expect(storedMeeting.savedRecordingPath == savedRecordingURL.path)
+        #expect(FileManager.default.fileExists(atPath: savedRecordingURL.path))
+    }
+
     @Test("persistCompletedMeetingResult surfaces prompt policy retained recording failures without decision")
     func persistCompletedMeetingResultSurfacesPromptPolicyRetainedRecordingFailuresWithoutDecision() async throws {
         let store = try makeStore()
@@ -850,6 +891,34 @@ struct MeetingsNavigationTests {
         #expect(meeting.notesState == .rawTranscriptFallback)
         #expect(meeting.rawTranscript == "[11:45:02] Others: The fallback transcript survived.")
         #expect(try store.liveTranscriptCheckpointText(meetingID: id) == nil)
+    }
+
+    @Test("startup recovery adopts retained recording partial before failing stale meeting")
+    func startupRecoveryAdoptsRetainedRecordingPartial() throws {
+        let store = try makeStore()
+        let configStore = makeConfigStore()
+        let id = try store.createLiveMeeting(title: "Crashed Audio", calendarEventID: nil, startTime: Date())
+        let writer = try MeetingRecordingWriter(meetingID: id)
+        writer.appendSystem(Array(repeating: 1_200, count: 16_100))
+        writer.markPauseBoundary()
+        let partialURL = try #require(writer.partialURLForTesting())
+        writer.closeWithoutFinalizingForTesting()
+        defer { try? FileManager.default.removeItem(at: partialURL) }
+
+        let controller = makeController(configStore: configStore, dictationStore: store)
+        controller.updateConfig { $0.meetingRecordingFileFormat = MeetingRecordingFileFormat.m4a.rawValue }
+
+        controller.recoverStaleLiveMeetings()
+
+        let meeting = try #require(try store.meeting(id: id))
+        let savedRecordingPath = try #require(meeting.savedRecordingPath)
+        let savedURL = URL(fileURLWithPath: savedRecordingPath)
+        defer { try? FileManager.default.removeItem(at: savedURL) }
+        #expect(meeting.status == .failed)
+        #expect(savedURL.pathExtension == "m4a")
+        #expect(FileManager.default.fileExists(atPath: savedURL.path))
+        #expect(FileManager.default.fileExists(atPath: partialURL.path) == false)
+        #expect(try audioDuration(from: savedURL) > 1)
     }
 
     @Test("showMeetingTemplatesManager preserves current meetings context and presents manager")
