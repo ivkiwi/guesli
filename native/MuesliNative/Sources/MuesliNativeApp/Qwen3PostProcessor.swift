@@ -158,7 +158,7 @@ enum Qwen3PostProcessorOutputCleaner {
 }
 
 enum Qwen3PostProcessorConfig {
-    // Dev/Canary override — takes precedence over the UI-selected model when set.
+    // Local development override — takes precedence over the UI-selected model when set.
     static let envOverride = "MUESLI_QWEN3_POSTPROC_GGUF"
     static let legacyDirectoryEnvOverride = "MUESLI_QWEN3_POSTPROC_DIR"
     // Dictation-only cleanup cap. Keep bounded to avoid slow local inference; long dictations may be truncated by LLM.swift.
@@ -178,7 +178,7 @@ enum Qwen3PostProcessorConfig {
         return parts
     }
 
-    /// Checks for a dev/Canary env-var override and returns the resolved GGUF URL if present.
+    /// Checks for a local development env-var override and returns the resolved GGUF URL if present.
     static func devOverrideURL() -> URL? {
         let env = ProcessInfo.processInfo.environment
         for key in [envOverride, legacyDirectoryEnvOverride] {
@@ -335,7 +335,7 @@ actor Qwen3PostProcessor {
     private var loadTask: LoadTaskState?
 
     init(modelURL: URL, systemPrompt: String) {
-        // Dev/Canary env-var override takes precedence.
+        // Local development env-var override takes precedence.
         self.modelURL = Qwen3PostProcessorConfig.devOverrideURL() ?? modelURL
         self.systemPrompt = systemPrompt
     }

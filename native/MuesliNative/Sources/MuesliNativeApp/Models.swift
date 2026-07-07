@@ -73,15 +73,6 @@ struct BackendOption: Equatable {
         recommended: false
     )
 
-    static let canaryQwen = BackendOption(
-        backend: "canary",
-        model: "phequals/canary-qwen-2.5b-coreml-int8",
-        label: "Canary Qwen",
-        sizeLabel: "~2.5 GB",
-        description: "INT8 CoreML, autoregressive, experimental. English-first. First use warms up slowly. Final transcript after stop in v1.",
-        recommended: false
-    )
-
     static let cohereTranscribe = BackendOption(
         backend: "cohere",
         model: "phequals/cohere-transcribe-coreml-mixed-precision",
@@ -130,7 +121,7 @@ struct BackendOption: Equatable {
     )
 
     static let experimental: [BackendOption] = [
-        .senseVoiceSmall, .qwen3Asr, .canaryQwen, .indicASR,
+        .senseVoiceSmall, .qwen3Asr, .indicASR,
     ]
 
     /// Models available for download and use.
@@ -198,8 +189,6 @@ struct BackendOption: Equatable {
             let path = fm.homeDirectoryForCurrentUser
                 .appendingPathComponent(".cache/muesli/models/nemotron35-multilingual-2240ms/encoder.mlmodelc/coremldata.bin")
             return fm.fileExists(atPath: path.path)
-        case "canary":
-            return CanaryQwenModelStore.isAvailableLocally()
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
         case "indicasr":
