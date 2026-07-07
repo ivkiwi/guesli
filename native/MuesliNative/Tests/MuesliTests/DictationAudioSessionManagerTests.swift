@@ -102,6 +102,35 @@ struct DictationAudioSessionManagerTests {
         #expect(harness.recorder.startCalls == 1)
     }
 
+    @Test("hold start resets UI when required session is already gone")
+    func holdStartResetsUIWhenRequiredSessionIsGone() {
+        let harness = Harness(routeKind: .speakerLike)
+
+        harness.manager.beginRecording(
+            mode: "hold-start",
+            duckingEnabled: true,
+            mediaPauseEnabled: false,
+            requiresExistingSession: true
+        )
+        harness.wait()
+
+        #expect(harness.recorder.activateCalls == 0)
+        #expect(harness.recorder.startCalls == 0)
+        #expect(harness.manager.currentSessionID == nil)
+        #expect(harness.events.contains { event in
+            if case .failed(let sessionID, _) = event {
+                return sessionID == nil
+            }
+            return false
+        })
+        #expect(harness.events.contains { event in
+            if case .latency(let name, _) = event {
+                return name == "stale_session_ignored:hold-start"
+            }
+            return false
+        })
+    }
+
     @Test("headphone route skips ducking and selects built-in mic app-locally")
     func headphoneRouteSkipsDucking() {
         let harness = Harness(routeKind: .headphoneLike, preferredInputDeviceID: 82)
