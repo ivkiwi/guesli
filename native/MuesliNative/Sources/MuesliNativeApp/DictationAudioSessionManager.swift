@@ -93,11 +93,14 @@ extension MicrophoneRecorder: DictationAudioRecording {}
 final class DictationAudioSessionManager: @unchecked Sendable {
     private enum StartupError: LocalizedError {
         case noAudioBuffer
+        case staleSession(mode: String)
 
         var errorDescription: String? {
             switch self {
             case .noAudioBuffer:
                 return "Microphone capture did not deliver audio."
+            case .staleSession(let mode):
+                return "Stale dictation session was ignored for \(mode)."
             }
         }
     }
@@ -252,6 +255,7 @@ final class DictationAudioSessionManager: @unchecked Sendable {
         if requiresExistingSession {
             guard let existingSessionID = currentSessionID else {
                 emitLatency("stale_session_ignored:\(mode)")
+                emit(.failed(nil, error: StartupError.staleSession(mode: mode)))
                 return
             }
             sessionID = existingSessionID
