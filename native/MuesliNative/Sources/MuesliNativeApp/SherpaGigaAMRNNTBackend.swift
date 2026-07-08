@@ -331,7 +331,17 @@ actor SherpaGigaAMRNNTTranscriber {
             arguments: recognitionArguments(chunkURLs: chunkURLs),
             captureDirectory: workDirectory
         )
-        let text = try SherpaOfflineOutputParser.text(from: output.stdout, stderr: output.stderr)
+        let text: String
+        do {
+            text = try SherpaOfflineOutputParser.text(
+                from: output.stdout,
+                stderr: output.stderr,
+                expectedResultCount: chunkURLs.count
+            )
+        } catch SherpaOfflineOutputParserError.unexpectedResultCount {
+            fputs("[muesli-native] Sherpa batch output count mismatch; retrying chunks individually\n", stderr)
+            text = try await transcribeChunksIndividually(chunkURLs, captureDirectory: workDirectory)
+        }
         let duration = TimeInterval(samples.count) / TimeInterval(sampleRate)
         return SherpaGigaAMRNNTTranscriptionResult(
             text: text,
@@ -384,6 +394,24 @@ actor SherpaGigaAMRNNTTranscriber {
         ] + chunkURLs.map(\.path)
     }
 
+    private func transcribeChunksIndividually(_ chunkURLs: [URL], captureDirectory: URL) async throws -> String {
+        var parts: [String] = []
+        parts.reserveCapacity(chunkURLs.count)
+        for chunkURL in chunkURLs {
+            let output = try await SherpaProcessRunner.run(
+                executable: SherpaGigaAMRNNTModelStore.binaryURL(),
+                arguments: recognitionArguments(chunkURLs: [chunkURL]),
+                captureDirectory: captureDirectory
+            )
+            parts.append(try SherpaOfflineOutputParser.text(
+                from: output.stdout,
+                stderr: output.stderr,
+                expectedResultCount: 1
+            ))
+        }
+        return GigaAMV3FileChunking.mergeTranscripts(parts)
+    }
+
 #if DEBUG
     func setActiveDownloadTaskForTesting(_ task: Task<URL, Error>) {
         activeDownloadTask = task
@@ -399,14 +427,24 @@ actor SherpaGigaAMRNNTTranscriber {
 #endif
 }
 
+enum SherpaOfflineOutputParserError: Error, Equatable {
+    case unexpectedResultCount(expected: Int, actual: Int)
+}
+
 enum SherpaOfflineOutputParser {
     private struct ResultLine: Decodable {
         let text: String
     }
 
-    static func text(from stdout: String, stderr: String = "") throws -> String {
-        let stdoutResult = try parseJSONLines(stdout)
-        if stdoutResult.parsedAnyLine {
+    static func text(from stdout: String, stderr: String = "", expectedResultCount: Int? = nil) throws -> String {
+        let stdoutResult = parseJSONLines(stdout)
+        if stdoutResult.parsedLineCount > 0 {
+            if let expectedResultCount, stdoutResult.parsedLineCount != expectedResultCount {
+                throw SherpaOfflineOutputParserError.unexpectedResultCount(
+                    expected: expectedResultCount,
+                    actual: stdoutResult.parsedLineCount
+                )
+            }
             return GigaAMV3FileChunking.mergeTranscripts(stdoutResult.parts)
         }
 
@@ -421,23 +459,23 @@ enum SherpaOfflineOutputParser {
         return ""
     }
 
-    private static func parseJSONLines(_ output: String) throws -> (parts: [String], parsedAnyLine: Bool, firstError: Error?) {
+    private static func parseJSONLines(_ output: String) -> (parts: [String], parsedLineCount: Int, firstError: Error?) {
         let lines = output.split(whereSeparator: \.isNewline)
-        var parsedAnyLine = false
+        var parsedLineCount = 0
         var firstError: Error?
         let parts = lines.compactMap { line -> String? in
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
             do {
                 let decoded = try JSONDecoder().decode(ResultLine.self, from: Data(trimmed.utf8))
-                parsedAnyLine = true
+                parsedLineCount += 1
                 return decoded.text.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
             } catch {
                 firstError = firstError ?? error
                 return nil
             }
         }
-        return (parts, parsedAnyLine, firstError)
+        return (parts, parsedLineCount, firstError)
     }
 
     private static func fallbackTranscript(from output: String) -> String? {

@@ -3931,8 +3931,9 @@ final class MuesliController: NSObject {
                 directoryName: AppTemporaryDirectories.meetingRetranscription
             )
             defer { try? FileManager.default.removeItem(at: segmentURL) }
-            return try await transcriptionCoordinator.transcribeMeetingChunk(
+            return try await transcriptionCoordinator.transcribeMeeting(
                 at: segmentURL,
+                samples: samples,
                 backend: backend,
                 cohereLanguage: config.resolvedCohereLanguageMeetings
             )

@@ -104,6 +104,64 @@ struct SherpaGigaAMRNNTTranscriberTests {
         #expect(args.contains("--decoding-method=greedy_search"))
     }
 
+    @Test("sherpa chunk ranges cover a 28 minute recording without gaps")
+    func sherpaChunkRangesCoverTwentyEightMinuteRecording() {
+        let sampleRate = SherpaGigaAMRNNTChunking.sampleRate
+        let sampleCount = 28 * 60 * sampleRate
+        let ranges = SherpaGigaAMRNNTChunking.ranges(sampleCount: sampleCount)
+
+        #expect(ranges.count == 56)
+        #expect(ranges.first?.lowerBound == 0)
+        #expect(ranges.first?.upperBound == 30 * sampleRate)
+        #expect(ranges.last?.lowerBound == 55 * 30 * sampleRate)
+        #expect(ranges.last?.upperBound == sampleCount)
+        #expect(ranges.reduce(0) { $0 + $1.count } == sampleCount)
+        for (left, right) in zip(ranges, ranges.dropFirst()) {
+            #expect(left.upperBound == right.lowerBound)
+        }
+    }
+
+    @Test("sherpa chunk ranges include last partial chunk")
+    func sherpaChunkRangesIncludeLastPartialChunk() {
+        let sampleRate = SherpaGigaAMRNNTChunking.sampleRate
+        let sampleCount = 28 * 60 * sampleRate + 123
+        let ranges = SherpaGigaAMRNNTChunking.ranges(sampleCount: sampleCount)
+
+        #expect(ranges.count == 57)
+        #expect(ranges.last?.lowerBound == 56 * 30 * sampleRate)
+        #expect(ranges.last?.upperBound == sampleCount)
+        #expect(ranges.last?.count == 123)
+    }
+
+    @Test("sherpa parser rejects partial batch output")
+    func sherpaParserRejectsPartialBatchOutput() {
+        let stdout = """
+        {"text":"late chunk two"}
+        {"text":"late chunk three"}
+        """
+
+        do {
+            _ = try SherpaOfflineOutputParser.text(from: stdout, expectedResultCount: 4)
+            Issue.record("Partial Sherpa output was accepted as a complete transcript")
+        } catch let error as SherpaOfflineOutputParserError {
+            #expect(error == .unexpectedResultCount(expected: 4, actual: 2))
+        } catch {
+            Issue.record("Unexpected parser error: \(error)")
+        }
+    }
+
+    @Test("sherpa parser counts empty chunk outputs")
+    func sherpaParserCountsEmptyChunkOutputs() throws {
+        let stdout = """
+        {"text":""}
+        {"text":"later speech"}
+        """
+
+        let text = try SherpaOfflineOutputParser.text(from: stdout, expectedResultCount: 2)
+
+        #expect(text == "later speech")
+    }
+
     @Test("sherpa GigaAM RNNT pins release artifact checksums")
     func sherpaGigaAMRNNTArtifactChecksumsPinned() {
         #expect(SherpaGigaAMRNNTModelStore.toolArchive.expectedSHA256 == "b1830ce2f19169070c23c2a44b70e1d416e0265e98870a2f62f7aa94811db342")

@@ -165,6 +165,34 @@ struct MeetingRecordingWriterTests {
         #expect(try readMonoPCM16WAVSamples(from: wavURL).isEmpty == false)
     }
 
+    @Test("saved m4a preserves start middle and end audio for retranscription")
+    func savedM4APreservesStartMiddleAndEndAudioForRetranscription() async throws {
+        let sampleRate = 16_000
+        var samples = [Int16](repeating: 0, count: sampleRate * 8)
+        addTone(to: &samples, startSecond: 0.5, frequency: 440)
+        addTone(to: &samples, startSecond: 3.5, frequency: 660)
+        addTone(to: &samples, startSecond: 6.5, frequency: 880)
+
+        let tempURL = try makeTempWAV(samples: samples)
+        let supportDirectory = makeTemporaryDirectory()
+        let savedURL = try MeetingRecordingWriter.persistTemporaryRecording(
+            from: tempURL,
+            meetingTitle: "Retranscribe regions",
+            startedAt: Date(timeIntervalSince1970: 1_711_000_000),
+            supportDirectory: supportDirectory
+        )
+        let wavURL = try await MeetingRecordingStorage.temporaryWAVForTranscription(from: savedURL)
+        defer { try? FileManager.default.removeItem(at: wavURL) }
+
+        let decoded = try WavReader.readFloatMonoWAV(from: wavURL)
+
+        #expect(decoded.sampleRate == sampleRate)
+        #expect(decoded.samples.count > sampleRate * 7)
+        #expect(rms(decoded.samples, startSecond: 0.4, endSecond: 1.6) > 0.05)
+        #expect(rms(decoded.samples, startSecond: 3.4, endSecond: 4.6) > 0.05)
+        #expect(rms(decoded.samples, startSecond: 6.4, endSecond: 7.6) > 0.05)
+    }
+
     @Test("legacy wav migration encodes referenced recordings and removes orphan stubs")
     func legacyWAVMigrationEncodesAndDeletesOrphanStubs() throws {
         let store = try makeStore()
@@ -343,6 +371,28 @@ struct MeetingRecordingWriterTests {
         let writer = try MeetingRecordingWriter()
         writer.appendSystem(samples)
         return try #require(writer.stop())
+    }
+
+    private func addTone(to samples: inout [Int16], startSecond: Double, frequency: Double) {
+        let sampleRate = 16_000
+        let start = Int(startSecond * Double(sampleRate))
+        let end = min(samples.count, start + sampleRate)
+        guard start < end else { return }
+        for index in start..<end {
+            let phase = 2.0 * Double.pi * frequency * Double(index - start) / Double(sampleRate)
+            samples[index] = Int16(sin(phase) * 12_000)
+        }
+    }
+
+    private func rms(_ samples: [Float], startSecond: Double, endSecond: Double) -> Float {
+        let sampleRate = 16_000
+        let start = max(0, Int(startSecond * Double(sampleRate)))
+        let end = min(samples.count, Int(endSecond * Double(sampleRate)))
+        guard start < end else { return 0 }
+        let sum = samples[start..<end].reduce(Float(0)) { partial, sample in
+            partial + sample * sample
+        }
+        return sqrt(sum / Float(end - start))
     }
 
     private func readMonoPCM16WAVSamples(from url: URL) throws -> [Int16] {

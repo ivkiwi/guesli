@@ -20,7 +20,7 @@ enum MeetingRetranscriptionPipeline {
         sampleRate: Int = VadManager.sampleRate
     ) -> [AudioSegment] {
         guard sampleCount > 0, sampleRate > 0 else { return [] }
-        return vadSegments.compactMap { segment in
+        return vadSegments.compactMap { segment -> AudioSegment? in
             let startSample = max(0, min(sampleCount, segment.startSample(sampleRate: sampleRate)))
             let endSample = max(startSample, min(sampleCount, segment.endSample(sampleRate: sampleRate)))
             guard endSample > startSample else { return nil }
@@ -30,6 +30,11 @@ enum MeetingRetranscriptionPipeline {
                 startSample: startSample,
                 endSample: endSample
             )
+        }.sorted { lhs, rhs in
+            if lhs.startSample == rhs.startSample {
+                return lhs.endSample < rhs.endSample
+            }
+            return lhs.startSample < rhs.startSample
         }
     }
 

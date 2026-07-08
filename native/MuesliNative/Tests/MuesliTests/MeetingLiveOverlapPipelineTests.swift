@@ -196,6 +196,39 @@ struct MeetingLiveOverlapPipelineTests {
         #expect(result.segments.map(\.end) == [1.0, 2.5])
     }
 
+    @Test("retranscribe feeds VAD segments in timeline order")
+    func retranscribeFeedsVADSegmentsInTimelineOrder() async throws {
+        let samples = (0..<(16_000 * 5)).map { Float($0 % 100) / 100.0 }
+        let vadSegments = [
+            VadSegment(startTime: 3.0, endTime: 3.5),
+            VadSegment(startTime: 0.5, endTime: 1.0),
+            VadSegment(startTime: 2.0, endTime: 2.5),
+        ]
+        var calls: [MeetingRetranscriptionPipeline.AudioSegment] = []
+
+        let result = try await MeetingRetranscriptionPipeline.transcribeSegmentedAudio(
+            samples: samples,
+            vadSegments: vadSegments
+        ) { segment, audio in
+            calls.append(segment)
+            #expect(audio.count == segment.endSample - segment.startSample)
+            let label: String
+            if segment.startSample == 8_000 {
+                label = "early"
+            } else if segment.startSample == 32_000 {
+                label = "middle"
+            } else {
+                label = "late"
+            }
+            return SpeechTranscriptionResult(text: label, segments: [])
+        }
+
+        #expect(calls.map(\.startSample) == [8_000, 32_000, 48_000])
+        #expect(calls.map(\.endSample) == [16_000, 40_000, 56_000])
+        #expect(result.text == "early middle late")
+        #expect(result.segments.map(\.text) == ["early", "middle", "late"])
+    }
+
     @Test("retranscribe skips transcription when VAD finds no speech")
     func retranscribeSkipsTranscriptionWhenVADFindsNoSpeech() async throws {
         var transcribeWasCalled = false
