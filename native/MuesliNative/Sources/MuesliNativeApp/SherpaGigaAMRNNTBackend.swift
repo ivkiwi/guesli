@@ -27,6 +27,22 @@ enum SherpaGigaAMRNNTChunking {
     }
 }
 
+enum SherpaGigaAMRNNTBatching {
+    static let maxFilesPerInvocation = 256
+
+    static func batches<T>(_ values: [T], maxSize: Int = maxFilesPerInvocation) -> [[T]] {
+        guard maxSize > 0 else { return values.isEmpty ? [] : [values] }
+        var result: [[T]] = []
+        var start = 0
+        while start < values.count {
+            let end = min(values.count, start + maxSize)
+            result.append(Array(values[start..<end]))
+            start = end
+        }
+        return result
+    }
+}
+
 enum SherpaGigaAMRNNTModelStore {
     static let backendIdentifier = "sherpa_gigaam_rnnt"
     static let modelID = "k2-fsa/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16"
@@ -306,13 +322,24 @@ actor SherpaGigaAMRNNTTranscriber {
     }
 
     func transcribe(samples: [Float], sampleRate: Int) async throws -> SherpaGigaAMRNNTTranscriptionResult {
+        return try await transcribe(samplesBatch: [samples], sampleRate: sampleRate).first ?? SherpaGigaAMRNNTTranscriptionResult(
+            text: "",
+            duration: 0,
+            processingTime: 0
+        )
+    }
+
+    func transcribe(samplesBatch: [[Float]], sampleRate: Int) async throws -> [SherpaGigaAMRNNTTranscriptionResult] {
         guard sampleRate == SherpaGigaAMRNNTChunking.sampleRate else {
             throw NSError(domain: "SherpaGigaAMRNNTTranscriber", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "Sherpa GigaAM RNNT expects 16 kHz mono audio.",
             ])
         }
-        guard !samples.isEmpty else {
-            return SherpaGigaAMRNNTTranscriptionResult(text: "", duration: 0, processingTime: 0)
+        guard !samplesBatch.isEmpty else { return [] }
+        guard samplesBatch.contains(where: { !$0.isEmpty }) else {
+            return samplesBatch.map { _ in
+                SherpaGigaAMRNNTTranscriptionResult(text: "", duration: 0, processingTime: 0)
+            }
         }
         try ensureModelsAvailable()
         try await acquireInferenceSlot()
@@ -325,29 +352,25 @@ actor SherpaGigaAMRNNTTranscriber {
         try fm.createDirectory(at: workDirectory, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: workDirectory) }
 
-        let chunkURLs = try writeChunks(samples: samples, to: workDirectory)
-        let output = try await SherpaProcessRunner.run(
-            executable: SherpaGigaAMRNNTModelStore.binaryURL(),
-            arguments: recognitionArguments(chunkURLs: chunkURLs),
-            captureDirectory: workDirectory
-        )
-        let text: String
-        do {
-            text = try SherpaOfflineOutputParser.text(
-                from: output.stdout,
-                stderr: output.stderr,
-                expectedResultCount: chunkURLs.count
-            )
-        } catch SherpaOfflineOutputParserError.unexpectedResultCount {
-            fputs("[muesli-native] Sherpa batch output count mismatch; retrying chunks individually\n", stderr)
-            text = try await transcribeChunksIndividually(chunkURLs, captureDirectory: workDirectory)
+        let chunkGroups = try writeChunks(samplesBatch: samplesBatch, to: workDirectory)
+        let flatChunks = chunkGroups.enumerated().flatMap { itemIndex, urls in
+            urls.map { ChunkInput(itemIndex: itemIndex, url: $0) }
         }
-        let duration = TimeInterval(samples.count) / TimeInterval(sampleRate)
-        return SherpaGigaAMRNNTTranscriptionResult(
-            text: text,
-            duration: duration,
-            processingTime: CFAbsoluteTimeGetCurrent() - start
-        )
+        var partsByItem = Array(repeating: [String](), count: samplesBatch.count)
+        for batch in SherpaGigaAMRNNTBatching.batches(flatChunks) {
+            let texts = try await transcribeChunkBatch(batch, captureDirectory: workDirectory)
+            for (chunk, text) in zip(batch, texts) {
+                partsByItem[chunk.itemIndex].append(text)
+            }
+        }
+        let processingTime = CFAbsoluteTimeGetCurrent() - start
+        return samplesBatch.enumerated().map { index, samples in
+            SherpaGigaAMRNNTTranscriptionResult(
+                text: GigaAMV3FileChunking.mergeTranscripts(partsByItem[index]),
+                duration: TimeInterval(samples.count) / TimeInterval(sampleRate),
+                processingTime: processingTime
+            )
+        }
     }
 
     private func ensureModelsAvailable() throws {
@@ -381,6 +404,16 @@ actor SherpaGigaAMRNNTTranscriber {
         }
     }
 
+    private func writeChunks(samplesBatch: [[Float]], to directory: URL) throws -> [[URL]] {
+        try samplesBatch.enumerated().map { itemIndex, samples in
+            try SherpaGigaAMRNNTChunking.ranges(sampleCount: samples.count).enumerated().map { chunkIndex, range in
+                let chunkURL = directory.appendingPathComponent(String(format: "item-%05d-chunk-%05d.wav", itemIndex, chunkIndex))
+                try WavWriter.writeWAV(samples: Array(samples[range]), to: chunkURL)
+                return chunkURL
+            }
+        }
+    }
+
     private func recognitionArguments(chunkURLs: [URL]) -> [String] {
         [
             "--tokens=\(SherpaGigaAMRNNTModelStore.tokensURL().path)",
@@ -394,7 +427,31 @@ actor SherpaGigaAMRNNTTranscriber {
         ] + chunkURLs.map(\.path)
     }
 
-    private func transcribeChunksIndividually(_ chunkURLs: [URL], captureDirectory: URL) async throws -> String {
+    private struct ChunkInput {
+        let itemIndex: Int
+        let url: URL
+    }
+
+    private func transcribeChunkBatch(_ chunks: [ChunkInput], captureDirectory: URL) async throws -> [String] {
+        let chunkURLs = chunks.map(\.url)
+        let output = try await SherpaProcessRunner.run(
+            executable: SherpaGigaAMRNNTModelStore.binaryURL(),
+            arguments: recognitionArguments(chunkURLs: chunkURLs),
+            captureDirectory: captureDirectory
+        )
+        do {
+            return try SherpaOfflineOutputParser.texts(
+                from: output.stdout,
+                stderr: output.stderr,
+                expectedResultCount: chunkURLs.count
+            )
+        } catch SherpaOfflineOutputParserError.unexpectedResultCount {
+            fputs("[muesli-native] Sherpa batch output count mismatch; retrying chunks individually\n", stderr)
+            return try await transcribeChunksIndividually(chunkURLs, captureDirectory: captureDirectory)
+        }
+    }
+
+    private func transcribeChunksIndividually(_ chunkURLs: [URL], captureDirectory: URL) async throws -> [String] {
         var parts: [String] = []
         parts.reserveCapacity(chunkURLs.count)
         for chunkURL in chunkURLs {
@@ -409,7 +466,7 @@ actor SherpaGigaAMRNNTTranscriber {
                 expectedResultCount: 1
             ))
         }
-        return GigaAMV3FileChunking.mergeTranscripts(parts)
+        return parts
     }
 
 #if DEBUG
@@ -437,6 +494,14 @@ enum SherpaOfflineOutputParser {
     }
 
     static func text(from stdout: String, stderr: String = "", expectedResultCount: Int? = nil) throws -> String {
+        return GigaAMV3FileChunking.mergeTranscripts(try texts(
+            from: stdout,
+            stderr: stderr,
+            expectedResultCount: expectedResultCount
+        ))
+    }
+
+    static func texts(from stdout: String, stderr: String = "", expectedResultCount: Int? = nil) throws -> [String] {
         let stdoutResult = parseJSONLines(stdout)
         if stdoutResult.parsedLineCount > 0 {
             if let expectedResultCount, stdoutResult.parsedLineCount != expectedResultCount {
@@ -445,18 +510,21 @@ enum SherpaOfflineOutputParser {
                     actual: stdoutResult.parsedLineCount
                 )
             }
-            return GigaAMV3FileChunking.mergeTranscripts(stdoutResult.parts)
+            return stdoutResult.parts
         }
 
         if let fallback = fallbackTranscript(from: stdout) ?? fallbackTranscript(from: stderr) {
-            return fallback
+            if let expectedResultCount, expectedResultCount != 1 {
+                throw SherpaOfflineOutputParserError.unexpectedResultCount(expected: expectedResultCount, actual: 1)
+            }
+            return [fallback]
         }
 
         if let error = stdoutResult.firstError {
             throw error
         }
 
-        return ""
+        return []
     }
 
     private static func parseJSONLines(_ output: String) -> (parts: [String], parsedLineCount: Int, firstError: Error?) {
@@ -469,7 +537,7 @@ enum SherpaOfflineOutputParser {
             do {
                 let decoded = try JSONDecoder().decode(ResultLine.self, from: Data(trimmed.utf8))
                 parsedLineCount += 1
-                return decoded.text.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+                return decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
             } catch {
                 firstError = firstError ?? error
                 return nil

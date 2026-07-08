@@ -162,6 +162,28 @@ struct SherpaGigaAMRNNTTranscriberTests {
         #expect(text == "later speech")
     }
 
+    @Test("sherpa parser maps batch output lines including empty chunks")
+    func sherpaParserMapsBatchOutputLines() throws {
+        let stdout = """
+        {"text":"first"}
+        {"text":""}
+        {"text":"third"}
+        """
+
+        let texts = try SherpaOfflineOutputParser.texts(from: stdout, expectedResultCount: 3)
+
+        #expect(texts == ["first", "", "third"])
+    }
+
+    @Test("sherpa batches helper inputs in bounded groups")
+    func sherpaBatchesHelperInputsInBoundedGroups() {
+        let batches = SherpaGigaAMRNNTBatching.batches(Array(0..<600))
+
+        #expect(batches.map(\.count) == [256, 256, 88])
+        #expect(SherpaGigaAMRNNTBatching.batches([1, 2, 3], maxSize: 10).map(\.count) == [3])
+        #expect(SherpaGigaAMRNNTBatching.batches([Int]()).isEmpty)
+    }
+
     @Test("sherpa GigaAM RNNT pins release artifact checksums")
     func sherpaGigaAMRNNTArtifactChecksumsPinned() {
         #expect(SherpaGigaAMRNNTModelStore.toolArchive.expectedSHA256 == "b1830ce2f19169070c23c2a44b70e1d416e0265e98870a2f62f7aa94811db342")

@@ -344,6 +344,11 @@ actor TranscriptionCoordinator {
         cleanMeetingTranscript(try await route(url: url, samples: samples, backend: backend, cohereLanguage: cohereLanguage))
     }
 
+    func transcribeMeetingBatchWithSherpaGigaAMRNNT(samplesBatch: [[Float]]) async throws -> [SpeechTranscriptionResult] {
+        let results = try await transcribeWithSherpaGigaAMRNNTBatch(samplesBatch: samplesBatch)
+        return results.map { cleanMeetingTranscript($0) }
+    }
+
     func transcribeMeetingChunk(
         at url: URL,
         backend: BackendOption,
@@ -626,6 +631,22 @@ actor TranscriptionCoordinator {
             text: text,
             segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: result.duration, text: text)]
         )
+    }
+
+    private func transcribeWithSherpaGigaAMRNNTBatch(samplesBatch: [[Float]]) async throws -> [SpeechTranscriptionResult] {
+        fputs("[muesli-native] transcribing \(samplesBatch.count) segments with Sherpa GigaAM RNNT batch\n", stderr)
+        let results = try await sherpaGigaAMRNNTTranscriber.transcribe(
+            samplesBatch: samplesBatch,
+            sampleRate: SherpaGigaAMRNNTChunking.sampleRate
+        )
+        fputs("[muesli-native] Sherpa GigaAM RNNT batch completed (items=\(results.count))\n", stderr)
+        return results.map { result in
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return SpeechTranscriptionResult(
+                text: text,
+                segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: result.duration, text: text)]
+            )
+        }
     }
 
     // MARK: - Qwen3 ASR (Autoregressive CoreML on ANE)

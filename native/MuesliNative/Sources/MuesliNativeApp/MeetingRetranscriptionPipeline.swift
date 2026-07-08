@@ -9,6 +9,11 @@ enum MeetingRetranscriptionPipeline {
         let endSample: Int
     }
 
+    struct SegmentAudio: Sendable {
+        let segment: AudioSegment
+        let samples: [Float]
+    }
+
     static let vadSegmentationConfig = VadSegmentationConfig(
         maxSpeechDuration: 10.0,
         speechPadding: 0.15
@@ -43,14 +48,42 @@ enum MeetingRetranscriptionPipeline {
         vadSegments: [VadSegment],
         transcribeSegment: (AudioSegment, [Float]) async throws -> SpeechTranscriptionResult
     ) async throws -> SpeechTranscriptionResult {
+        try await transcribeSegmentedAudio(
+            samples: samples,
+            vadSegments: vadSegments
+        ) { segmentAudio in
+            var results: [SpeechTranscriptionResult] = []
+            results.reserveCapacity(segmentAudio.count)
+            for item in segmentAudio {
+                results.append(try await transcribeSegment(item.segment, item.samples))
+            }
+            return results
+        }
+    }
+
+    static func transcribeSegmentedAudio(
+        samples: [Float],
+        vadSegments: [VadSegment],
+        transcribeSegments: ([SegmentAudio]) async throws -> [SpeechTranscriptionResult]
+    ) async throws -> SpeechTranscriptionResult {
+        let segmentAudio = audioSegments(from: vadSegments, sampleCount: samples.count).map { segment in
+            SegmentAudio(
+                segment: segment,
+                samples: Array(samples[segment.startSample..<segment.endSample])
+            )
+        }
+        let results = try await transcribeSegments(segmentAudio)
+        guard results.count == segmentAudio.count else {
+            throw NSError(domain: "MeetingRetranscriptionPipeline", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Retranscription batch returned \(results.count) results for \(segmentAudio.count) segments.",
+            ])
+        }
         var transcriptSegments: [SpeechSegment] = []
-        for segment in audioSegments(from: vadSegments, sampleCount: samples.count) {
-            let audio = Array(samples[segment.startSample..<segment.endSample])
-            let result = try await transcribeSegment(segment, audio)
+        for (item, result) in zip(segmentAudio, results) {
             transcriptSegments.append(contentsOf: SystemTurnNormalizer.normalize(
                 result: result,
-                startTime: segment.startTime,
-                endTime: segment.endTime
+                startTime: item.segment.startTime,
+                endTime: item.segment.endTime
             ))
         }
         let ordered = transcriptSegments.sorted { lhs, rhs in

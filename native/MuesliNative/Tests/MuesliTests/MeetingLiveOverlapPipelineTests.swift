@@ -229,6 +229,49 @@ struct MeetingLiveOverlapPipelineTests {
         #expect(result.segments.map(\.text) == ["early", "middle", "late"])
     }
 
+    @Test("retranscribe batch maps results by VAD input order")
+    func retranscribeBatchMapsResultsByVADInputOrder() async throws {
+        let samples = (0..<(16_000 * 4)).map { Float($0 % 100) / 100.0 }
+        let vadSegments = [
+            VadSegment(startTime: 2.0, endTime: 2.5),
+            VadSegment(startTime: 0.5, endTime: 1.0),
+        ]
+        var batchStarts: [Int] = []
+
+        let result = try await MeetingRetranscriptionPipeline.transcribeSegmentedAudio(
+            samples: samples,
+            vadSegments: vadSegments
+        ) { segmentAudio in
+            batchStarts = segmentAudio.map(\.segment.startSample)
+            return segmentAudio.map { item in
+                let label = item.segment.startSample == 8_000 ? "early" : "late"
+                return SpeechTranscriptionResult(text: label, segments: [])
+            }
+        }
+
+        #expect(batchStarts == [8_000, 32_000])
+        #expect(result.text == "early late")
+        #expect(result.segments.map(\.text) == ["early", "late"])
+    }
+
+    @Test("retranscribe batch rejects missing results")
+    func retranscribeBatchRejectsMissingResults() async throws {
+        let samples = (0..<(16_000 * 2)).map { Float($0 % 100) / 100.0 }
+        let vadSegments = [
+            VadSegment(startTime: 0.0, endTime: 0.5),
+            VadSegment(startTime: 1.0, endTime: 1.5),
+        ]
+
+        await #expect(throws: Error.self) {
+            _ = try await MeetingRetranscriptionPipeline.transcribeSegmentedAudio(
+                samples: samples,
+                vadSegments: vadSegments
+            ) { _ in
+                [SpeechTranscriptionResult(text: "only one", segments: [])]
+            }
+        }
+    }
+
     @Test("retranscribe skips transcription when VAD finds no speech")
     func retranscribeSkipsTranscriptionWhenVADFindsNoSpeech() async throws {
         var transcribeWasCalled = false

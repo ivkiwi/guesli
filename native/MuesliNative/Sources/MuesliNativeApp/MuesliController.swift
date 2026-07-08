@@ -3922,21 +3922,33 @@ final class MuesliController: NSObject {
         DiagnosticsLog.write("[muesli-native] retranscribe VAD segments meeting_id=\(meeting.id) count=\(speechSegments.count)")
         guard !speechSegments.isEmpty else { return "" }
 
-        let transcription = try await MeetingRetranscriptionPipeline.transcribeSegmentedAudio(
-            samples: preparedAudio.samples,
-            vadSegments: speechSegments
-        ) { [transcriptionCoordinator, config] _, samples in
-            let segmentURL = try WavWriter.writeTemporaryWAV(
-                samples: samples,
-                directoryName: AppTemporaryDirectories.meetingRetranscription
-            )
-            defer { try? FileManager.default.removeItem(at: segmentURL) }
-            return try await transcriptionCoordinator.transcribeMeeting(
-                at: segmentURL,
-                samples: samples,
-                backend: backend,
-                cohereLanguage: config.resolvedCohereLanguageMeetings
-            )
+        let transcription: SpeechTranscriptionResult
+        if backend.backend == SherpaGigaAMRNNTModelStore.backendIdentifier {
+            transcription = try await MeetingRetranscriptionPipeline.transcribeSegmentedAudio(
+                samples: preparedAudio.samples,
+                vadSegments: speechSegments
+            ) { [transcriptionCoordinator] segmentAudio in
+                try await transcriptionCoordinator.transcribeMeetingBatchWithSherpaGigaAMRNNT(
+                    samplesBatch: segmentAudio.map(\.samples)
+                )
+            }
+        } else {
+            transcription = try await MeetingRetranscriptionPipeline.transcribeSegmentedAudio(
+                samples: preparedAudio.samples,
+                vadSegments: speechSegments
+            ) { [transcriptionCoordinator, config] _, samples in
+                let segmentURL = try WavWriter.writeTemporaryWAV(
+                    samples: samples,
+                    directoryName: AppTemporaryDirectories.meetingRetranscription
+                )
+                defer { try? FileManager.default.removeItem(at: segmentURL) }
+                return try await transcriptionCoordinator.transcribeMeeting(
+                    at: segmentURL,
+                    samples: samples,
+                    backend: backend,
+                    cohereLanguage: config.resolvedCohereLanguageMeetings
+                )
+            }
         }
 
         return await formatRetranscribedMeeting(
