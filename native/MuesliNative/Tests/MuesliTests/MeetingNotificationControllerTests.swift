@@ -310,6 +310,32 @@ struct MeetingNotificationControllerTests {
             index(of: "self.meetingMonitor.suppress", in: dismiss))
     }
 
+    @Test("Calendar auto-record still shows a visible notification")
+    func calendarAutoRecordShowsVisibleNotification() throws {
+        let source = try muesliControllerSource()
+        let autoRecord = try sourceSection(
+            in: source,
+            from: "private func autoRecordEventIfNeeded",
+            to: "private func syncAutoRecordWakes"
+        )
+
+        #expect(autoRecord.contains("showAutoRecordStartedNotification(event, notificationKey: key)"))
+        #expect(autoRecord.contains("[calendar] auto-record started"))
+    }
+
+    @Test("Calendar refresh re-arms on wake outside the timer path")
+    func calendarRefreshRearmsOnWake() throws {
+        let source = try muesliControllerSource()
+        let observerSection = try sourceSection(
+            in: source,
+            from: "private func installCalendarPersistentRefreshObservers",
+            to: "private func removeCalendarPersistentRefreshObservers"
+        )
+
+        #expect(observerSection.contains("NSWorkspace.didWakeNotification"))
+        #expect(observerSection.contains("reason: \"wake\""))
+    }
+
     private func unifiedCalendarEvent(
         id: String,
         startDate: Date,

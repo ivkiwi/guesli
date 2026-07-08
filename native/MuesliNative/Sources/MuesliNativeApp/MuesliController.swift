@@ -396,6 +396,8 @@ final class MuesliController: NSObject {
     private let googleCalAuth = GoogleCalendarAuthManager.shared
     private let googleCalClient = GoogleCalendarClient()
     private var calendarCheckTimer: Timer?
+    private var calendarWakeObserver: NSObjectProtocol?
+    private var calendarAppActiveObserver: NSObjectProtocol?
     private var calendarMonitoringStarted = false
     private var meetingStartingNowTimers = [String: Timer]()
     private var notifiedUpcomingEventIDs = Set<String>()
@@ -880,6 +882,7 @@ final class MuesliController: NSObject {
         calendarMonitor.stop()
         calendarCheckTimer?.invalidate()
         calendarCheckTimer = nil
+        removeCalendarPersistentRefreshObservers()
         calendarMonitoringStarted = false
         meetingStartingNowTimers.values.forEach { $0.invalidate() }
         meetingStartingNowTimers.removeAll()
@@ -2311,7 +2314,7 @@ final class MuesliController: NSObject {
     }
 
     @discardableResult
-    func refreshUpcomingCalendarEvents() async -> Bool {
+    func refreshUpcomingCalendarEvents(reason: String = "manual") async -> Bool {
         let refreshNow = Date()
         let refreshStartOfDay = Calendar.current.startOfDay(for: refreshNow)
         let disabledIDs = Set(config.disabledCalendarIDs)
@@ -2321,6 +2324,8 @@ final class MuesliController: NSObject {
             disabledCalendarIDs: disabledIDs,
             now: refreshNow
         )
+        let eventKitCount = ekEvents.count
+        var googleCount = 0
         var observedEventIDs = Set(ekEvents.map(\.id))
         var canConfirmMissingGoogleEvents = false
 
@@ -2332,6 +2337,7 @@ final class MuesliController: NSObject {
                     now: refreshNow
                 )
                 canConfirmMissingGoogleEvents = googleResult.wasComplete
+                googleCount = googleResult.events.count
                 observedEventIDs.formUnion(googleResult.events.map(\.id))
                 ekEvents = GoogleCalendarClient.mergeEvents(eventKit: ekEvents, google: googleResult.events)
             } catch GoogleCalendarAuthError.notAuthenticated {
@@ -2352,10 +2358,12 @@ final class MuesliController: NSObject {
         guard dayCount == currentDayCount,
               disabledIDs == currentDisabledIDs,
               refreshStartOfDay == currentStartOfDay else {
+            DiagnosticsLog.write("[calendar] refresh skipped reason=\(reason) state_changed=true")
             return false
         }
 
         appState.upcomingCalendarEvents = ekEvents
+        DiagnosticsLog.write("[calendar] refresh reason=\(reason) eventkit_auth=\(CalendarMonitor.authorizationStatusLabel) eventkit_events=\(eventKitCount) google_authenticated=\(googleCalAuth.isAuthenticated) google_events=\(googleCount) total=\(ekEvents.count) disabled_calendars=\(disabledIDs.count)")
         syncAutoRecordWakes()
 
         // Prune hidden IDs only when the widest supported window still cannot see the event.
@@ -2395,17 +2403,14 @@ final class MuesliController: NSObject {
     }
 
     func startCalendarMonitoring() {
+        DiagnosticsLog.write("[calendar] monitor start scheduled_notifications=\(config.showScheduledMeetingNotifications) auto_record=\(config.autoRecordMeetings) google_authenticated=\(googleCalAuth.isAuthenticated) lead_time=\(config.scheduledMeetingNotificationLeadTime.rawValue)")
+
         // Event-driven: refresh when macOS reports calendar changes.
         // EKEventStoreChangedNotification is delivered via NotificationCenter,
         // which is immune to App Nap timer suspension in LSUIElement apps.
         calendarMonitor.onCalendarChanged = { [weak self] in
-            guard let self else { return }
-            Task { @MainActor in
-                self.refreshAvailableEventKitCalendars()
-                let refreshed = await self.refreshUpcomingCalendarEvents()
-                guard refreshed else { return }
-                self.checkUpcomingCalendarNotifications()
-                self.meetingMonitor.refreshState(trigger: .calendarChanged)
+            Task { @MainActor [weak self] in
+                self?.refreshCalendarPipeline(reason: "eventkit_changed", meetingTrigger: .calendarChanged)
             }
         }
 
@@ -2416,25 +2421,64 @@ final class MuesliController: NSObject {
         // pick up new/moved events from the API. May be suspended by App Nap on
         // macOS 26, but combined with the EventKit push path, most cases are covered.
         calendarCheckTimer?.invalidate()
-        calendarCheckTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                self.calendarMonitor.start()
-                self.refreshAvailableEventKitCalendars()
-                let refreshed = await self.refreshUpcomingCalendarEvents()
-                guard refreshed else { return }
-                self.checkUpcomingCalendarNotifications()
-                self.meetingMonitor.refreshState(trigger: .calendarChanged)
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshCalendarPipeline(reason: "timer", meetingTrigger: .calendarChanged)
             }
         }
+        timer.tolerance = 10
+        calendarCheckTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        installCalendarPersistentRefreshObservers()
 
         // Run first cycle immediately
+        refreshCalendarPipeline(reason: "start", meetingTrigger: .calendarChanged)
+    }
+
+    private func refreshCalendarPipeline(reason: String, meetingTrigger: MeetingDetectionTrigger) {
         Task { @MainActor in
+            self.calendarMonitor.start()
             self.refreshAvailableEventKitCalendars()
-            let refreshed = await self.refreshUpcomingCalendarEvents()
+            let refreshed = await self.refreshUpcomingCalendarEvents(reason: reason)
             guard refreshed else { return }
-            self.checkUpcomingCalendarNotifications()
-            self.meetingMonitor.refreshState(trigger: .calendarChanged)
+            self.checkUpcomingCalendarNotifications(reason: reason)
+            self.meetingMonitor.refreshState(trigger: meetingTrigger)
+        }
+    }
+
+    private func installCalendarPersistentRefreshObservers() {
+        if calendarWakeObserver == nil {
+            calendarWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.refreshCalendarPipeline(reason: "wake", meetingTrigger: .calendarChanged)
+                }
+            }
+        }
+        if calendarAppActiveObserver == nil {
+            calendarAppActiveObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.refreshCalendarPipeline(reason: "app_active", meetingTrigger: .calendarChanged)
+                }
+            }
+        }
+    }
+
+    private func removeCalendarPersistentRefreshObservers() {
+        if let calendarWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(calendarWakeObserver)
+            self.calendarWakeObserver = nil
+        }
+        if let calendarAppActiveObserver {
+            NotificationCenter.default.removeObserver(calendarAppActiveObserver)
+            self.calendarAppActiveObserver = nil
         }
     }
 
@@ -2448,6 +2492,8 @@ final class MuesliController: NSObject {
             calendarMonitor.stop()
             calendarCheckTimer?.invalidate()
             calendarCheckTimer = nil
+            removeCalendarPersistentRefreshObservers()
+            DiagnosticsLog.write("[calendar] monitor stop should_run=false")
             calendarMonitoringStarted = false
         }
     }
@@ -2604,10 +2650,16 @@ final class MuesliController: NSObject {
     @discardableResult
     private func autoRecordEventIfNeeded(_ event: UnifiedCalendarEvent) -> Bool {
         let key = notificationKey(id: event.id, startDate: event.startDate)
-        guard !autoRecordedCalendarEventIDs.contains(key) else { return false }
-        guard !isMeetingRecording(), !isStartingMeetingRecording else { return false }
+        guard !autoRecordedCalendarEventIDs.contains(key) else {
+            DiagnosticsLog.write("[calendar] auto-record skipped reason=dedup key=\(key)")
+            return false
+        }
+        guard !isMeetingRecording(), !isStartingMeetingRecording else {
+            DiagnosticsLog.write("[calendar] auto-record skipped reason=meeting_active key=\(key)")
+            return false
+        }
         autoRecordedCalendarEventIDs.insert(key)
-        startMeetingRecording(
+        let didStart = startMeetingRecording(
             title: event.title,
             calendarEventID: event.id,
             openDocument: true,
@@ -2615,7 +2667,14 @@ final class MuesliController: NSObject {
             autoStopSource: event.meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) },
             startOrigin: .calendarAutoRecord
         )
-        return true
+        if didStart {
+            DiagnosticsLog.write("[calendar] auto-record started key=\(key) title=\(event.title) source=\(event.source.rawValue)")
+            showAutoRecordStartedNotification(event, notificationKey: key)
+        } else {
+            DiagnosticsLog.write("[calendar] auto-record failed key=\(key) title=\(event.title) source=\(event.source.rawValue)")
+            autoRecordedCalendarEventIDs.remove(key)
+        }
+        return didStart
     }
 
     private func syncAutoRecordWakes() {
@@ -2695,9 +2754,13 @@ final class MuesliController: NSObject {
         }
     }
 
-    private func checkUpcomingCalendarNotifications() {
+    @discardableResult
+    private func checkUpcomingCalendarNotifications(reason: String = "manual") -> Bool {
         guard !isMeetingRecording(),
-              !isStartingMeetingRecording else { return }
+              !isStartingMeetingRecording else {
+            DiagnosticsLog.write("[calendar] notifications skipped reason=meeting_active trigger=\(reason)")
+            return false
+        }
 
         let now = Date()
         let leadTime = config.scheduledMeetingNotificationLeadTime.seconds
@@ -2722,11 +2785,14 @@ final class MuesliController: NSObject {
                 hiddenEventIDs: appState.hiddenCalendarEventIDs
             )
             for event in autoRecordCandidates where autoRecordEventIfNeeded(event) {
-                return
+                return true
             }
         }
 
-        guard config.showScheduledMeetingNotifications else { return }
+        guard config.showScheduledMeetingNotifications else {
+            DiagnosticsLog.write("[calendar] notifications skipped reason=disabled trigger=\(reason)")
+            return false
+        }
 
         let notificationCandidates = ScheduledMeetingNotificationPolicy.upcomingCandidates(
             from: appState.upcomingCalendarEvents,
@@ -2736,7 +2802,10 @@ final class MuesliController: NSObject {
         )
         for event in notificationCandidates {
             let key = notificationKey(id: event.id, startDate: event.startDate)
-            guard !notifiedUpcomingEventIDs.contains(key) else { continue }
+            guard !notifiedUpcomingEventIDs.contains(key) else {
+                DiagnosticsLog.write("[calendar] notification skipped reason=dedup key=\(key)")
+                continue
+            }
 
             notifiedUpcomingEventIDs.insert(key)
 
@@ -2748,7 +2817,8 @@ final class MuesliController: NSObject {
             )
 
             // Show "starts in X min" notification now
-            handleUpcomingMeeting(upcomingEvent, notificationKey: key)
+            let didShow = handleUpcomingMeeting(upcomingEvent, notificationKey: key)
+            DiagnosticsLog.write("[calendar] notification \(didShow ? "shown" : "failed") key=\(key) title=\(event.title) trigger=\(reason)")
 
             // Schedule a second "Meeting starting now" notification at event start time for pre-start prompts.
             let delay = event.startDate.timeIntervalSinceNow
@@ -2777,20 +2847,26 @@ final class MuesliController: NSObject {
                 }
             }
 
-            return // Show one notification at a time
+            return didShow // Show one notification at a time
         }
+        DiagnosticsLog.write("[calendar] notifications checked trigger=\(reason) candidates=0 total_events=\(appState.upcomingCalendarEvents.count)")
+        return false
     }
 
     /// Show a "Meeting starting now" notification — independent of Marauder's Map.
-    private func showMeetingStartingNowNotification(title: String, calendarEventID: String?, meetingURL: URL?, endDate: Date?) {
+    @discardableResult
+    private func showMeetingStartingNowNotification(title: String, calendarEventID: String?, meetingURL: URL?, endDate: Date?) -> Bool {
         guard ScheduledMeetingNotificationPolicy.shouldShowStartingNowPrompt(meetingURL: meetingURL),
               config.showScheduledMeetingNotifications,
               !isMeetingRecording(),
-              !isStartingMeetingRecording else { return }
+              !isStartingMeetingRecording else {
+            DiagnosticsLog.write("[calendar] starting-now skipped title=\(title) has_url=\(meetingURL != nil)")
+            return false
+        }
         isShowingCalendarNotification = true
         let autoStopSource = meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) }
 
-        meetingNotification.show(
+        let didShow = meetingNotification.show(
             title: "Meeting starting now",
             subtitle: title,
             meetingURL: meetingURL,
@@ -2828,6 +2904,29 @@ final class MuesliController: NSObject {
                 self?.showPendingMeetingCompletionNotificationIfPossible()
             }
         )
+        DiagnosticsLog.write("[calendar] starting-now \(didShow ? "shown" : "failed") title=\(title)")
+        return didShow
+    }
+
+    private func showAutoRecordStartedNotification(_ event: UnifiedCalendarEvent, notificationKey: String) {
+        guard config.showScheduledMeetingNotifications else { return }
+        isShowingCalendarNotification = true
+        let didShow = meetingNotification.show(
+            promptID: "auto-record-\(notificationKey)",
+            title: "Recording scheduled meeting",
+            subtitle: event.title,
+            actionLabel: "Open",
+            meetingURL: event.meetingURL,
+            dismissAfter: 12,
+            onStartRecording: { [weak self] in
+                self?.presentHistoryWindow(tab: .meetings)
+            },
+            onClose: { [weak self] in
+                self?.isShowingCalendarNotification = false
+                self?.showPendingMeetingCompletionNotificationIfPossible()
+            }
+        )
+        DiagnosticsLog.write("[calendar] auto-record notification \(didShow ? "shown" : "failed") key=\(notificationKey) title=\(event.title)")
     }
 
     func addCustomWord(_ word: CustomWord) {
@@ -8488,7 +8587,8 @@ final class MuesliController: NSObject {
         }
     }
 
-    private func handleUpcomingMeeting(_ event: UpcomingMeetingEvent, notificationKey: String? = nil) {
+    @discardableResult
+    private func handleUpcomingMeeting(_ event: UpcomingMeetingEvent, notificationKey: String? = nil) -> Bool {
         // Look up end date and meeting URL from unified calendar events
         let calendarEvent = appState.upcomingCalendarEvents
             .first(where: { $0.id == event.id })
@@ -8500,7 +8600,8 @@ final class MuesliController: NSObject {
         guard config.showScheduledMeetingNotifications,
               !isMeetingRecording(),
               !isStartingMeetingRecording else {
-            return
+            DiagnosticsLog.write("[calendar] prompt skipped reason=meeting_active_or_disabled event=\(event.id)")
+            return false
         }
         isShowingCalendarNotification = true
 
@@ -8516,7 +8617,7 @@ final class MuesliController: NSObject {
 
         let title = event.title
         let notificationTitle = minutesUntil <= 0 ? "Meeting starting now" : "Upcoming meeting"
-        meetingNotification.show(
+        return meetingNotification.show(
             title: notificationTitle,
             subtitle: "\(title) · \(timeLabel)",
             meetingURL: meetingURL,

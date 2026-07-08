@@ -37,12 +37,29 @@ final class CalendarMonitor {
     /// Delivered via NotificationCenter — immune to App Nap timer suspension.
     var onCalendarChanged: (() -> Void)?
 
+    static var authorizationStatusLabel: String {
+        authorizationStatusLabel(EKEventStore.authorizationStatus(for: .event))
+    }
+
+    static func authorizationStatusLabel(_ status: EKAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "not_determined"
+        case .restricted: return "restricted"
+        case .denied: return "denied"
+        case .authorized: return "authorized"
+        case .fullAccess: return "full_access"
+        case .writeOnly: return "write_only"
+        @unknown default: return "unknown"
+        }
+    }
+
     func start() {
         guard case .stopped = state else { return }
 
         generation += 1
         let token = generation
         state = .requesting(token)
+        DiagnosticsLog.write("[calendar] eventkit start auth=\(Self.authorizationStatusLabel)")
 
         store.requestFullAccessToEvents { [weak self] granted, error in
             DispatchQueue.main.async {
@@ -51,12 +68,13 @@ final class CalendarMonitor {
 
                 if !granted {
                     self.state = .stopped
-                    fputs("[calendar] calendar access denied: \(error?.localizedDescription ?? "none")\n", stderr)
+                    DiagnosticsLog.write("[calendar] eventkit access denied auth=\(Self.authorizationStatusLabel) error=\(error?.localizedDescription ?? "none")")
                     return
                 }
 
                 self.registerForChanges(token: token)
                 self.state = .running(token)
+                DiagnosticsLog.write("[calendar] eventkit running auth=\(Self.authorizationStatusLabel) calendars=\(self.availableCalendars().count)")
             }
         }
     }

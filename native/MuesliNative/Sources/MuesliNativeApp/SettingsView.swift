@@ -2159,6 +2159,26 @@ struct SettingsView: View {
                     .font(MuesliTheme.caption())
                     .foregroundStyle(MuesliTheme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    openPrivacyPane("Privacy_Calendars")
+                } label: {
+                    HStack(spacing: MuesliTheme.spacing8) {
+                        Image(systemName: "calendar.badge.exclamationmark")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Open Calendar Privacy")
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textPrimary)
+                    .padding(.horizontal, MuesliTheme.spacing12)
+                    .padding(.vertical, 6)
+                    .background(MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                            .strokeBorder(MuesliTheme.surfaceBorder, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
             } else {
                 ForEach(calendarSourceGroups) { group in
                     calendarSourceGroupView(group)
