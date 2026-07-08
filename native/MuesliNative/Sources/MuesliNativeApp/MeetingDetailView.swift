@@ -518,7 +518,7 @@ struct MeetingDetailView: View {
 
     @ViewBuilder
     private func retranscribeAction(for meeting: MeetingRecord) -> some View {
-        if meeting.savedRecordingPath != nil {
+        if Self.showsRetranscribeAction(for: meeting) {
             if isRetranscribing {
                 HStack(spacing: 6) {
                     ProgressView()
@@ -535,6 +535,11 @@ struct MeetingDetailView: View {
                 .disabled(meeting.status == .recording || meeting.status == .processing || isEditingNotes || isEditingTranscript)
             }
         }
+    }
+
+    static func showsRetranscribeAction(for meeting: MeetingRecord) -> Bool {
+        guard let savedRecordingPath = meeting.savedRecordingPath else { return false }
+        return !savedRecordingPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func startRetranscription(for meeting: MeetingRecord) {
@@ -734,10 +739,13 @@ struct MeetingDetailView: View {
                     }
                 }
             }
-        } else if controller.canDeleteMeeting(meeting), meeting.status == .noteOnly || meeting.status == .failed {
+        } else if meeting.status == .noteOnly || meeting.status == .failed {
             HStack(spacing: MuesliTheme.spacing8) {
                 statusChip(for: meeting)
-                deleteButton
+                retranscribeAction(for: meeting)
+                if controller.canDeleteMeeting(meeting) {
+                    deleteButton
+                }
             }
         } else {
             statusChip(for: meeting)

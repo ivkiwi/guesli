@@ -487,6 +487,40 @@ struct MeetingsNavigationTests {
         ) == .failed)
     }
 
+    @Test("retranscribe action remains visible for failed empty transcript with retained recording")
+    func retranscribeActionVisibleForFailedEmptyTranscriptWithRecording() {
+        let meeting = makeMeeting(
+            id: 901,
+            title: "Traffic Daily",
+            rawTranscript: "",
+            wordCount: 0,
+            savedRecordingPath: "/tmp/traffic-daily.m4a",
+            status: .failed
+        )
+
+        #expect(MeetingDetailView.showsRetranscribeAction(for: meeting))
+    }
+
+    @Test("retranscribe action stays hidden without retained recording path")
+    func retranscribeActionHiddenWithoutRecordingPath() {
+        let failedMeeting = makeMeeting(
+            id: 902,
+            title: "Traffic Daily",
+            rawTranscript: "",
+            wordCount: 0,
+            savedRecordingPath: nil,
+            status: .failed
+        )
+        let whitespacePathMeeting = makeMeeting(
+            id: 903,
+            title: "Traffic Daily",
+            savedRecordingPath: "   "
+        )
+
+        #expect(MeetingDetailView.showsRetranscribeAction(for: failedMeeting) == false)
+        #expect(MeetingDetailView.showsRetranscribeAction(for: whitespacePathMeeting) == false)
+    }
+
     @Test("cached manual notes are persisted before debounce")
     func cachedManualNotesPersistImmediately() throws {
         let store = try makeStore()
@@ -1106,7 +1140,10 @@ struct MeetingsNavigationTests {
     private func makeMeeting(
         id: Int64,
         title: String,
+        rawTranscript: String = "Transcript",
         formattedNotes: String = "## Summary",
+        wordCount: Int = 42,
+        savedRecordingPath: String? = nil,
         status: MeetingStatus = .completed,
         manualNotes: String = ""
     ) -> MeetingRecord {
@@ -1115,13 +1152,14 @@ struct MeetingsNavigationTests {
             title: title,
             startTime: "2026-03-24 10:00",
             durationSeconds: 1800,
-            rawTranscript: "Transcript",
+            rawTranscript: rawTranscript,
             formattedNotes: formattedNotes,
-            wordCount: 42,
+            wordCount: wordCount,
             folderID: nil,
             calendarEventID: nil,
             micAudioPath: nil,
             systemAudioPath: nil,
+            savedRecordingPath: savedRecordingPath,
             status: status,
             manualNotes: manualNotes,
             selectedTemplateID: MeetingTemplates.autoID,
