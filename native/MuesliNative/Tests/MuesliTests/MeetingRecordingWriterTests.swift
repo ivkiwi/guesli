@@ -44,6 +44,55 @@ struct MeetingRecordingWriterTests {
         #expect(samples == [1000, 3000, 5000, 7000])
     }
 
+    @Test("dual-track writer keeps mic and system streams separate and ordered")
+    func dualTrackWriterKeepsStreamsSeparateAndOrdered() throws {
+        let tempRoot = makeTemporaryDirectory()
+        let writer = try MeetingDualTrackRecordingWriter(
+            meetingID: 42,
+            startedAt: Date(timeIntervalSince1970: 100),
+            temporaryDirectory: tempRoot
+        )
+
+        writer.appendMic([1, 2], now: Date(timeIntervalSince1970: 100.1))
+        writer.appendSystem([10], now: Date(timeIntervalSince1970: 100.2))
+        writer.appendMic([3], now: Date(timeIntervalSince1970: 100.3))
+        writer.appendSystem([11, 12], now: Date(timeIntervalSince1970: 100.4))
+
+        let recording = writer.stop()
+        let micURL = try #require(recording.micURL)
+        let systemURL = try #require(recording.systemURL)
+
+        #expect(micURL.lastPathComponent.contains("post-meeting-42-"))
+        #expect(systemURL.lastPathComponent.contains("post-meeting-42-"))
+        #expect(micURL.lastPathComponent.hasSuffix("-mic.wav"))
+        #expect(systemURL.lastPathComponent.hasSuffix("-system.wav"))
+        #expect(try readMonoPCM16WAVSamples(from: micURL) == [1, 2, 3])
+        #expect(try readMonoPCM16WAVSamples(from: systemURL) == [10, 11, 12])
+        #expect(abs(recording.micStartOffset - 0.1) < 0.001)
+        #expect(abs(recording.systemStartOffset - 0.2) < 0.001)
+    }
+
+    @Test("dual-track writer finalizes crash leftovers by meeting id")
+    func dualTrackWriterFinalizesCrashLeftoversByMeetingID() throws {
+        let tempRoot = makeTemporaryDirectory()
+        let writer = try MeetingDualTrackRecordingWriter(meetingID: 84, temporaryDirectory: tempRoot)
+        writer.appendMic(Array(repeating: 100, count: 32_000))
+        writer.appendSystem(Array(repeating: 200, count: 32_000))
+        writer.closeWithoutFinalizingForTesting()
+
+        let candidates = MeetingDualTrackRecordingWriter.recoveryCandidates(
+            forMeetingID: 84,
+            temporaryDirectory: tempRoot
+        )
+        let candidate = try #require(candidates.first)
+        let recording = try #require(try MeetingDualTrackRecordingWriter.finalizePartialTracksIfNonTrivial(candidate))
+        let micURL = try #require(recording.micURL)
+        let systemURL = try #require(recording.systemURL)
+
+        #expect(Array(try readMonoPCM16WAVSamples(from: micURL).prefix(3)) == [100, 100, 100])
+        #expect(Array(try readMonoPCM16WAVSamples(from: systemURL).prefix(3)) == [200, 200, 200])
+    }
+
     @Test("persistTemporaryRecording encodes the temp wav into the meeting recordings directory with a slugged m4a name")
     func persistTemporaryRecordingMovesFile() throws {
         let writer = try MeetingRecordingWriter()

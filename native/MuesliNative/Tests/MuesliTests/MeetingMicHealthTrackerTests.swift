@@ -76,6 +76,19 @@ struct MeetingMicHealthTrackerTests {
         #expect(snapshot.warningMessage == nil)
     }
 
+    @Test("sustained near-silent raw mic raises warning without system audio")
+    func sustainedNearSilentRawMicRaisesWarning() {
+        let tracker = MeetingMicHealthTracker()
+        let now = Date()
+
+        _ = tracker.noteRawMicSamples(Array(repeating: 1, count: 16_000), now: now)
+        _ = tracker.noteRawMicSamples(Array(repeating: 1, count: 16_000), now: now.addingTimeInterval(1))
+        let snapshot = tracker.noteRawMicSamples(Array(repeating: 1, count: 16_000), now: now.addingTimeInterval(2))
+
+        #expect(snapshot.state == .micNearSilent)
+        #expect(snapshot.warningMessage != nil)
+    }
+
     @Test("non-zero raw mic clears degraded warning")
     func nonZeroRawMicClearsWarning() {
         let tracker = MeetingMicHealthTracker()

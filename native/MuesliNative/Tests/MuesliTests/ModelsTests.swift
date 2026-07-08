@@ -637,6 +637,8 @@ struct AppConfigTests {
         #expect(config.meetingTranscriptionModel == BackendOption.gigaAMV3Russian.model)
         #expect(config.meetingSummaryBackend == "chatgpt")
         #expect(config.defaultMeetingTemplateID == MeetingTemplates.autoID)
+        #expect(config.meetingProcessingMode == MeetingProcessingMode.post.rawValue)
+        #expect(config.resolvedMeetingProcessingMode == .post)
         #expect(config.meetingRecordingSavePolicy == .never)
         #expect(config.meetingRecordingFileFormat == MeetingRecordingFileFormat.m4a.rawValue)
         #expect(config.resolvedMeetingRecordingFileFormat == .m4a)
@@ -701,6 +703,7 @@ struct AppConfigTests {
         config.cohereLanguageDictation = CohereTranscribeLanguage.german.rawValue
         config.cohereLanguageMeetings = CohereTranscribeLanguage.french.rawValue
         config.defaultMeetingTemplateID = "weekly-team-meeting"
+        config.meetingProcessingMode = MeetingProcessingMode.live.rawValue
         config.meetingRecordingSavePolicy = .always
         config.meetingRecordingFileFormat = MeetingRecordingFileFormat.wav.rawValue
         config.customMeetingTemplates = [
@@ -760,6 +763,8 @@ struct AppConfigTests {
         #expect(decoded.cohereLanguageDictation == CohereTranscribeLanguage.german.rawValue)
         #expect(decoded.cohereLanguageMeetings == CohereTranscribeLanguage.french.rawValue)
         #expect(decoded.defaultMeetingTemplateID == "weekly-team-meeting")
+        #expect(decoded.meetingProcessingMode == MeetingProcessingMode.live.rawValue)
+        #expect(decoded.resolvedMeetingProcessingMode == .live)
         #expect(decoded.meetingRecordingSavePolicy == .always)
         #expect(decoded.meetingRecordingFileFormat == MeetingRecordingFileFormat.wav.rawValue)
         #expect(decoded.resolvedMeetingRecordingFileFormat == .wav)
@@ -844,6 +849,7 @@ struct AppConfigTests {
         #expect(json["onboarding_use_case"] != nil)
         #expect(json["user_name"] != nil)
         #expect(json["default_meeting_template_id"] != nil)
+        #expect(json["meeting_processing_mode"] != nil)
         #expect(json["meeting_recording_save_policy"] != nil)
         #expect(json["meeting_recording_folder_path"] != nil)
         #expect(json["meeting_recording_file_format"] != nil)
@@ -889,6 +895,8 @@ struct AppConfigTests {
         #expect(config.hasCompletedOnboarding == false)
         #expect(config.resolvedOnboardingUseCase == .dictation)
         #expect(config.defaultMeetingTemplateID == MeetingTemplates.autoID)
+        #expect(config.meetingProcessingMode == MeetingProcessingMode.post.rawValue)
+        #expect(config.resolvedMeetingProcessingMode == .post)
         #expect(config.upcomingMeetingsDayCount == UpcomingMeetingsWindow.threeDays.dayCount)
         #expect(config.hiddenCalendarEventSourceHints.isEmpty)
         #expect(config.meetingRecordingSavePolicy == .never)
@@ -951,6 +959,17 @@ struct AppConfigTests {
 
         #expect(config.meetingRecordingFileFormat == MeetingRecordingFileFormat.m4a.rawValue)
         #expect(config.resolvedMeetingRecordingFileFormat == .m4a)
+    }
+
+    @Test("meeting processing mode falls back to post on decode")
+    func meetingProcessingModeFallsBackOnDecode() throws {
+        let config = try JSONDecoder().decode(
+            AppConfig.self,
+            from: Data(#"{"meeting_processing_mode": "hybrid"}"#.utf8)
+        )
+
+        #expect(config.meetingProcessingMode == MeetingProcessingMode.post.rawValue)
+        #expect(config.resolvedMeetingProcessingMode == .post)
     }
 
     @Test("legacy completed onboarding enables meetings when use case is missing")

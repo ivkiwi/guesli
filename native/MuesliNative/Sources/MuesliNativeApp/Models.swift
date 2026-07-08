@@ -1005,6 +1005,27 @@ enum MeetingTranscriptCleanupProviderOption: String, Codable, CaseIterable, Send
     }
 }
 
+enum MeetingProcessingMode: String, Codable, CaseIterable, Sendable {
+    case live
+    case post
+
+    var label: String {
+        switch self {
+        case .live:
+            return "Live"
+        case .post:
+            return "After meeting"
+        }
+    }
+
+    static func resolved(_ rawValue: String?) -> MeetingProcessingMode {
+        guard let rawValue, let mode = MeetingProcessingMode(rawValue: rawValue) else {
+            return .post
+        }
+        return mode
+    }
+}
+
 struct AppConfig: Codable {
     static let defaultChatGPTDictationCleanupModel = "gpt-5.4-nano"
     static let defaultChatGPTMeetingCleanupModel = "gpt-5.5"
@@ -1030,6 +1051,7 @@ struct AppConfig: Codable {
     var preferredMeetingBrowserBundleID: String = ""
     var meetingSummaryBackend: String = MeetingSummaryBackendOption.chatGPT.backend
     var defaultMeetingTemplateID: String = MeetingTemplates.autoID
+    var meetingProcessingMode: String = MeetingProcessingMode.post.rawValue
     var whisperModel: String = BackendOption.whisper.model
     var idleTimeout: Double = 120
     var autoRecordMeetings: Bool = false
@@ -1140,6 +1162,7 @@ struct AppConfig: Codable {
         case preferredMeetingBrowserBundleID = "preferred_meeting_browser_bundle_id"
         case meetingSummaryBackend = "meeting_summary_backend"
         case defaultMeetingTemplateID = "default_meeting_template_id"
+        case meetingProcessingMode = "meeting_processing_mode"
         case whisperModel = "whisper_model"
         case idleTimeout = "idle_timeout"
         case autoRecordMeetings = "auto_record_meetings"
@@ -1263,6 +1286,9 @@ struct AppConfig: Codable {
         preferredMeetingBrowserBundleID = (try? c.decode(String.self, forKey: .preferredMeetingBrowserBundleID)) ?? defaults.preferredMeetingBrowserBundleID
         meetingSummaryBackend = (try? c.decode(String.self, forKey: .meetingSummaryBackend)) ?? defaults.meetingSummaryBackend
         defaultMeetingTemplateID = (try? c.decode(String.self, forKey: .defaultMeetingTemplateID)) ?? defaults.defaultMeetingTemplateID
+        meetingProcessingMode = MeetingProcessingMode
+            .resolved(try? c.decode(String.self, forKey: .meetingProcessingMode))
+            .rawValue
         whisperModel = (try? c.decode(String.self, forKey: .whisperModel)) ?? defaults.whisperModel
         idleTimeout = (try? c.decode(Double.self, forKey: .idleTimeout)) ?? defaults.idleTimeout
         autoRecordMeetings = (try? c.decode(Bool.self, forKey: .autoRecordMeetings)) ?? defaults.autoRecordMeetings
@@ -1431,6 +1457,10 @@ struct AppConfig: Codable {
 
     var resolvedMeetingRecordingFileFormat: MeetingRecordingFileFormat {
         MeetingRecordingFileFormat.resolved(meetingRecordingFileFormat)
+    }
+
+    var resolvedMeetingProcessingMode: MeetingProcessingMode {
+        MeetingProcessingMode.resolved(meetingProcessingMode)
     }
 
     var resolvedMeetingTranscriptCleanupProvider: MeetingTranscriptCleanupProviderOption {

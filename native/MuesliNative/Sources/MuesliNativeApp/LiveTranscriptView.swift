@@ -16,18 +16,24 @@ private struct LiveTranscriptGroup: Identifiable {
 
 struct LiveTranscriptView: View {
     let transcript: String
+    let placeholder: String
     @State private var groups: [LiveTranscriptGroup] = []
     // Tracks how many characters of transcript have been parsed into groups.
     // On each onChange we only parse the new suffix, keeping updates O(k)
     // where k = lines in the new chunk rather than O(n) for the full history.
     @State private var parsedLength: Int = 0
 
+    init(transcript: String, placeholder: String = "Waiting for speech…") {
+        self.transcript = transcript
+        self.placeholder = placeholder
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     if groups.isEmpty {
-                        Text("Waiting for speech…")
+                        Text(placeholder)
                             .font(MuesliTheme.body())
                             .foregroundStyle(MuesliTheme.textTertiary)
                             .padding(MuesliTheme.spacing16)

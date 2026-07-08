@@ -1540,6 +1540,37 @@ public final class DictationStore {
         }
     }
 
+    public func updateMeetingAudioPaths(
+        id: Int64,
+        micAudioPath: String?,
+        systemAudioPath: String?,
+        savedRecordingPath: String?
+    ) throws {
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+        let sql = """
+        UPDATE meetings
+        SET mic_audio_path = ?, system_audio_path = ?, saved_recording_path = ?, updated_at = ?, sync_dirty = 1
+        WHERE id = ? AND deleted_at IS NULL
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        bindOptionalText(micAudioPath, at: 1, statement: statement)
+        bindOptionalText(systemAudioPath, at: 2, statement: statement)
+        bindOptionalText(savedRecordingPath, at: 3, statement: statement)
+        sqlite3_bind_double(statement, 4, Date().timeIntervalSince1970)
+        sqlite3_bind_int64(statement, 5, id)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw lastError(db)
+        }
+        guard sqlite3_changes(db) > 0 else {
+            throw DictationStoreError.meetingNotFound(id: id)
+        }
+    }
+
     @discardableResult
     public func createFolder(name: String, parentID: Int64? = nil) throws -> Int64 {
         let db = try openDatabase()

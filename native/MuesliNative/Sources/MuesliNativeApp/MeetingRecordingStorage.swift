@@ -138,6 +138,41 @@ enum MeetingRecordingStorage {
         }.value
     }
 
+    static func persistTemporaryTrackRecording(
+        from tempWAVURL: URL,
+        meetingTitle: String,
+        startedAt: Date,
+        trackName: String,
+        destinationDirectory: URL
+    ) throws -> URL {
+        MuesliPaths.preconditionSafeForTestWrite(destinationDirectory)
+        try FileManager.default.createDirectory(
+            at: destinationDirectory,
+            withIntermediateDirectories: true
+        )
+
+        destinationWriteLock.lock()
+        defer { destinationWriteLock.unlock() }
+
+        let suffix = trackName
+            .lowercased()
+            .unicodeScalars
+            .map { CharacterSet.alphanumerics.contains($0) ? String($0) : "-" }
+            .joined()
+            .split(separator: "-", omittingEmptySubsequences: true)
+            .joined(separator: "-")
+        let prefix = suffix.isEmpty
+            ? fileNamePrefix(for: startedAt, title: meetingTitle)
+            : "\(fileNamePrefix(for: startedAt, title: meetingTitle))-\(suffix)"
+        let destinationURL = uniqueDestinationURL(
+            in: destinationDirectory,
+            prefix: prefix,
+            fileExtension: MeetingRecordingFileFormat.wav.fileExtension
+        )
+        try FileManager.default.moveItem(at: tempWAVURL, to: destinationURL)
+        return destinationURL
+    }
+
     static func temporaryWAVForTranscription(from savedRecordingURL: URL) async throws -> URL {
         let (wavURL, _) = try await AudioFileImportController.convertToWAV(sourceURL: savedRecordingURL)
         return wavURL

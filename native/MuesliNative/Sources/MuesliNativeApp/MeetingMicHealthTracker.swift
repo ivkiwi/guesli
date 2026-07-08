@@ -5,6 +5,7 @@ enum MeetingMicHealthState: String, Codable, Equatable {
     case healthy
     case waitingForAudio
     case micCallbacksMissing
+    case micNearSilent
     case micAllZeroWhileSystemActive
 
     var userMessage: String? {
@@ -13,6 +14,8 @@ enum MeetingMicHealthState: String, Codable, Equatable {
             return nil
         case .micCallbacksMissing:
             return "Microphone audio is not reaching Guesli. This meeting transcript may miss your side."
+        case .micNearSilent:
+            return "Microphone audio is very quiet. This meeting transcript may miss your side."
         case .micAllZeroWhileSystemActive:
             return "Microphone audio is silent. This meeting transcript may miss your side."
         }
@@ -54,6 +57,7 @@ final class MeetingMicHealthTracker {
         var lastNonZeroMicAt: Date?
         var lastSystemAudioAt: Date?
         var lastRawMicWasEffectivelyZero = true
+        var nearSilentMicSamples = 0
         var activeSystemSamplesWhileMicMissing = 0
         var activeSystemSamplesWhileMicZero = 0
         var transitions: [MeetingMicHealthTransition] = []
@@ -61,8 +65,8 @@ final class MeetingMicHealthTracker {
 
     private static let sampleRate = 16_000
     private static let activeSystemPeakThreshold = 0.01
-    private static let nonZeroMicPeakThreshold = 0.0001
-    private static let zeroRatioThreshold = 0.999
+    private static let nearSilentMicRMSThreshold = 0.002
+    private static let nearSilentMicPeakThreshold = 0.01
     private static let degradedConfirmationSamples = sampleRate * 3
     private static let micCallbackStaleThreshold: TimeInterval = 1.0
     private static let maxTransitions = 32
@@ -77,18 +81,24 @@ final class MeetingMicHealthTracker {
             state.activeSystemSamplesWhileMicMissing = 0
 
             let stats = statsForSamples(samples)
-            let zeroRatio = stats.sampleCount > 0
-                ? Double(stats.zeroSampleCount) / Double(stats.sampleCount)
-                : 1
-            let hasSignal = stats.peak > Self.nonZeroMicPeakThreshold
-                || zeroRatio < Self.zeroRatioThreshold
+            let hasSignal = stats.rms >= Self.nearSilentMicRMSThreshold
+                || stats.peak >= Self.nearSilentMicPeakThreshold
             state.lastRawMicWasEffectivelyZero = !hasSignal
             if hasSignal {
                 state.firstNonZeroMicAt = state.firstNonZeroMicAt ?? now
                 state.lastNonZeroMicAt = now
+                state.nearSilentMicSamples = 0
                 state.activeSystemSamplesWhileMicMissing = 0
                 state.activeSystemSamplesWhileMicZero = 0
                 transitionLocked(&state, to: .healthy, reason: "raw_mic_signal_detected", now: now)
+            } else if stats.rms < Self.nearSilentMicRMSThreshold,
+                      stats.peak < Self.nearSilentMicPeakThreshold {
+                state.nearSilentMicSamples += samples.count
+                if state.nearSilentMicSamples >= Self.degradedConfirmationSamples {
+                    transitionLocked(&state, to: .micNearSilent, reason: "raw_mic_rms_near_silent", now: now)
+                }
+            } else {
+                state.nearSilentMicSamples = 0
             }
             return snapshotLocked(state)
         }

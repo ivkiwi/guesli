@@ -229,6 +229,28 @@ struct MeetingLiveOverlapPipelineTests {
         #expect(result.segments.map(\.text) == ["early", "middle", "late"])
     }
 
+    @Test("post-mode source tracks merge by aligned timestamps")
+    func postModeSourceTracksMergeByAlignedTimestamps() {
+        let micSegments = [
+            SpeechSegment(start: 3.0, end: 3.5, text: "mic late"),
+            SpeechSegment(start: 0.5, end: 1.0, text: "mic early"),
+        ]
+        let systemSegments = [
+            SpeechSegment(start: 0.5, end: 0.8, text: "system first"),
+            SpeechSegment(start: 2.0, end: 2.5, text: "system middle"),
+        ]
+
+        let ordered = MeetingRetranscriptionPipeline.postModeOrderedSegments(
+            micSegments: micSegments,
+            micStartOffset: 1.0,
+            systemSegments: systemSegments,
+            systemStartOffset: 0.0
+        )
+
+        #expect(ordered.map(\.text) == ["system first", "mic early", "system middle", "mic late"])
+        #expect(ordered.map(\.start) == [0.5, 1.5, 2.0, 4.0])
+    }
+
     @Test("retranscribe batch maps results by VAD input order")
     func retranscribeBatchMapsResultsByVADInputOrder() async throws {
         let samples = (0..<(16_000 * 4)).map { Float($0 % 100) / 100.0 }

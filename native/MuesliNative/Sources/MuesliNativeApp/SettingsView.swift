@@ -841,6 +841,16 @@ struct SettingsView: View {
                         }
                     }
                 }
+                Divider().background(MuesliTheme.surfaceBorder)
+                settingsRow("Processing", controlWidth: meetingControlWidth) {
+                    settingsMenu(
+                        selection: appState.config.resolvedMeetingProcessingMode.label,
+                        options: MeetingProcessingMode.allCases.map(\.label)
+                    ) { label in
+                        guard let mode = MeetingProcessingMode.allCases.first(where: { $0.label == label }) else { return }
+                        controller.updateConfig { $0.meetingProcessingMode = mode.rawValue }
+                    }
+                }
                 if appState.selectedMeetingTranscriptionBackend.backend == BackendOption.cohereTranscribe.backend {
                     Divider().background(MuesliTheme.surfaceBorder)
                     settingsRow("Cohere language") {

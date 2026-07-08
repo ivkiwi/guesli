@@ -31,7 +31,12 @@ private enum ManualNotesSaveStatus {
 private struct LiveTranscriptSection: View {
     let appState: AppState
     var body: some View {
-        LiveTranscriptView(transcript: appState.liveMeetingTranscript)
+        LiveTranscriptView(
+            transcript: appState.liveMeetingTranscript,
+            placeholder: appState.config.resolvedMeetingProcessingMode == .post
+                ? "Recording… transcript after meeting"
+                : "Waiting for speech…"
+        )
     }
 }
 

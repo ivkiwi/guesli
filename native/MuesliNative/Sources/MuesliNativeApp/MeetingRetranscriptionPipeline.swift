@@ -2,6 +2,11 @@ import FluidAudio
 import Foundation
 
 enum MeetingRetranscriptionPipeline {
+    enum TrackRole: Sendable {
+        case mic
+        case system
+    }
+
     struct AudioSegment: Equatable, Sendable {
         let startTime: TimeInterval
         let endTime: TimeInterval
@@ -46,11 +51,13 @@ enum MeetingRetranscriptionPipeline {
     static func transcribeSegmentedAudio(
         samples: [Float],
         vadSegments: [VadSegment],
+        trackRole: TrackRole = .system,
         transcribeSegment: (AudioSegment, [Float]) async throws -> SpeechTranscriptionResult
     ) async throws -> SpeechTranscriptionResult {
         try await transcribeSegmentedAudio(
             samples: samples,
-            vadSegments: vadSegments
+            vadSegments: vadSegments,
+            trackRole: trackRole
         ) { segmentAudio in
             var results: [SpeechTranscriptionResult] = []
             results.reserveCapacity(segmentAudio.count)
@@ -64,6 +71,7 @@ enum MeetingRetranscriptionPipeline {
     static func transcribeSegmentedAudio(
         samples: [Float],
         vadSegments: [VadSegment],
+        trackRole: TrackRole = .system,
         transcribeSegments: ([SegmentAudio]) async throws -> [SpeechTranscriptionResult]
     ) async throws -> SpeechTranscriptionResult {
         let segmentAudio = audioSegments(from: vadSegments, sampleCount: samples.count).map { segment in
@@ -80,8 +88,9 @@ enum MeetingRetranscriptionPipeline {
         }
         var transcriptSegments: [SpeechSegment] = []
         for (item, result) in zip(segmentAudio, results) {
-            transcriptSegments.append(contentsOf: SystemTurnNormalizer.normalize(
+            transcriptSegments.append(contentsOf: normalize(
                 result: result,
+                trackRole: trackRole,
                 startTime: item.segment.startTime,
                 endTime: item.segment.endTime
             ))
@@ -97,5 +106,76 @@ enum MeetingRetranscriptionPipeline {
             .filter { !$0.isEmpty }
             .joined(separator: " ")
         return SpeechTranscriptionResult(text: text, segments: ordered)
+    }
+
+    static func applyTrackOffset(
+        _ segments: [SpeechSegment],
+        offset: TimeInterval
+    ) -> [SpeechSegment] {
+        guard offset != 0 else { return segments }
+        return segments.map {
+            SpeechSegment(
+                start: $0.start + offset,
+                end: $0.end + offset,
+                text: $0.text
+            )
+        }
+    }
+
+    static func applyDiarizationOffset(
+        _ segments: [TimedSpeakerSegment]?,
+        offset: TimeInterval
+    ) -> [TimedSpeakerSegment]? {
+        guard let segments else { return nil }
+        guard offset != 0 else { return segments }
+        let floatOffset = Float(offset)
+        return segments.map {
+            TimedSpeakerSegment(
+                speakerId: $0.speakerId,
+                embedding: $0.embedding,
+                startTimeSeconds: $0.startTimeSeconds + floatOffset,
+                endTimeSeconds: $0.endTimeSeconds + floatOffset,
+                qualityScore: $0.qualityScore
+            )
+        }
+    }
+
+    static func postModeOrderedSegments(
+        micSegments: [SpeechSegment],
+        micStartOffset: TimeInterval,
+        systemSegments: [SpeechSegment],
+        systemStartOffset: TimeInterval
+    ) -> [SpeechSegment] {
+        (
+            applyTrackOffset(micSegments, offset: micStartOffset)
+                + applyTrackOffset(systemSegments, offset: systemStartOffset)
+        ).sorted { lhs, rhs in
+            if lhs.start == rhs.start {
+                return lhs.text < rhs.text
+            }
+            return lhs.start < rhs.start
+        }
+    }
+
+    private static func normalize(
+        result: SpeechTranscriptionResult,
+        trackRole: TrackRole,
+        startTime: TimeInterval,
+        endTime: TimeInterval
+    ) -> [SpeechSegment] {
+        switch trackRole {
+        case .mic:
+            return MicTurnNormalizer.normalize(
+                result: result,
+                startTime: startTime,
+                endTime: endTime
+            )
+        case .system:
+            return SystemTurnNormalizer.normalize(
+                result: result,
+                startTime: startTime,
+                endTime: endTime
+            )
+        }
     }
 }
