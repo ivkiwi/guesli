@@ -378,7 +378,6 @@ actor SherpaGigaAMRNNTTranscriber {
             "--decoder=\(SherpaGigaAMRNNTModelStore.decoderURL().path)",
             "--joiner=\(SherpaGigaAMRNNTModelStore.joinerURL().path)",
             "--num-threads=4",
-            "--model-type=transducer",
             "--decoding-method=greedy_search",
             "--debug=false",
             "--print-args=false",
@@ -392,6 +391,10 @@ actor SherpaGigaAMRNNTTranscriber {
 
     func loadedDirectoryForTesting() -> URL? {
         loadedDirectory
+    }
+
+    func recognitionArgumentsForTesting(chunkURLs: [URL]) -> [String] {
+        recognitionArguments(chunkURLs: chunkURLs)
     }
 #endif
 }

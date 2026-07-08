@@ -92,6 +92,18 @@ struct SherpaGigaAMRNNTTranscriberTests {
         #expect(BackendOption.sherpaGigaAMRNNT.description.contains("CPU INT8"))
     }
 
+    @Test("sherpa GigaAM RNNT lets sherpa auto-detect model type")
+    func sherpaGigaAMRNNTRecognitionArgumentsAutoDetectModelType() async {
+        let transcriber = SherpaGigaAMRNNTTranscriber()
+        let args = await transcriber.recognitionArgumentsForTesting(
+            chunkURLs: [URL(filePath: "/tmp/sherpa-gigaam-rnnt-test.wav")]
+        )
+
+        #expect(!args.contains("--model-type=transducer"))
+        #expect(args.contains("--decoder=\(SherpaGigaAMRNNTModelStore.decoderURL().path)"))
+        #expect(args.contains("--decoding-method=greedy_search"))
+    }
+
     @Test("sherpa GigaAM RNNT pins release artifact checksums")
     func sherpaGigaAMRNNTArtifactChecksumsPinned() {
         #expect(SherpaGigaAMRNNTModelStore.toolArchive.expectedSHA256 == "b1830ce2f19169070c23c2a44b70e1d416e0265e98870a2f62f7aa94811db342")
