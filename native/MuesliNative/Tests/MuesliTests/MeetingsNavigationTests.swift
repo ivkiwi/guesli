@@ -501,6 +501,21 @@ struct MeetingsNavigationTests {
         #expect(MeetingDetailView.showsRetranscribeAction(for: meeting))
     }
 
+    @Test("retranscribe action remains visible for failed post-mode source tracks")
+    func retranscribeActionVisibleForFailedPostModeSourceTracks() {
+        let meeting = makeMeeting(
+            id: 904,
+            title: "Traffic Daily",
+            rawTranscript: "",
+            wordCount: 0,
+            micAudioPath: "/tmp/traffic-daily-mic.wav",
+            savedRecordingPath: nil,
+            status: .failed
+        )
+
+        #expect(MeetingDetailView.showsRetranscribeAction(for: meeting))
+    }
+
     @Test("retranscribe action stays hidden without retained recording path")
     func retranscribeActionHiddenWithoutRecordingPath() {
         let failedMeeting = makeMeeting(
@@ -1143,6 +1158,8 @@ struct MeetingsNavigationTests {
         rawTranscript: String = "Transcript",
         formattedNotes: String = "## Summary",
         wordCount: Int = 42,
+        micAudioPath: String? = nil,
+        systemAudioPath: String? = nil,
         savedRecordingPath: String? = nil,
         status: MeetingStatus = .completed,
         manualNotes: String = ""
@@ -1157,8 +1174,8 @@ struct MeetingsNavigationTests {
             wordCount: wordCount,
             folderID: nil,
             calendarEventID: nil,
-            micAudioPath: nil,
-            systemAudioPath: nil,
+            micAudioPath: micAudioPath,
+            systemAudioPath: systemAudioPath,
             savedRecordingPath: savedRecordingPath,
             status: status,
             manualNotes: manualNotes,

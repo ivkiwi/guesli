@@ -543,8 +543,9 @@ struct MeetingDetailView: View {
     }
 
     static func showsRetranscribeAction(for meeting: MeetingRecord) -> Bool {
-        guard let savedRecordingPath = meeting.savedRecordingPath else { return false }
-        return !savedRecordingPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        [meeting.savedRecordingPath, meeting.micAudioPath, meeting.systemAudioPath].contains {
+            $0?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
     }
 
     private func startRetranscription(for meeting: MeetingRecord) {

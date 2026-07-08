@@ -5896,7 +5896,9 @@ final class MuesliController: NSObject {
 
     private func resolveLiveMeetingAfterStopFailure(id: Int64) {
         if let meeting = try? dictationStore.meeting(id: id),
-           meeting.savedRecordingPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+           [meeting.savedRecordingPath, meeting.micAudioPath, meeting.systemAudioPath].contains(where: {
+               $0?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+           }) {
             flushCachedMeetingTitle(id: id)
             flushCachedMeetingManualNotes(id: id, sync: false)
             updateMeetingStatusAndScheduleSync(id: id, status: .failed)
