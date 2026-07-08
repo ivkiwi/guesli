@@ -195,6 +195,7 @@ private struct BenchmarkConfig {
     private func productionCandidates(downloadedOnly: Bool) -> [BenchmarkCandidate] {
         let all = [
             ("gigaam-coreml", BackendOption.gigaAMV3Russian),
+            ("sherpa-gigaam-rnnt", BackendOption.sherpaGigaAMRNNT),
             ("parakeet-v3", BackendOption.parakeetMultilingual),
             ("parakeet-v2", BackendOption.parakeetEnglish),
             ("whisper-tiny-en", BackendOption.whisperTinyEnglish),
@@ -215,6 +216,7 @@ private struct BenchmarkConfig {
     private static func productionOption(id: String) -> BackendOption? {
         switch id {
         case "gigaam-coreml": return .gigaAMV3Russian
+        case "sherpa-gigaam-rnnt": return .sherpaGigaAMRNNT
         case "parakeet-v3": return .parakeetMultilingual
         case "parakeet-v2": return .parakeetEnglish
         case "whisper-tiny-en": return .whisperTinyEnglish
@@ -879,6 +881,8 @@ private func diskURL(for option: BackendOption) -> URL? {
     switch option {
     case .gigaAMV3Russian:
         return GigaAMV3ModelStore.cacheDirectory()
+    case .sherpaGigaAMRNNT:
+        return SherpaGigaAMRNNTModelStore.cacheDirectory()
     case .parakeetMultilingual:
         return fluidAudioModelDirectory(version: "v3")
     case .parakeetEnglish:

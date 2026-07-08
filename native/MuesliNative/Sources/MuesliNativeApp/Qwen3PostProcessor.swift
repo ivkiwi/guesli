@@ -98,17 +98,15 @@ enum Qwen3PostProcessorOutputCleaner {
             with: "$1",
             options: .regularExpression
         )
-        result = result.replacingOccurrences(
-            of: #"\s{2,}"#,
-            with: " ",
-            options: .regularExpression
-        )
-        result = result.replacingOccurrences(
-            of: #"\s+([,.;:!?])"#,
-            with: "$1",
-            options: .regularExpression
-        )
+        result = result.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+        result = normalizePunctuationSpacing(result)
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func normalizePunctuationSpacing(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: #"[ \t]+([,.;:!?])"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"([,.;:!?])(?=\p{L})"#, with: "$1 ", options: .regularExpression)
     }
 
     static func appendSentenceFinalPeriodIfNeeded(_ text: String) -> String {

@@ -15,7 +15,7 @@ struct SpeechTranscriptionResult: Sendable {
 
 actor TranscriptionCoordinator {
     static let explicitlyRoutedBackendIdentifiers: Set<String> = [
-        "whisper", "nemotron35", "gigaam_v3", "qwen", "cohere", "sensevoice",
+        "whisper", "nemotron35", "gigaam_v3", "sherpa_gigaam_rnnt", "qwen", "cohere", "sensevoice",
     ]
 
     private let fluidTranscriber = FluidAudioTranscriber()
@@ -24,6 +24,7 @@ actor TranscriptionCoordinator {
     private var _qwen3PostProcessor: Any?
     private var _cohereTranscriber: Any?
     private let gigaAMV3Transcriber = GigaAMV3Transcriber()
+    private let sherpaGigaAMRNNTTranscriber = SherpaGigaAMRNNTTranscriber()
     private let senseVoiceTranscriber = SenseVoiceTranscriber()
     private var vadManager: VadManager?
     private var diarizerManager: DiarizerManager?
@@ -248,6 +249,8 @@ actor TranscriptionCoordinator {
             }
         case "gigaam_v3":
             try await gigaAMV3Transcriber.loadModels(progress: progress)
+        case "sherpa_gigaam_rnnt":
+            try await sherpaGigaAMRNNTTranscriber.loadModels(progress: progress)
         case "qwen":
             if #available(macOS 15, *) {
                 try await qwen3Transcriber.loadModels(progress: progress)
@@ -320,8 +323,9 @@ actor TranscriptionCoordinator {
             appContext: appContext
         ) ?? removeFillersWithLogging(result)
         let corrected = applyCustomWords(result, customWords: customWords)
+        let normalizedText = Qwen3PostProcessorOutputCleaner.normalizePunctuationSpacing(corrected.text)
         let final = SpeechTranscriptionResult(
-            text: Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded(corrected.text),
+            text: Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded(normalizedText),
             segments: corrected.segments
         )
         if !final.text.isEmpty {
@@ -391,6 +395,7 @@ actor TranscriptionCoordinator {
         await fluidTranscriber.shutdown()
         await whisperTranscriber.shutdown()
         await gigaAMV3Transcriber.shutdown()
+        await sherpaGigaAMRNNTTranscriber.shutdown()
         await senseVoiceTranscriber.shutdown()
         if #available(macOS 15, *) {
             if let nemotron35 = _nemotron35Transcriber as? Nemotron35StreamingTranscriber {
@@ -422,12 +427,17 @@ actor TranscriptionCoordinator {
     }
 
     private func cleanMeetingTranscript(_ result: SpeechTranscriptionResult) -> SpeechTranscriptionResult {
-        removeFillers(removeArtifacts(result))
+        normalizePunctuationSpacing(removeFillers(removeArtifacts(result)))
     }
 
     private func removeArtifacts(_ result: SpeechTranscriptionResult) -> SpeechTranscriptionResult {
         let filtered = TranscriptionEngineArtifactsFilter.apply(result.text)
         return SpeechTranscriptionResult(text: filtered, segments: filtered.isEmpty ? [] : result.segments)
+    }
+
+    private func normalizePunctuationSpacing(_ result: SpeechTranscriptionResult) -> SpeechTranscriptionResult {
+        let normalized = Qwen3PostProcessorOutputCleaner.normalizePunctuationSpacing(result.text)
+        return SpeechTranscriptionResult(text: normalized, segments: normalized.isEmpty ? [] : result.segments)
     }
 
     func postProcessDictationIfNeeded(
@@ -537,6 +547,8 @@ actor TranscriptionCoordinator {
             return try await transcribeWithNemotron35(url: url, samples: samples)
         case "gigaam_v3":
             return try await transcribeWithGigaAMV3(url: url, samples: samples)
+        case "sherpa_gigaam_rnnt":
+            return try await transcribeWithSherpaGigaAMRNNT(url: url, samples: samples)
         case "qwen":
             return try await transcribeWithQwen3(url: url, samples: samples)
         case "cohere":
@@ -588,6 +600,27 @@ actor TranscriptionCoordinator {
             result = try await gigaAMV3Transcriber.transcribe(wavURL: url)
         }
         fputs("[muesli-native] GigaAM v3 result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
+        let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return SpeechTranscriptionResult(
+            text: text,
+            segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: result.duration, text: text)]
+        )
+    }
+
+    // MARK: - Sherpa GigaAM v3 RNNT (CPU INT8 via sherpa-onnx)
+
+    private func transcribeWithSherpaGigaAMRNNT(url: URL, samples: [Float]? = nil) async throws -> SpeechTranscriptionResult {
+        fputs("[muesli-native] transcribing with Sherpa GigaAM RNNT: \(url.lastPathComponent)\n", stderr)
+        let result: SherpaGigaAMRNNTTranscriptionResult
+        if let samples {
+            result = try await sherpaGigaAMRNNTTranscriber.transcribe(
+                samples: samples,
+                sampleRate: SherpaGigaAMRNNTChunking.sampleRate
+            )
+        } else {
+            result = try await sherpaGigaAMRNNTTranscriber.transcribe(wavURL: url)
+        }
+        fputs("[muesli-native] Sherpa GigaAM RNNT result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
         let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         return SpeechTranscriptionResult(
             text: text,

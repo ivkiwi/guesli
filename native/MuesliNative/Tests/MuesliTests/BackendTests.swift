@@ -76,6 +76,23 @@ struct SenseVoiceTranscriberTests {
     }
 }
 
+@Suite("SherpaGigaAMRNNTTranscriber", .muesliHermeticSupport)
+struct SherpaGigaAMRNNTTranscriberTests {
+
+    @Test("sherpa GigaAM RNNT stays experimental")
+    func sherpaGigaAMRNNTExperimental() {
+        #expect(BackendOption.experimental.contains(.sherpaGigaAMRNNT))
+        #expect(!BackendOption.onboarding.contains(.sherpaGigaAMRNNT))
+    }
+
+    @Test("sherpa GigaAM RNNT metadata reflects bundled binary plus INT8 model")
+    func sherpaGigaAMRNNTMetadata() {
+        #expect(SherpaGigaAMRNNTModelStore.downloadedModelSizeLabel == "~260 MB")
+        #expect(BackendOption.sherpaGigaAMRNNT.sizeLabel == SherpaGigaAMRNNTModelStore.downloadedModelSizeLabel)
+        #expect(BackendOption.sherpaGigaAMRNNT.description.contains("CPU INT8"))
+    }
+}
+
 @Suite("Backend coverage", .muesliHermeticSupport)
 struct BackendCoverageTests {
 
@@ -88,6 +105,7 @@ struct BackendCoverageTests {
         #expect(backendCounts["sensevoice"]! >= 1, "SenseVoice should have at least 1 model")
         #expect(backendCounts["nemotron35"]! == 1, "Nemotron 3.5 should be the only Nemotron backend")
         #expect(backendCounts["gigaam_v3"]! == 1, "GigaAM v3 should have exactly 1 model")
+        #expect(backendCounts["sherpa_gigaam_rnnt"]! == 1, "Sherpa GigaAM RNNT should have exactly 1 model")
     }
 
     @Test("size labels are human-readable")

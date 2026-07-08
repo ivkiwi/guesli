@@ -1082,6 +1082,8 @@ struct ModelsView: View {
             try removeItemIfPresent(at: CohereTranscribeModelStore.cacheDirectory(), fileManager: fm)
         case "gigaam_v3":
             try GigaAMV3ModelStore.deleteModelFiles(fileManager: fm)
+        case "sherpa_gigaam_rnnt":
+            try SherpaGigaAMRNNTModelStore.deleteModelFiles(fileManager: fm)
         case "sensevoice":
             SenseVoiceTranscriber.deleteModelFiles(fileManager: fm)
         case "fluidaudio":
@@ -1173,6 +1175,8 @@ struct ModelsView: View {
             return CohereTranscribeModelStore.isAvailableLocally()
         case "gigaam_v3":
             return GigaAMV3ModelStore.isAvailableLocally()
+        case "sherpa_gigaam_rnnt":
+            return SherpaGigaAMRNNTModelStore.isAvailableLocally()
         case "sensevoice":
             return SenseVoiceTranscriber.isModelDownloaded()
         default:

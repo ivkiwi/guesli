@@ -495,6 +495,16 @@ struct Qwen3PostProcessingOutputCleanerTests {
         #expect(Qwen3PostProcessorOutputCleaner.clean(raw) == "First point is ship it")
     }
 
+    @Test("normalizes punctuation spacing without breaking numbers")
+    func normalizesPunctuationSpacing() {
+        #expect(
+            Qwen3PostProcessorOutputCleaner.normalizePunctuationSpacing("Ну да,локальная зачистка ,конечно:работает") ==
+                "Ну да, локальная зачистка, конечно: работает"
+        )
+        #expect(Qwen3PostProcessorOutputCleaner.normalizePunctuationSpacing("версия 0.7.1,build 1,000") == "версия 0.7.1, build 1,000")
+        #expect(Qwen3PostProcessorOutputCleaner.clean("Ну да,локальная зачистка,конечно") == "Ну да, локальная зачистка, конечно")
+    }
+
     @Test("adds sentence-final period after terminal letters and digits")
     func addsSentenceFinalPeriodAfterLettersAndDigits() {
         #expect(Qwen3PostProcessorOutputCleaner.appendSentenceFinalPeriodIfNeeded("что в итоге получается") == "что в итоге получается.")

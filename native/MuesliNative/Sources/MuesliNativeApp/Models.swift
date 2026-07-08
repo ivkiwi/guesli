@@ -82,6 +82,15 @@ struct BackendOption: Equatable {
         recommended: false
     )
 
+    static let sherpaGigaAMRNNT = BackendOption(
+        backend: SherpaGigaAMRNNTModelStore.backendIdentifier,
+        model: SherpaGigaAMRNNTModelStore.modelID,
+        label: "Sherpa GigaAM RNNT",
+        sizeLabel: SherpaGigaAMRNNTModelStore.downloadedModelSizeLabel,
+        description: "Russian GigaAM v3 RNNT via sherpa-onnx CPU INT8. Chunked offline decode for dictation and meeting transcripts.",
+        recommended: false
+    )
+
     static let cohereTranscribe = BackendOption(
         backend: "cohere",
         model: "phequals/cohere-transcribe-coreml-mixed-precision",
@@ -121,7 +130,7 @@ struct BackendOption: Equatable {
     )
 
     static let experimental: [BackendOption] = [
-        .senseVoiceSmall, .qwen3Asr,
+        .sherpaGigaAMRNNT, .senseVoiceSmall, .qwen3Asr,
     ]
 
     /// Models available for download and use.
@@ -194,6 +203,8 @@ struct BackendOption: Equatable {
             return fm.fileExists(atPath: path.path)
         case "gigaam_v3":
             return GigaAMV3ModelStore.isAvailableLocally()
+        case "sherpa_gigaam_rnnt":
+            return SherpaGigaAMRNNTModelStore.isAvailableLocally()
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
         case "sensevoice":

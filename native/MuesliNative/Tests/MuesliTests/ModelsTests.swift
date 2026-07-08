@@ -24,7 +24,7 @@ struct BackendOptionTests {
 
     @Test("backend field is one of the known backends")
     func knownBackends() {
-        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron35", "gigaam_v3", "cohere", "sensevoice"]
+        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron35", "gigaam_v3", "sherpa_gigaam_rnnt", "cohere", "sensevoice"]
         for option in BackendOption.all {
             #expect(known.contains(option.backend), "Unknown backend: \(option.backend)")
         }
@@ -64,6 +64,60 @@ struct BackendOptionTests {
         #expect(BackendOption.all.contains(.gigaAMV3Russian))
         #expect(BackendOption.all.first == .gigaAMV3Russian)
         #expect(BackendOption.onboarding.first == .gigaAMV3Russian)
+    }
+
+    @Test("Sherpa GigaAM RNNT is available outside onboarding")
+    func sherpaGigaAMRNNTBackend() {
+        #expect(BackendOption.sherpaGigaAMRNNT.backend == "sherpa_gigaam_rnnt")
+        #expect(BackendOption.sherpaGigaAMRNNT.model == SherpaGigaAMRNNTModelStore.modelID)
+        #expect(BackendOption.sherpaGigaAMRNNT.label.contains("Sherpa"))
+        #expect(BackendOption.sherpaGigaAMRNNT.description.contains("RNNT"))
+        #expect(!BackendOption.sherpaGigaAMRNNT.recommended)
+        #expect(BackendOption.experimental.contains(.sherpaGigaAMRNNT))
+        #expect(BackendOption.all.contains(.sherpaGigaAMRNNT))
+        #expect(!BackendOption.onboarding.contains(.sherpaGigaAMRNNT))
+    }
+
+    @Test("Sherpa GigaAM RNNT detector requires complete install files")
+    func sherpaGigaAMRNNTInstallDetection() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("sherpa-gigaam-rnnt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        #expect(!SherpaGigaAMRNNTModelStore.isCompleteInstallDirectory(root, fileManager: fm))
+
+        for file in sherpaGigaAMRNNTRequiredFiles {
+            let url = root.appendingPathComponent(file.path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            _ = fm.createFile(atPath: url.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: UInt64(max(file.minimumBytes - 1, 0)))
+            try handle.close()
+            if file.executable {
+                try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+            }
+        }
+
+        #expect(!SherpaGigaAMRNNTModelStore.isCompleteInstallDirectory(root, fileManager: fm))
+
+        for file in sherpaGigaAMRNNTRequiredFiles {
+            let url = root.appendingPathComponent(file.path)
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: UInt64(file.minimumBytes))
+            try handle.close()
+        }
+
+        #expect(SherpaGigaAMRNNTModelStore.isCompleteInstallDirectory(root, fileManager: fm))
+    }
+
+    @Test("Sherpa offline parser joins JSON transcript lines")
+    func sherpaOfflineParserJoinsJSONLines() throws {
+        let stdout = """
+        {"text":"Первый кусок.","timestamps":[0.0]}
+        {"text":"Второй кусок.","timestamps":[1.0]}
+        """
+        #expect(try SherpaOfflineOutputParser.text(from: stdout) == "Первый кусок. Второй кусок.")
     }
 
     @Test("GigaAM v3 detector requires complete model files")
@@ -116,6 +170,7 @@ struct BackendOptionTests {
         #expect(BackendOption.all.contains(.qwen3Asr))
         #expect(BackendOption.all.contains(.cohereTranscribe))
         #expect(BackendOption.all.contains(.gigaAMV3Russian))
+        #expect(BackendOption.all.contains(.sherpaGigaAMRNNT))
         #expect(BackendOption.all.contains(.senseVoiceSmall))
         #expect(BackendOption.all.contains(.nemotron35Multilingual))
     }
@@ -180,6 +235,16 @@ struct BackendOptionTests {
             ("vocab.txt", 13_000),
             ("hann_window.f32.bin", 1_280),
             ("mel_filterbank_mel_freq.f32.bin", 41_216),
+        ]
+    }
+
+    private var sherpaGigaAMRNNTRequiredFiles: [(path: String, minimumBytes: Int64, executable: Bool)] {
+        [
+            ("bin/sherpa-onnx-offline", 20_000_000, true),
+            ("model/encoder.int8.onnx", 200_000_000, false),
+            ("model/decoder.onnx", 4_000_000, false),
+            ("model/joiner.onnx", 2_000_000, false),
+            ("model/tokens.txt", 10_000, false),
         ]
     }
 
