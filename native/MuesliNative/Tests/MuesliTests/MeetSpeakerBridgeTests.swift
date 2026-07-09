@@ -125,6 +125,131 @@ struct MeetSpeakerBridgeTests {
         #expect(map["spk_1"] == "Bob Reviewer")
     }
 
+    @Test("speaker map uses offset diarization timeline")
+    func speakerMapUsesOffsetDiarizationTimeline() {
+        let start = Date(timeIntervalSince1970: 1000)
+        let diarization = [
+            makeDiarSeg(speakerId: "spk_0", start: 31.0, end: 36.0),
+        ]
+        let observations = [
+            MeetSpeakerObservation(
+                meetingURL: nil,
+                speakerName: "Alice Owner",
+                participants: [MeetingParticipant(name: "Alice Owner", email: nil, isOrganizer: false, isSelf: false)],
+                observedAt: start.addingTimeInterval(32.0),
+                source: "test"
+            ),
+        ]
+
+        let map = MeetingSession.speakerNameMap(
+            diarizationSegments: diarization,
+            observations: observations,
+            meetingStart: start
+        )
+
+        #expect(map["spk_0"] == "Alice Owner")
+    }
+
+    @Test("speaker map keeps sparse short speaker observations")
+    func speakerMapKeepsSparseShortSpeakerObservations() {
+        let start = Date(timeIntervalSince1970: 1000)
+        let diarization = [
+            makeDiarSeg(speakerId: "spk_0", start: 0.0, end: 5.0),
+            makeDiarSeg(speakerId: "spk_1", start: 10.0, end: 10.8),
+        ]
+        let observations = [
+            MeetSpeakerObservation(
+                meetingURL: nil,
+                speakerName: "Alice Owner",
+                participants: [MeetingParticipant(name: "Alice Owner", email: nil, isOrganizer: false, isSelf: false)],
+                observedAt: start.addingTimeInterval(1.0),
+                source: "test"
+            ),
+            MeetSpeakerObservation(
+                meetingURL: nil,
+                speakerName: "Bob Reviewer",
+                participants: [MeetingParticipant(name: "Bob Reviewer", email: nil, isOrganizer: false, isSelf: false)],
+                observedAt: start.addingTimeInterval(10.4),
+                source: "test"
+            ),
+        ]
+
+        let map = MeetingSession.speakerNameMap(
+            diarizationSegments: diarization,
+            observations: observations,
+            meetingStart: start
+        )
+
+        #expect(map["spk_0"] == "Alice Owner")
+        #expect(map["spk_1"] == "Bob Reviewer")
+    }
+
+    @Test("speaker map ignores clock labels from Meet chrome")
+    func speakerMapIgnoresClockLabelsFromMeetChrome() {
+        let start = Date(timeIntervalSince1970: 1000)
+        let diarization = [
+            makeDiarSeg(speakerId: "spk_0", start: 0.0, end: 5.0),
+        ]
+        let observations = [
+            MeetSpeakerObservation(
+                meetingURL: nil,
+                speakerName: "11:19",
+                participants: [MeetingParticipant(name: "Alice Owner", email: nil, isOrganizer: false, isSelf: false)],
+                observedAt: start.addingTimeInterval(1.0),
+                source: "test"
+            ),
+            MeetSpeakerObservation(
+                meetingURL: nil,
+                speakerName: "Alice Owner",
+                participants: [MeetingParticipant(name: "Alice Owner", email: nil, isOrganizer: false, isSelf: false)],
+                observedAt: start.addingTimeInterval(2.0),
+                source: "test"
+            ),
+        ]
+
+        let map = MeetingSession.speakerNameMap(
+            diarizationSegments: diarization,
+            observations: observations,
+            meetingStart: start
+        )
+
+        #expect(map["spk_0"] == "Alice Owner")
+    }
+
+    @Test("speaker map allows one observed speaker across split diarization clusters")
+    func speakerMapAllowsOneObservedSpeakerAcrossSplitDiarizationClusters() {
+        let start = Date(timeIntervalSince1970: 1000)
+        let diarization = [
+            makeDiarSeg(speakerId: "spk_0", start: 0.0, end: 5.0),
+            makeDiarSeg(speakerId: "spk_1", start: 6.0, end: 12.0),
+        ]
+        let observations = [
+            MeetSpeakerObservation(
+                meetingURL: nil,
+                speakerName: "Alice Owner",
+                participants: [MeetingParticipant(name: "Alice Owner", email: nil, isOrganizer: false, isSelf: false)],
+                observedAt: start.addingTimeInterval(1.0),
+                source: "test"
+            ),
+            MeetSpeakerObservation(
+                meetingURL: nil,
+                speakerName: "Alice Owner",
+                participants: [MeetingParticipant(name: "Alice Owner", email: nil, isOrganizer: false, isSelf: false)],
+                observedAt: start.addingTimeInterval(8.0),
+                source: "test"
+            ),
+        ]
+
+        let map = MeetingSession.speakerNameMap(
+            diarizationSegments: diarization,
+            observations: observations,
+            meetingStart: start
+        )
+
+        #expect(map["spk_0"] == "Alice Owner")
+        #expect(map["spk_1"] == "Alice Owner")
+    }
+
     @Test("merges calendar and observed Meet participants")
     func mergesCalendarAndObservedMeetParticipants() {
         let calendar = [

@@ -1735,7 +1735,7 @@ final class MeetingSession {
 
         var votes: [String: [String: Int]] = [:]
         for observation in observations {
-            guard let speakerName = observation.speakerName else { continue }
+            guard let speakerName = validSpeakerNameCandidate(from: observation) else { continue }
             let relativeTime = Float(observation.observedAt.timeIntervalSince(meetingStart))
             guard relativeTime >= -2 else { continue }
             guard let speakerID = nearestSpeakerID(
@@ -1757,22 +1757,43 @@ final class MeetingSession {
             bestBySpeaker.append((speakerID: speakerID, name: best.key, count: best.value))
         }
 
-        var winnersByName: [String: (speakerID: String, count: Int)] = [:]
-        for candidate in bestBySpeaker {
-            let key = candidate.name.lowercased()
-            if let existing = winnersByName[key], existing.count >= candidate.count {
-                continue
-            }
-            winnersByName[key] = (speakerID: candidate.speakerID, count: candidate.count)
-        }
-
         var result: [String: String] = [:]
         for candidate in bestBySpeaker {
-            let key = candidate.name.lowercased()
-            guard winnersByName[key]?.speakerID == candidate.speakerID else { continue }
             result[candidate.speakerID] = candidate.name
         }
         return result
+    }
+
+    private static func validSpeakerNameCandidate(from observation: MeetSpeakerObservation) -> String? {
+        guard let name = observation.speakerName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty,
+              !isClockLikeSpeakerName(name) else {
+            return nil
+        }
+        let participantNames = observation.participants
+            .filter { !$0.isSelf }
+            .map(\.name)
+        guard !participantNames.isEmpty else { return name }
+        return participantNames.contains { speakerName(name, matches: $0) } ? name : nil
+    }
+
+    private static func speakerName(_ lhs: String, matches rhs: String) -> Bool {
+        normalizedSpeakerName(lhs) == normalizedSpeakerName(rhs)
+    }
+
+    private static func normalizedSpeakerName(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+    }
+
+    private static func isClockLikeSpeakerName(_ name: String) -> Bool {
+        let parts = name.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2 || parts.count == 3 else { return false }
+        guard parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) else { return false }
+        let values = parts.compactMap { Int($0) }
+        guard values.count == parts.count else { return false }
+        guard (0...23).contains(values[0]), (0...59).contains(values[1]) else { return false }
+        return parts.count == 2 || (0...59).contains(values[2])
     }
 
     private static func nearestSpeakerID(
