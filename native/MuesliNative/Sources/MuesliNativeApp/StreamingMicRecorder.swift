@@ -45,6 +45,8 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
     private var tapInstalled = false
     private var graphPreparedInputDeviceID: AudioObjectID?
     private var isGraphPrepared = false
+    private var configurationChangeObserver: (any NSObjectProtocol)?
+    private let configurationChangeQueue = DispatchQueue(label: "com.muesli.streaming-mic-recorder-config-change")
 
     private struct FailureState {
         var activeRecordingID: UUID?
@@ -115,6 +117,33 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
             $0.hasReportedFailure = false
         }
 
+        let fileState = try createNewFile()
+        lock.withLock { $0 = fileState }
+
+        do {
+            try startEngineWithTapLocked(recordingID: recordingID)
+            isRunning = true
+            installConfigurationChangeObserverIfNeeded()
+        } catch {
+            removeTapIfNeeded()
+            engine.stop()
+            clearFailureState()
+            let state = lock.withLock { state -> FileState in
+                let old = state
+                state = FileState()
+                return old
+            }
+            if let url = state.fileURL {
+                try? FileManager.default.removeItem(at: url)
+            }
+            throw error
+        }
+    }
+
+    /// Installs the input tap (with conversion to 16kHz mono) and starts the engine.
+    /// Callers hold `graphLock`. Shared by `start()` and the configuration-change
+    /// restart path, so the tap keeps appending to the current file.
+    private func startEngineWithTapLocked(recordingID: UUID) throws {
         let inputNode = engine.inputNode
         let hwFormat = inputNode.outputFormat(forBus: 0)
 
@@ -135,9 +164,6 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         let converter: AVAudioConverter? = needsConversion
             ? AVAudioConverter(from: hwFormat, to: targetFormat)
             : nil
-
-        let fileState = try createNewFile()
-        lock.withLock { $0 = fileState }
 
         emitLatency("app_scoped_tap_install_begin")
         inputNode.installTap(onBus: 0, bufferSize: Self.bufferSize, format: nil) { [weak self] buffer, _ in
@@ -226,24 +252,60 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         tapInstalled = true
         emitLatency("app_scoped_tap_install_end")
 
+        emitLatency("app_scoped_engine_start_begin")
+        try engine.start()
+        emitLatency("app_scoped_engine_start_end")
+    }
+
+    // MARK: - Input Configuration Changes
+
+    /// AVAudioEngine stops delivering input buffers when its I/O configuration
+    /// changes mid-recording (e.g. AirPods connect and become the default input).
+    /// Without handling this, the microphone side of a meeting recording dies
+    /// silently while system audio keeps flowing. Rebuild the tap and restart
+    /// the engine so capture continues into the same file.
+    private func installConfigurationChangeObserverIfNeeded() {
+        guard configurationChangeObserver == nil else { return }
+        configurationChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.configurationChangeQueue.async { [weak self] in
+                self?.handleEngineConfigurationChange()
+            }
+        }
+    }
+
+    private func removeConfigurationChangeObserverIfNeeded() {
+        guard let observer = configurationChangeObserver else { return }
+        NotificationCenter.default.removeObserver(observer)
+        configurationChangeObserver = nil
+    }
+
+    private func handleEngineConfigurationChange() {
+        graphLock.lock()
+        defer { graphLock.unlock() }
+
+        guard isRunning else { return }
+        guard let recordingID = failureLock.withLock({ $0.activeRecordingID }) else { return }
+
+        fputs("[streaming-mic] engine configuration changed; restarting input capture\n", stderr)
+        emitLatency("engine_config_change_restart_begin")
+        removeTapIfNeeded()
+        engine.stop()
+        isGraphPrepared = false
+        graphPreparedInputDeviceID = nil
+
         do {
-            emitLatency("app_scoped_engine_start_begin")
-            try engine.start()
-            emitLatency("app_scoped_engine_start_end")
-            isRunning = true
+            try prepareLocked()
+            try startEngineWithTapLocked(recordingID: recordingID)
+            emitLatency("engine_config_change_restart_end")
+            fputs("[streaming-mic] microphone capture restarted after configuration change\n", stderr)
         } catch {
-            removeTapIfNeeded()
-            engine.stop()
-            clearFailureState()
-            let state = lock.withLock { state -> FileState in
-                let old = state
-                state = FileState()
-                return old
-            }
-            if let url = state.fileURL {
-                try? FileManager.default.removeItem(at: url)
-            }
-            throw error
+            fputs("[streaming-mic] failed to restart microphone capture after configuration change: \(error)\n", stderr)
+            reportRecordingFailure(error, recordingID: recordingID)
         }
     }
 
@@ -276,6 +338,7 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         guard isRunning else { return nil }
         isRunning = false
         clearFailureState()
+        removeConfigurationChangeObserverIfNeeded()
 
         removeTapIfNeeded()
         engine.stop()
@@ -310,6 +373,7 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
 
         isRunning = false
         clearFailureState()
+        removeConfigurationChangeObserverIfNeeded()
         removeTapIfNeeded()
         engine.stop()
         isGraphPrepared = false
