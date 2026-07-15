@@ -68,6 +68,13 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         self.directoryName = directoryName
     }
 
+    deinit {
+        // Safety net for callers that drop the recorder without stop()/cancel().
+        if let observer = configurationChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
     func prepare() throws {
         graphLock.lock()
         defer { graphLock.unlock() }
@@ -305,6 +312,13 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
             fputs("[streaming-mic] microphone capture restarted after configuration change\n", stderr)
         } catch {
             fputs("[streaming-mic] failed to restart microphone capture after configuration change: \(error)\n", stderr)
+            // startEngineWithTapLocked() can fail after installing the tap; drop it so
+            // tapInstalled stays consistent with the stopped engine. Remove the observer
+            // too: once the failure is reported this recording must not silently resume
+            // on a later configuration change.
+            removeTapIfNeeded()
+            engine.stop()
+            removeConfigurationChangeObserverIfNeeded()
             reportRecordingFailure(error, recordingID: recordingID)
         }
     }
