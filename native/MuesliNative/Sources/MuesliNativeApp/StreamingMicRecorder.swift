@@ -127,13 +127,14 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         let fileState = try createNewFile()
         lock.withLock { $0 = fileState }
 
+        installConfigurationChangeObserverIfNeeded(recordingID: recordingID)
         do {
             try startEngineWithTapLocked(recordingID: recordingID)
             isRunning = true
-            installConfigurationChangeObserverIfNeeded()
         } catch {
             removeTapIfNeeded()
             engine.stop()
+            removeConfigurationChangeObserverIfNeeded()
             clearFailureState()
             let state = lock.withLock { state -> FileState in
                 let old = state
@@ -271,16 +272,16 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
     /// Without handling this, the microphone side of a meeting recording dies
     /// silently while system audio keeps flowing. Rebuild the tap and restart
     /// the engine so capture continues into the same file.
-    private func installConfigurationChangeObserverIfNeeded() {
+    private func installConfigurationChangeObserverIfNeeded(recordingID: UUID) {
         guard configurationChangeObserver == nil else { return }
+        let callbackQueue = configurationChangeQueue
         configurationChangeObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
             queue: nil
         ) { [weak self] _ in
-            guard let self else { return }
-            self.configurationChangeQueue.async { [weak self] in
-                self?.handleEngineConfigurationChange()
+            callbackQueue.async { [weak self] in
+                self?.handleEngineConfigurationChange(recordingID: recordingID)
             }
         }
     }
@@ -291,12 +292,15 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         configurationChangeObserver = nil
     }
 
-    private func handleEngineConfigurationChange() {
+    private func handleEngineConfigurationChange(recordingID: UUID) {
         graphLock.lock()
         defer { graphLock.unlock() }
 
         guard isRunning else { return }
-        guard let recordingID = failureLock.withLock({ $0.activeRecordingID }) else { return }
+        let mayRestart = failureLock.withLock {
+            $0.activeRecordingID == recordingID && !$0.hasReportedFailure
+        }
+        guard mayRestart else { return }
 
         fputs("[streaming-mic] engine configuration changed; restarting input capture\n", stderr)
         emitLatency("engine_config_change_restart_begin")
