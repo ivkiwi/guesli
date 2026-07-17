@@ -528,13 +528,11 @@ struct MeetingChunkTimingTrackerTests {
     @Test("GigaAM meeting chunking uses longer chunks and overlap")
     func gigaAMMeetingChunkingPolicy() {
         let gigaAM = MeetingSession.liveChunkingConfiguration(for: .gigaAMV3Russian)
-        let sherpa = MeetingSession.liveChunkingConfiguration(for: .sherpaGigaAMRNNT)
         let whisper = MeetingSession.liveChunkingConfiguration(for: .whisperTinyEnglish)
 
         #expect(gigaAM.maxChunkDuration == 20)
         #expect(gigaAM.overlapSampleCount == 32_000)
         #expect(gigaAM.deduplicatesText)
-        #expect(sherpa == gigaAM)
         #expect(whisper.maxChunkDuration == 5)
         #expect(whisper.overlapSampleCount == 0)
         #expect(!whisper.deduplicatesText)

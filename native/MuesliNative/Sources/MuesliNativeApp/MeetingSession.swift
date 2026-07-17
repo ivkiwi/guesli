@@ -324,8 +324,7 @@ struct LiveMeetingChunkingConfiguration: Equatable, Sendable {
     let deduplicatesText: Bool
 
     static func configuration(for backend: BackendOption) -> LiveMeetingChunkingConfiguration {
-        if backend.backend == BackendOption.gigaAMV3Russian.backend
-            || backend.backend == BackendOption.sherpaGigaAMRNNT.backend {
+        if backend.backend == BackendOption.gigaAMV3Russian.backend {
             return LiveMeetingChunkingConfiguration(
                 minChunkDuration: 3.0,
                 maxChunkDuration: 20.0,
@@ -380,6 +379,11 @@ final class MeetingSession {
     private let systemChunkHealthTracker = MeetingTranscriptChunkHealthTracker()
     private let micHealthTracker = MeetingMicHealthTracker()
     private let speakerObservationLock = OSAllocatedUnfairLock(initialState: [MeetSpeakerObservation]())
+    private struct LivePartialTextState {
+        var you = ""
+        var others = ""
+    }
+    private let livePartialTextLock = OSAllocatedUnfairLock(initialState: LivePartialTextState())
     private let chunkRotationQueue = DispatchQueue(label: "MuesliNative.MeetingSession.chunkRotation")
     private let pausedDisplayLock = OSAllocatedUnfairLock(initialState: false)
     private let stopIntakeRequested = ManagedAtomic(false)
@@ -393,6 +397,9 @@ final class MeetingSession {
     var onRetainedRecordingReady: ((RetainedMeetingRecordingFinalizeRequest) async throws -> URL?)?
     var onPostMeetingRecordingReady: ((PostMeetingRecordingFinalizeRequest) async throws -> PersistedPostMeetingRecording?)?
     var onChunkTranscribed: (([SpeechSegment], String) -> Void)?
+    var onLivePartialsChanged: ((String, String) -> Void)?
+    private var micLivePartialSession: MeetingStreamingPartialSession?
+    private var systemLivePartialSession: MeetingStreamingPartialSession?
     private let screenContextCollector = MeetingScreenContextCollector()
     private var diagnostics: MeetingSessionDiagnostics?
 
@@ -607,6 +614,7 @@ final class MeetingSession {
         let now = Date()
         diagnostics = MeetingSessionDiagnostics(title: title, startedAt: now)
         stopIntakeRequested.store(false, ordering: .releasing)
+        await prepareLiveStreamingPartialsIfAvailable()
 
         if config.resolvedMeetingProcessingMode == .post {
             try await startPostProcessingMode(startedAt: now)
@@ -656,6 +664,7 @@ final class MeetingSession {
                 try? FileManager.default.removeItem(at: url)
             }
             systemChunkCollector.cancelAll()
+            stopLiveStreamingPartials()
             throw error
         }
         if vadController != nil {
@@ -702,6 +711,7 @@ final class MeetingSession {
             if let url = systemAudioRecorder.stop() {
                 try? FileManager.default.removeItem(at: url)
             }
+            stopLiveStreamingPartials()
             throw error
         }
         fputs("[meeting] started in post-processing mode; live ASR disabled\n", stderr)
@@ -727,6 +737,8 @@ final class MeetingSession {
 
         meetingMicRecorder.pause()
         systemAudioRecorder.pause()
+        micLivePartialSession?.suspend()
+        systemLivePartialSession?.suspend()
         Task { await screenContextCollector.setPaused(true) }
         fputs("[meeting] recording paused\n", stderr)
     }
@@ -741,6 +753,8 @@ final class MeetingSession {
 
         meetingMicRecorder.resume()
         systemAudioRecorder.resume()
+        micLivePartialSession?.resume()
+        systemLivePartialSession?.resume()
         Task { await screenContextCollector.setPaused(false) }
         fputs("[meeting] recording resumed\n", stderr)
     }
@@ -779,6 +793,7 @@ final class MeetingSession {
         }
         micChunkCollector.cancelAll()
         systemChunkCollector.cancelAll()
+        stopLiveStreamingPartials()
         fputs("[meeting] recording discarded\n", stderr)
     }
 
@@ -833,6 +848,7 @@ final class MeetingSession {
             return (meetingStart, lastChunkTiming, lastRawMicURL, lastSystemChunkTiming, lastSystemChunkURL)
         }
         stopIntakeRequested.store(true, ordering: .releasing)
+        await finishAndStopLiveStreamingPartials()
         let retainedRecordingTempURL = retainedRecordingWriter?.stop()
         retainedRecordingWriter = nil
         let retainedRecordingSavedURL = await finalizeRetainedRecordingEarly(
@@ -1198,6 +1214,7 @@ final class MeetingSession {
             return self.startTime ?? Date()
         }
         stopIntakeRequested.store(true, ordering: .releasing)
+        await finishAndStopLiveStreamingPartials()
         let sourceTracks = postModeTrackWriter?.stop() ?? MeetingSourceTrackRecording(
             micURL: nil,
             systemURL: nil,
@@ -1534,7 +1551,7 @@ final class MeetingSession {
         }
 
         let transcription: SpeechTranscriptionResult
-        if backend.backend == SherpaGigaAMRNNTModelStore.backendIdentifier {
+        if backend.backend == ONNXGigaAMModelStore.backendIdentifier {
             transcription = try await MeetingRetranscriptionPipeline.transcribeSegmentedAudio(
                 samples: wavData.samples,
                 vadSegments: vadSegments,
@@ -1542,7 +1559,7 @@ final class MeetingSession {
                 diagnosticsLabel: "[meeting] post-mode",
                 logger: { DiagnosticsLog.write($0) }
             ) { [transcriptionCoordinator] segmentAudio in
-                try await transcriptionCoordinator.transcribeMeetingBatchWithSherpaGigaAMRNNT(
+                try await transcriptionCoordinator.transcribeMeetingBatchWithONNXGigaAM(
                     samplesBatch: segmentAudio.map(\.samples)
                 )
             }
@@ -1952,6 +1969,8 @@ final class MeetingSession {
         guard rawChunkURL != nil else {
             return
         }
+        let livePartialSegmentID = UUID()
+        micLivePartialSession?.markSegmentBoundary(id: livePartialSegmentID)
 
         // Transcribe the completed chunk async
         let chunkOffset = chunkTiming.startTimeSeconds
@@ -1969,6 +1988,9 @@ final class MeetingSession {
                 chunkTiming: chunkTiming,
                 isFinalChunk: false
             )
+            // Durable ONNX output is authoritative. Advance the display-only
+            // Parakeet boundary even when ONNX rejects a false-positive partial.
+            self.micLivePartialSession?.commitSegment(id: livePartialSegmentID)
             return segments
         }
         let (registered, retireID) = micChunkCollector.add(task)
@@ -2003,6 +2025,8 @@ final class MeetingSession {
 
         let chunkOffset = chunkTiming.startTimeSeconds
         let chunkDuration = chunkTiming.durationSeconds
+        let livePartialSegmentID = UUID()
+        systemLivePartialSession?.markSegmentBoundary(id: livePartialSegmentID)
         fputs("[meeting] rotating system chunk at offset=\(String(format: "%.0f", chunkOffset))s\n", stderr)
 
         let task = Task { [weak self] () -> [SpeechSegment] in
@@ -2010,6 +2034,13 @@ final class MeetingSession {
                 try? FileManager.default.removeItem(at: chunkURL)
             }
             guard let self else { return [] }
+            defer {
+                if !Task.isCancelled {
+                    // Clear this display-only partial even for empty/failed ONNX
+                    // output so it cannot linger as an apparent transcript.
+                    self.systemLivePartialSession?.commitSegment(id: livePartialSegmentID)
+                }
+            }
             do {
                 if Task.isCancelled {
                     return []
@@ -2091,6 +2122,70 @@ final class MeetingSession {
             )
             return nil
         }
+    }
+
+    private func prepareLiveStreamingPartialsIfAvailable() async {
+        guard config.enableLiveStreamingPartials,
+              MeetingParakeetLiveCaptionModelStore.isDownloaded() else {
+            publishLivePartials(you: "", others: "")
+            return
+        }
+
+        do {
+            let engines = try await MeetingParakeetLiveCaptionModelStore.makeEngines()
+            let mic = MeetingStreamingPartialSession(engine: engines.mic, label: "You")
+            let system = MeetingStreamingPartialSession(engine: engines.system, label: "Others")
+            mic.onPartialUpdate = { [weak self] text in
+                self?.updateLivePartial(text, isMic: true)
+            }
+            system.onPartialUpdate = { [weak self] text in
+                self?.updateLivePartial(text, isMic: false)
+            }
+            await mic.connect()
+            await system.connect()
+            micLivePartialSession = mic
+            systemLivePartialSession = system
+            publishLivePartials(you: "", others: "")
+            DiagnosticsLog.write("[meeting-partials] Parakeet EOU enabled")
+        } catch {
+            stopLiveStreamingPartials()
+            DiagnosticsLog.write("[meeting-partials] unavailable error=\(error.localizedDescription)")
+        }
+    }
+
+    private func updateLivePartial(_ text: String, isMic: Bool) {
+        let snapshot = livePartialTextLock.withLock { state -> LivePartialTextState in
+            if isMic {
+                state.you = text
+            } else {
+                state.others = text
+            }
+            return state
+        }
+        onLivePartialsChanged?(snapshot.you, snapshot.others)
+    }
+
+    private func publishLivePartials(you: String, others: String) {
+        livePartialTextLock.withLock { state in
+            state.you = you
+            state.others = others
+        }
+        onLivePartialsChanged?(you, others)
+    }
+
+    private func stopLiveStreamingPartials() {
+        micLivePartialSession?.stop()
+        systemLivePartialSession?.stop()
+        micLivePartialSession = nil
+        systemLivePartialSession = nil
+        publishLivePartials(you: "", others: "")
+    }
+
+    private func finishAndStopLiveStreamingPartials() async {
+        async let micTail = micLivePartialSession?.finish()
+        async let systemTail = systemLivePartialSession?.finish()
+        _ = await (micTail, systemTail)
+        stopLiveStreamingPartials()
     }
 
     private func prepareRealtimeAudioPipeline(vadManager: VadManager?) throws {
@@ -2191,6 +2286,7 @@ final class MeetingSession {
             self.systemChunkTimingTracker.append(sampleCount: samples.count)
 
             let floatSamples = samples.map { Float($0) / 32767.0 }
+            self.systemLivePartialSession?.enqueue(floatSamples)
             self.neuralAec.feedSystemSamples(floatSamples)
             let cleanedFloat = self.neuralAec.processStreamingMic([])
             self.appendCleanedMicSamplesOnQueue(cleanedFloat)
@@ -2217,6 +2313,7 @@ final class MeetingSession {
             let healthSnapshot = self.micHealthTracker.noteRawMicSamples(rawSamples)
             self.onMicHealthChanged?(healthSnapshot)
             self.postModeTrackWriter?.appendMic(rawSamples)
+            self.micLivePartialSession?.enqueue(rawSamples.map { Float($0) / 32767.0 })
         }
     }
 
@@ -2232,6 +2329,7 @@ final class MeetingSession {
             let healthSnapshot = self.micHealthTracker.noteSystemSamples(samples)
             self.onMicHealthChanged?(healthSnapshot)
             self.postModeTrackWriter?.appendSystem(samples)
+            self.systemLivePartialSession?.enqueue(samples.map { Float($0) / 32767.0 })
         }
     }
 
@@ -2241,6 +2339,7 @@ final class MeetingSession {
             Int16(max(-1.0, min(1.0, sample)) * 32767)
         }
         rawMicChunkRecorder?.append(cleanedInt16)
+        micLivePartialSession?.enqueue(cleanedFloat)
         chunkTimingTracker.append(sampleCount: cleanedInt16.count)
         diagnostics?.appendCleanedMicSamples(cleanedInt16)
     }

@@ -66,7 +66,7 @@ struct OnboardingModelDownloadPolicyTests {
 
         #expect(choice == OnboardingInitialDownloadProgressStatusChoice(
             progress: nil,
-            status: "Warming up GigaAM v3 Russian..."
+            status: "Warming up GigaAM v3 E2E CTC..."
         ))
     }
 

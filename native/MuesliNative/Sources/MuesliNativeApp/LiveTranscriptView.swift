@@ -17,22 +17,31 @@ private struct LiveTranscriptGroup: Identifiable {
 struct LiveTranscriptView: View {
     let transcript: String
     let placeholder: String
+    let partialYou: String
+    let partialOthers: String
     @State private var groups: [LiveTranscriptGroup] = []
     // Tracks how many characters of transcript have been parsed into groups.
     // On each onChange we only parse the new suffix, keeping updates O(k)
     // where k = lines in the new chunk rather than O(n) for the full history.
     @State private var parsedLength: Int = 0
 
-    init(transcript: String, placeholder: String = "Waiting for speech…") {
+    init(
+        transcript: String,
+        placeholder: String = "Waiting for speech…",
+        partialYou: String = "",
+        partialOthers: String = ""
+    ) {
         self.transcript = transcript
         self.placeholder = placeholder
+        self.partialYou = partialYou
+        self.partialOthers = partialOthers
     }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    if groups.isEmpty {
+                    if groups.isEmpty && trimmedPartialYou.isEmpty && trimmedPartialOthers.isEmpty {
                         Text(placeholder)
                             .font(MuesliTheme.body())
                             .foregroundStyle(MuesliTheme.textTertiary)
@@ -40,6 +49,12 @@ struct LiveTranscriptView: View {
                     } else {
                         ForEach(groups) { group in
                             liveBubble(for: group)
+                        }
+                        if !trimmedPartialOthers.isEmpty {
+                            partialBubble(speaker: "Others", text: trimmedPartialOthers, isUser: false)
+                        }
+                        if !trimmedPartialYou.isEmpty {
+                            partialBubble(speaker: "You", text: trimmedPartialYou, isUser: true)
                         }
                         Color.clear
                             .frame(height: 1)
@@ -51,10 +66,18 @@ struct LiveTranscriptView: View {
             }
             .onChange(of: transcript) { _, newTranscript in
                 mergeNewContent(from: newTranscript)
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo("liveTranscriptBottom", anchor: .bottom)
-                    }
+                scrollToBottom(proxy)
+            }
+            .onChange(of: partialYou) { old, new in
+                if old.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   !new.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    scrollToBottom(proxy)
+                }
+            }
+            .onChange(of: partialOthers) { old, new in
+                if old.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   !new.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    scrollToBottom(proxy)
                 }
             }
             .onAppear {
@@ -66,6 +89,14 @@ struct LiveTranscriptView: View {
                 }
             }
         }
+    }
+
+    private var trimmedPartialYou: String {
+        partialYou.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedPartialOthers: String {
+        partialOthers.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func mergeNewContent(from newTranscript: String) {
@@ -132,5 +163,42 @@ struct LiveTranscriptView: View {
             if !isUser { Spacer(minLength: 40) }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    }
+
+    private func partialBubble(speaker: String, text: String, isUser: Bool) -> some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            if isUser { Spacer(minLength: 40) }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(speaker)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(MuesliTheme.textTertiary)
+                Text(text)
+                    .font(.system(size: 13))
+                    .italic()
+                    .foregroundStyle(MuesliTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(isUser ? MuesliTheme.accent.opacity(0.06) : MuesliTheme.surfacePrimary.opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall))
+            .overlay {
+                RoundedRectangle(cornerRadius: MuesliTheme.cornerSmall)
+                    .strokeBorder(
+                        MuesliTheme.surfaceBorder,
+                        style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                    )
+            }
+            if !isUser { Spacer(minLength: 40) }
+        }
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.15)) {
+                proxy.scrollTo("liveTranscriptBottom", anchor: .bottom)
+            }
+        }
     }
 }

@@ -106,6 +106,41 @@ struct ConfigStoreTests {
         #expect(saved.meetingTranscriptionModel == BackendOption.gigaAMV3Russian.model)
     }
 
+    @Test("load migrates removed CoreML and Sherpa GigaAM backends")
+    func loadMigratesRemovedGigaAMBackends() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gigaam-backend-migration-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let supportURL = root.appendingPathComponent("Guesli", isDirectory: true)
+        let store = ConfigStore(
+            supportURL: supportURL,
+            legacySupportURL: root.appendingPathComponent("Muesli", isDirectory: true)
+        )
+        try FileManager.default.createDirectory(at: supportURL, withIntermediateDirectories: true)
+        try Data(
+            """
+            {
+              "stt_backend": "gigaam_v3",
+              "stt_model": "huggingfinger0/gigaam-v3-coreml",
+              "meeting_transcription_backend": "sherpa_gigaam_rnnt",
+              "meeting_transcription_model": "istupakov/gigaam-v3-rnnt"
+            }
+            """.utf8
+        ).write(to: store.configPath())
+
+        let loaded = store.load()
+
+        #expect(loaded.sttBackend == BackendOption.gigaAMV3Russian.backend)
+        #expect(loaded.sttModel == BackendOption.gigaAMV3Russian.model)
+        #expect(loaded.meetingTranscriptionBackend == BackendOption.gigaAMV3Russian.backend)
+        #expect(loaded.meetingTranscriptionModel == BackendOption.gigaAMV3Russian.model)
+
+        let saved = try JSONDecoder().decode(AppConfig.self, from: Data(contentsOf: store.configPath()))
+        #expect(saved.sttModel == BackendOption.gigaAMV3Russian.model)
+        #expect(saved.meetingTranscriptionModel == BackendOption.gigaAMV3Russian.model)
+    }
+
     @Test("cleanup prompt selection and custom prompt persist")
     func cleanupPromptSelectionAndCustomPromptPersist() {
         let store = makeStore()

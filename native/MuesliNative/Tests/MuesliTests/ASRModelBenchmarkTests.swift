@@ -97,7 +97,7 @@ private struct BenchmarkConfig {
     }
 
     func candidates() -> [BenchmarkCandidate] {
-        let requested = modelIDs.isEmpty ? ["downloaded", "gigaam-coreml"] : modelIDs
+        let requested = modelIDs.isEmpty ? ["downloaded", "gigaam-onnx-coreml"] : modelIDs
         var result: [BenchmarkCandidate] = []
         for id in requested {
             if id == "downloaded" {
@@ -194,8 +194,7 @@ private struct BenchmarkConfig {
 
     private func productionCandidates(downloadedOnly: Bool) -> [BenchmarkCandidate] {
         let all = [
-            ("gigaam-coreml", BackendOption.gigaAMV3Russian),
-            ("sherpa-gigaam-rnnt", BackendOption.sherpaGigaAMRNNT),
+            ("gigaam-onnx-coreml", BackendOption.gigaAMV3Russian),
             ("parakeet-v3", BackendOption.parakeetMultilingual),
             ("parakeet-v2", BackendOption.parakeetEnglish),
             ("whisper-tiny-en", BackendOption.whisperTinyEnglish),
@@ -215,8 +214,7 @@ private struct BenchmarkConfig {
 
     private static func productionOption(id: String) -> BackendOption? {
         switch id {
-        case "gigaam-coreml": return .gigaAMV3Russian
-        case "sherpa-gigaam-rnnt": return .sherpaGigaAMRNNT
+        case "gigaam-onnx-coreml": return .gigaAMV3Russian
         case "parakeet-v3": return .parakeetMultilingual
         case "parakeet-v2": return .parakeetEnglish
         case "whisper-tiny-en": return .whisperTinyEnglish
@@ -537,9 +535,6 @@ private func runCandidate(
                     reason: "model not downloaded"
                 )
             }
-            if candidate.id == "gigaam-coreml" {
-                notes.append(gigaAMChunkingNote(sampleCount: prepared.samples.count, sampleRate: Int(WavWriter.sampleRate)))
-            }
             result = try await runProduction(option: option, prepared: prepared, config: config)
         }
         if let resultNote = result.notes {
@@ -641,14 +636,6 @@ private func runProduction(
     let transcribeSec = now() - transcribeStart
     await coordinator.shutdown()
     return CandidateRunResult(text: result.text, loadSec: loadSec, transcribeSec: transcribeSec, notes: nil)
-}
-
-private func gigaAMChunkingNote(sampleCount: Int, sampleRate: Int) -> String {
-    let windows = GigaAMV3FileChunking.windows(sampleCount: sampleCount, sampleRate: sampleRate)
-    let maxWindowSeconds = windows
-        .map { Double($0.count) / Double(sampleRate) }
-        .max() ?? 0
-    return "gigaam windows=\(windows.count) maxWindow=\(format(maxWindowSeconds))s overlap=\(format(GigaAMV3FileChunking.overlapSeconds))s"
 }
 
 private struct TextDistance {
@@ -880,9 +867,7 @@ private func diskURL(for option: BackendOption) -> URL? {
     let home = FileManager.default.homeDirectoryForCurrentUser
     switch option {
     case .gigaAMV3Russian:
-        return GigaAMV3ModelStore.cacheDirectory()
-    case .sherpaGigaAMRNNT:
-        return SherpaGigaAMRNNTModelStore.cacheDirectory()
+        return ONNXGigaAMModelStore.cacheDirectory()
     case .parakeetMultilingual:
         return fluidAudioModelDirectory(version: "v3")
     case .parakeetEnglish:

@@ -157,7 +157,7 @@ struct OnboardingView: View {
         appState: AppState,
         initialStep: Int = 0,
         initialUserName: String = "",
-        initialBackend: BackendOption = .parakeetMultilingual,
+        initialBackend: BackendOption = .gigaAMV3Russian,
         initialCohereLanguage: CohereTranscribeLanguage = CohereTranscribeLanguage.defaultLanguage,
         initialHotkey: HotkeyConfig = .default,
         initialSystemAudioRequested: Bool = false,
@@ -194,7 +194,7 @@ struct OnboardingView: View {
         _currentStep = State(initialValue: effectiveInitialStep)
         _userName = State(initialValue: initialUserName)
         _selectedUseCase = State(initialValue: initialUseCase)
-        let sanitizedInitialBackend = BackendOption.onboarding.contains(initialBackend) ? initialBackend : .parakeetMultilingual
+        let sanitizedInitialBackend = BackendOption.onboarding.contains(initialBackend) ? initialBackend : .gigaAMV3Russian
         _selectedBackend = State(initialValue: sanitizedInitialBackend)
         _selectedCohereLanguage = State(initialValue: initialCohereLanguage)
         _selectedHotkey = State(initialValue: initialHotkey)

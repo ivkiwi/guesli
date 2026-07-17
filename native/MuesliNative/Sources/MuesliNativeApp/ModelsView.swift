@@ -14,6 +14,11 @@ struct ModelsView: View {
     @State private var selectedParakeetModel: String
     @State private var selectedWhisperModel: String
     @State private var showExperimental: Bool
+    @State private var isLiveCaptionModelDownloaded = false
+    @State private var isDownloadingLiveCaptionModel = false
+    @State private var liveCaptionDownloadProgress = 0.0
+    @State private var liveCaptionDownloadTask: Task<Void, Never>?
+    @State private var showDeleteLiveCaptionModelConfirmation = false
 
     // Post-processor state
     @State private var downloadingPostProcModels: Set<String> = []
@@ -70,6 +75,8 @@ struct ModelsView: View {
 
                 modelCard(option: .nemotron35Multilingual, logo: "nvidia-logo")
 
+                liveCaptionModelCard
+
                 experimentalSection
 
                 postProcessorSection
@@ -97,6 +104,7 @@ struct ModelsView: View {
         .background(MuesliTheme.backgroundBase)
         .onAppear {
             checkDownloadedModels()
+            isLiveCaptionModelDownloaded = MeetingParakeetLiveCaptionModelStore.isDownloaded()
             checkDownloadedPostProcModels()
             syncSelectionsFromActiveBackend()
             checkNemotron35Update()
@@ -140,6 +148,131 @@ struct ModelsView: View {
         } message: {
             Text("The downloaded model files will be removed from this Mac. You can download the model again later.")
         }
+        .alert(
+            "Delete \"\(MeetingParakeetLiveCaptionModelStore.label)\"?",
+            isPresented: $showDeleteLiveCaptionModelConfirmation
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                deleteLiveCaptionModel()
+            }
+        } message: {
+            Text("The optional live-caption model will be removed. Final meeting transcription is unaffected.")
+        }
+    }
+
+    private var liveCaptionModelCard: some View {
+        let isActive = isLiveCaptionModelDownloaded && appState.config.enableLiveStreamingPartials
+
+        return VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
+            HStack(alignment: .top, spacing: MuesliTheme.spacing12) {
+                brandLogo("nvidia-logo")
+
+                VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
+                    HStack(spacing: MuesliTheme.spacing8) {
+                        Text(MeetingParakeetLiveCaptionModelStore.label)
+                            .font(MuesliTheme.headline())
+                            .foregroundStyle(MuesliTheme.textPrimary)
+
+                        Text(MeetingParakeetLiveCaptionModelStore.sizeLabel)
+                            .font(MuesliTheme.caption())
+                            .foregroundStyle(MuesliTheme.textTertiary)
+                    }
+
+                    Text("Optional low-latency meeting preview. Final transcript still uses the selected meeting model. Never downloaded automatically.")
+                        .font(MuesliTheme.caption())
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                }
+
+                Spacer()
+
+                Text(isActive ? "Active" : (isLiveCaptionModelDownloaded ? "Ready" : "Not downloaded"))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isActive ? MuesliTheme.success : MuesliTheme.textTertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(isActive ? MuesliTheme.success.opacity(0.15) : MuesliTheme.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+
+            if isDownloadingLiveCaptionModel {
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(value: liveCaptionDownloadProgress)
+                        .tint(MuesliTheme.accent)
+                    Text("\(Int(liveCaptionDownloadProgress * 100))% downloading...")
+                        .font(.system(size: 11))
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                }
+            }
+
+            HStack(spacing: MuesliTheme.spacing8) {
+                if isDownloadingLiveCaptionModel {
+                    Button("Cancel") {
+                        liveCaptionDownloadTask?.cancel()
+                    }
+                } else if isLiveCaptionModelDownloaded {
+                    Button(isActive ? "Disable" : "Enable") {
+                        controller.updateConfig { $0.enableLiveStreamingPartials = !isActive }
+                    }
+
+                    Button {
+                        showDeleteLiveCaptionModelConfirmation = true
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundStyle(.red.opacity(0.6))
+                    }
+                    .help("Delete live-caption model")
+                } else {
+                    Button("Download") {
+                        startLiveCaptionModelDownload()
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(MuesliTheme.accent)
+        }
+        .padding(MuesliTheme.spacing16)
+        .background(MuesliTheme.backgroundRaised)
+        .clipShape(RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium))
+        .overlay(
+            RoundedRectangle(cornerRadius: MuesliTheme.cornerMedium)
+                .strokeBorder(isActive ? MuesliTheme.accent.opacity(0.6) : MuesliTheme.surfaceBorder, lineWidth: 1)
+        )
+    }
+
+    private func startLiveCaptionModelDownload() {
+        guard !isDownloadingLiveCaptionModel else { return }
+        isDownloadingLiveCaptionModel = true
+        liveCaptionDownloadProgress = 0
+        liveCaptionDownloadTask = Task {
+            do {
+                try await MeetingParakeetLiveCaptionModelStore.download { progress in
+                    Task { @MainActor in
+                        liveCaptionDownloadProgress = progress
+                    }
+                }
+                guard !Task.isCancelled else { throw CancellationError() }
+                isLiveCaptionModelDownloaded = true
+            } catch is CancellationError {
+                // User cancelled the explicit download.
+            } catch {
+                DiagnosticsLog.write("[muesli-native] live-caption model download failed: \(error.localizedDescription)")
+            }
+            isDownloadingLiveCaptionModel = false
+            liveCaptionDownloadProgress = 0
+            liveCaptionDownloadTask = nil
+        }
+    }
+
+    private func deleteLiveCaptionModel() {
+        do {
+            try MeetingParakeetLiveCaptionModelStore.delete()
+            isLiveCaptionModelDownloaded = false
+            controller.updateConfig { $0.enableLiveStreamingPartials = false }
+        } catch {
+            DiagnosticsLog.write("[muesli-native] live-caption model delete failed: \(error.localizedDescription)")
+        }
     }
 
     private var experimentalSection: some View {
@@ -159,7 +292,7 @@ struct ModelsView: View {
                                 .foregroundStyle(MuesliTheme.textSecondary)
                         }
 
-                        Text("SenseVoice, Sherpa, Qwen, and legacy streaming backends. Hidden by default because these are still slower and less polished.")
+                        Text("SenseVoice, Qwen, and legacy streaming backends. Hidden by default because these are still slower and less polished.")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(MuesliTheme.textPrimary)
                             .opacity(0.8)
@@ -1081,9 +1214,7 @@ struct ModelsView: View {
         case "cohere":
             try removeItemIfPresent(at: CohereTranscribeModelStore.cacheDirectory(), fileManager: fm)
         case "gigaam_v3":
-            try GigaAMV3ModelStore.deleteModelFiles(fileManager: fm)
-        case "sherpa_gigaam_rnnt":
-            try SherpaGigaAMRNNTModelStore.deleteModelFiles(fileManager: fm)
+            try ONNXGigaAMModelStore.deleteModelFiles(fileManager: fm)
         case "sensevoice":
             SenseVoiceTranscriber.deleteModelFiles(fileManager: fm)
         case "fluidaudio":
@@ -1174,9 +1305,7 @@ struct ModelsView: View {
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
         case "gigaam_v3":
-            return GigaAMV3ModelStore.isAvailableLocally()
-        case "sherpa_gigaam_rnnt":
-            return SherpaGigaAMRNNTModelStore.isAvailableLocally()
+            return ONNXGigaAMModelStore.isAvailableLocally()
         case "sensevoice":
             return SenseVoiceTranscriber.isModelDownloaded()
         default:

@@ -35,7 +35,9 @@ private struct LiveTranscriptSection: View {
             transcript: appState.liveMeetingTranscript,
             placeholder: appState.config.resolvedMeetingProcessingMode == .post
                 ? "Recording… transcript after meeting"
-                : "Waiting for speech…"
+                : "Waiting for speech…",
+            partialYou: appState.liveMeetingPartialYou,
+            partialOthers: appState.liveMeetingPartialOthers
         )
     }
 }

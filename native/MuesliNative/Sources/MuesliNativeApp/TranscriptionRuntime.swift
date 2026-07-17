@@ -15,7 +15,7 @@ struct SpeechTranscriptionResult: Sendable {
 
 actor TranscriptionCoordinator {
     static let explicitlyRoutedBackendIdentifiers: Set<String> = [
-        "whisper", "nemotron35", "gigaam_v3", "sherpa_gigaam_rnnt", "qwen", "cohere", "sensevoice",
+        "whisper", "nemotron35", "gigaam_v3", "qwen", "cohere", "sensevoice",
     ]
 
     private let fluidTranscriber = FluidAudioTranscriber()
@@ -23,8 +23,7 @@ actor TranscriptionCoordinator {
     private var _qwen3Transcriber: Any?
     private var _qwen3PostProcessor: Any?
     private var _cohereTranscriber: Any?
-    private let gigaAMV3Transcriber = GigaAMV3Transcriber()
-    private let sherpaGigaAMRNNTTranscriber = SherpaGigaAMRNNTTranscriber()
+    private let onnxGigaAMTranscriber = ONNXGigaAMTranscriber()
     private let senseVoiceTranscriber = SenseVoiceTranscriber()
     private var vadManager: VadManager?
     private var diarizerManager: DiarizerManager?
@@ -248,9 +247,7 @@ actor TranscriptionCoordinator {
                 ])
             }
         case "gigaam_v3":
-            try await gigaAMV3Transcriber.loadModels(progress: progress)
-        case "sherpa_gigaam_rnnt":
-            try await sherpaGigaAMRNNTTranscriber.loadModels(progress: progress)
+            try await onnxGigaAMTranscriber.loadModels(progress: progress)
         case "qwen":
             if #available(macOS 15, *) {
                 try await qwen3Transcriber.loadModels(progress: progress)
@@ -344,8 +341,8 @@ actor TranscriptionCoordinator {
         cleanMeetingTranscript(try await route(url: url, samples: samples, backend: backend, cohereLanguage: cohereLanguage))
     }
 
-    func transcribeMeetingBatchWithSherpaGigaAMRNNT(samplesBatch: [[Float]]) async throws -> [SpeechTranscriptionResult] {
-        let results = try await transcribeWithSherpaGigaAMRNNTBatch(samplesBatch: samplesBatch)
+    func transcribeMeetingBatchWithONNXGigaAM(samplesBatch: [[Float]]) async throws -> [SpeechTranscriptionResult] {
+        let results = try await transcribeWithONNXGigaAMBatch(samplesBatch: samplesBatch)
         return results.map { cleanMeetingTranscript($0) }
     }
 
@@ -399,8 +396,7 @@ actor TranscriptionCoordinator {
     func shutdown() async {
         await fluidTranscriber.shutdown()
         await whisperTranscriber.shutdown()
-        await gigaAMV3Transcriber.shutdown()
-        await sherpaGigaAMRNNTTranscriber.shutdown()
+        await onnxGigaAMTranscriber.shutdown()
         await senseVoiceTranscriber.shutdown()
         if #available(macOS 15, *) {
             if let nemotron35 = _nemotron35Transcriber as? Nemotron35StreamingTranscriber {
@@ -551,9 +547,7 @@ actor TranscriptionCoordinator {
         case "nemotron35":
             return try await transcribeWithNemotron35(url: url, samples: samples)
         case "gigaam_v3":
-            return try await transcribeWithGigaAMV3(url: url, samples: samples)
-        case "sherpa_gigaam_rnnt":
-            return try await transcribeWithSherpaGigaAMRNNT(url: url, samples: samples)
+            return try await transcribeWithONNXGigaAM(url: url, samples: samples)
         case "qwen":
             return try await transcribeWithQwen3(url: url, samples: samples)
         case "cohere":
@@ -594,38 +588,17 @@ actor TranscriptionCoordinator {
         )
     }
 
-    // MARK: - GigaAM v3 Russian ASR (CoreML)
+    // MARK: - GigaAM v3 E2E CTC INT8 (ONNX Runtime with CoreML EP)
 
-    private func transcribeWithGigaAMV3(url: URL, samples: [Float]? = nil) async throws -> SpeechTranscriptionResult {
-        fputs("[muesli-native] transcribing with GigaAM v3: \(url.lastPathComponent)\n", stderr)
-        let result: GigaAMV3TranscriptionResult
-        if let samples, GigaAMV3FileChunking.shouldChunk(sampleCount: samples.count) {
-            result = try await gigaAMV3Transcriber.transcribe(samples: samples, sampleRate: GigaAMV3FileChunking.sampleRate)
-        } else {
-            result = try await gigaAMV3Transcriber.transcribe(wavURL: url)
-        }
-        fputs("[muesli-native] GigaAM v3 result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
-        let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return SpeechTranscriptionResult(
-            text: text,
-            segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: result.duration, text: text)]
-        )
-    }
-
-    // MARK: - Sherpa GigaAM v3 RNNT (CPU INT8 via sherpa-onnx)
-
-    private func transcribeWithSherpaGigaAMRNNT(url: URL, samples: [Float]? = nil) async throws -> SpeechTranscriptionResult {
-        fputs("[muesli-native] transcribing with Sherpa GigaAM RNNT: \(url.lastPathComponent)\n", stderr)
-        let result: SherpaGigaAMRNNTTranscriptionResult
+    private func transcribeWithONNXGigaAM(url: URL, samples: [Float]? = nil) async throws -> SpeechTranscriptionResult {
+        fputs("[muesli-native] transcribing with ONNX GigaAM E2E CTC INT8: \(url.lastPathComponent)\n", stderr)
+        let result: ONNXGigaAMTranscriptionResult
         if let samples {
-            result = try await sherpaGigaAMRNNTTranscriber.transcribe(
-                samples: samples,
-                sampleRate: SherpaGigaAMRNNTChunking.sampleRate
-            )
+            result = try await onnxGigaAMTranscriber.transcribe(samples: samples, sampleRate: 16_000)
         } else {
-            result = try await sherpaGigaAMRNNTTranscriber.transcribe(wavURL: url)
+            result = try await onnxGigaAMTranscriber.transcribe(wavURL: url)
         }
-        fputs("[muesli-native] Sherpa GigaAM RNNT result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
+        fputs("[muesli-native] ONNX GigaAM result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
         let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         return SpeechTranscriptionResult(
             text: text,
@@ -633,13 +606,13 @@ actor TranscriptionCoordinator {
         )
     }
 
-    private func transcribeWithSherpaGigaAMRNNTBatch(samplesBatch: [[Float]]) async throws -> [SpeechTranscriptionResult] {
-        fputs("[muesli-native] transcribing \(samplesBatch.count) segments with Sherpa GigaAM RNNT batch\n", stderr)
-        let results = try await sherpaGigaAMRNNTTranscriber.transcribe(
+    private func transcribeWithONNXGigaAMBatch(samplesBatch: [[Float]]) async throws -> [SpeechTranscriptionResult] {
+        fputs("[muesli-native] transcribing \(samplesBatch.count) segments with ONNX GigaAM batch\n", stderr)
+        let results = try await onnxGigaAMTranscriber.transcribe(
             samplesBatch: samplesBatch,
-            sampleRate: SherpaGigaAMRNNTChunking.sampleRate
+            sampleRate: 16_000
         )
-        fputs("[muesli-native] Sherpa GigaAM RNNT batch completed (items=\(results.count))\n", stderr)
+        fputs("[muesli-native] ONNX GigaAM batch completed (items=\(results.count))\n", stderr)
         return results.map { result in
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return SpeechTranscriptionResult(

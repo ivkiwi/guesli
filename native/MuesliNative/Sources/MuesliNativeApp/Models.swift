@@ -75,20 +75,11 @@ struct BackendOption: Equatable {
 
     static let gigaAMV3Russian = BackendOption(
         backend: "gigaam_v3",
-        model: "huggingfinger0/gigaam-v3-coreml",
-        label: "GigaAM v3 Russian",
-        sizeLabel: GigaAMV3ModelStore.downloadedModelSizeLabel,
-        description: "Russian-first offline ASR via precompiled CoreML. Runs locally on Apple Silicon; no Python server or cloud.",
-        recommended: false
-    )
-
-    static let sherpaGigaAMRNNT = BackendOption(
-        backend: SherpaGigaAMRNNTModelStore.backendIdentifier,
-        model: SherpaGigaAMRNNTModelStore.modelID,
-        label: "Sherpa GigaAM RNNT",
-        sizeLabel: SherpaGigaAMRNNTModelStore.downloadedModelSizeLabel,
-        description: "Russian GigaAM v3 RNNT via sherpa-onnx CPU INT8. Chunked offline decode for dictation and meeting transcripts.",
-        recommended: false
+        model: "istupakov/gigaam-v3-onnx:e2e-ctc-int8",
+        label: "GigaAM v3 E2E CTC",
+        sizeLabel: ONNXGigaAMModelStore.downloadedModelSizeLabel,
+        description: "Russian-first offline ASR via ONNX INT8 with CoreML GPU acceleration. Runs locally on Apple Silicon; no Python server or cloud.",
+        recommended: true
     )
 
     static let cohereTranscribe = BackendOption(
@@ -130,7 +121,7 @@ struct BackendOption: Equatable {
     )
 
     static let experimental: [BackendOption] = [
-        .sherpaGigaAMRNNT, .senseVoiceSmall, .qwen3Asr,
+        .senseVoiceSmall, .qwen3Asr,
     ]
 
     /// Models available for download and use.
@@ -150,7 +141,12 @@ struct BackendOption: Equatable {
     }
 
     static func resolve(backend: String, model: String) -> BackendOption? {
-        if backend == gigaAMV3Russian.backend, model == "kruatech/gigaam-v3-mlx" {
+        let legacyGigaAMModels: Set<String> = [
+            "huggingfinger0/gigaam-v3-coreml",
+            "kruatech/gigaam-v3-mlx",
+        ]
+        if backend == "sherpa_gigaam_rnnt"
+            || (backend == gigaAMV3Russian.backend && legacyGigaAMModels.contains(model)) {
             return .gigaAMV3Russian
         }
         return all.first { $0.backend == backend && $0.model == model }
@@ -202,9 +198,7 @@ struct BackendOption: Equatable {
                 .appendingPathComponent(".cache/muesli/models/nemotron35-multilingual-2240ms/encoder.mlmodelc/coremldata.bin")
             return fm.fileExists(atPath: path.path)
         case "gigaam_v3":
-            return GigaAMV3ModelStore.isAvailableLocally()
-        case "sherpa_gigaam_rnnt":
-            return SherpaGigaAMRNNTModelStore.isAvailableLocally()
+            return ONNXGigaAMModelStore.isAvailableLocally()
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
         case "sensevoice":
@@ -1126,6 +1120,7 @@ struct AppConfig: Codable {
     var postProcessorSystemPrompt: String = PostProcessorOption.defaultSystemPrompt
     var enableScreenContext: Bool = false
     var useCoreAudioTap: Bool = true
+    var enableLiveStreamingPartials: Bool = false
     var meetingHookEnabled: Bool = false
     var meetingHookPath: String = ""
     var meetingHookTimeoutSeconds: Int = 30
@@ -1235,6 +1230,7 @@ struct AppConfig: Codable {
         case postProcessorSystemPrompt = "post_processor_system_prompt"
         case enableScreenContext = "enable_screen_context"
         case useCoreAudioTap = "use_core_audio_tap"
+        case enableLiveStreamingPartials = "enable_live_streaming_partials"
         case meetingHookEnabled = "meeting_hook_enabled"
         case meetingHookPath = "meeting_hook_path"
         case meetingHookTimeoutSeconds = "meeting_hook_timeout_seconds"
@@ -1416,6 +1412,7 @@ struct AppConfig: Codable {
         }
         enableScreenContext = (try? c.decode(Bool.self, forKey: .enableScreenContext)) ?? defaults.enableScreenContext
         useCoreAudioTap = (try? c.decode(Bool.self, forKey: .useCoreAudioTap)) ?? defaults.useCoreAudioTap
+        enableLiveStreamingPartials = (try? c.decode(Bool.self, forKey: .enableLiveStreamingPartials)) ?? defaults.enableLiveStreamingPartials
         meetingHookEnabled = (try? c.decode(Bool.self, forKey: .meetingHookEnabled)) ?? defaults.meetingHookEnabled
         meetingHookPath = (try? c.decode(String.self, forKey: .meetingHookPath)) ?? defaults.meetingHookPath
         meetingHookTimeoutSeconds = (try? c.decode(Int.self, forKey: .meetingHookTimeoutSeconds)) ?? defaults.meetingHookTimeoutSeconds

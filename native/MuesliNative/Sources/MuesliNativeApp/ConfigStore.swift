@@ -17,6 +17,19 @@ private enum RemovedCanaryQwenMigration {
     }
 }
 
+private enum RemovedGigaAMBackendMigration {
+    static let fallback = BackendOption.gigaAMV3Russian
+    static let legacyModels: Set<String> = [
+        "huggingfinger0/gigaam-v3-coreml",
+        "kruatech/gigaam-v3-mlx",
+    ]
+
+    static func matches(backend: String, model: String) -> Bool {
+        backend == "sherpa_gigaam_rnnt"
+            || (backend == "gigaam_v3" && legacyModels.contains(model))
+    }
+}
+
 final class ConfigStore {
     private struct LegacySettingsImportResult {
         let didAttempt: Bool
@@ -70,7 +83,8 @@ final class ConfigStore {
 
         let legacyImport = importLegacySettingsIfNeeded(into: &config)
         let didMigrateRemovedCanaryQwen = migrateRemovedCanaryQwenSelection(in: &config)
-        if legacyImport.didChangeConfig || didMigrateRemovedCanaryQwen {
+        let didMigrateRemovedGigaAM = migrateRemovedGigaAMSelection(in: &config)
+        if legacyImport.didChangeConfig || didMigrateRemovedCanaryQwen || didMigrateRemovedGigaAM {
             save(config)
         }
         if legacyImport.didAttempt {
@@ -121,6 +135,22 @@ final class ConfigStore {
             model = RemovedCanaryQwenMigration.fallback.model
             didMigrate = true
             DiagnosticsLog.write("[config-store] migrated removed Canary Qwen \(field) backend to \(RemovedCanaryQwenMigration.fallback.label)")
+        }
+
+        migrate("dictation", backend: &config.sttBackend, model: &config.sttModel)
+        migrate("meeting", backend: &config.meetingTranscriptionBackend, model: &config.meetingTranscriptionModel)
+        return didMigrate
+    }
+
+    private func migrateRemovedGigaAMSelection(in config: inout AppConfig) -> Bool {
+        var didMigrate = false
+
+        func migrate(_ field: String, backend: inout String, model: inout String) {
+            guard RemovedGigaAMBackendMigration.matches(backend: backend, model: model) else { return }
+            backend = RemovedGigaAMBackendMigration.fallback.backend
+            model = RemovedGigaAMBackendMigration.fallback.model
+            didMigrate = true
+            DiagnosticsLog.write("[config-store] migrated removed GigaAM \(field) backend to \(RemovedGigaAMBackendMigration.fallback.label)")
         }
 
         migrate("dictation", backend: &config.sttBackend, model: &config.sttModel)

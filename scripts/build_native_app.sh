@@ -15,7 +15,7 @@ APP_BUNDLE_NAME="${MUESLI_APP_BUNDLE_NAME:-$APP_NAME.app}"
 APP_EXECUTABLE_NAME="${MUESLI_EXECUTABLE_NAME:-Guesli}"
 APP_SUPPORT_DIR_NAME="${MUESLI_SUPPORT_DIR_NAME:-Guesli}"
 BUNDLE_ID="${MUESLI_BUNDLE_ID:-com.guesli.app}"
-DEFAULT_APP_VERSION="0.7.2.6"
+DEFAULT_APP_VERSION="0.7.2.7"
 APP_VERSION="${MUESLI_BUILD_VERSION:-$DEFAULT_APP_VERSION}"
 APP_BUNDLE_VERSION="${MUESLI_BUNDLE_VERSION:-$APP_VERSION}"
 APP_SHORT_VERSION="${MUESLI_SHORT_VERSION:-$APP_VERSION}"
@@ -77,6 +77,7 @@ cp "$APP_BIN" "$STAGED_APP_DIR/Contents/MacOS/$APP_EXECUTABLE_NAME"
 chmod +x "$STAGED_APP_DIR/Contents/MacOS/$APP_EXECUTABLE_NAME"
 cp "$CLI_BIN" "$STAGED_APP_DIR/Contents/MacOS/$CLI_BINARY"
 chmod +x "$STAGED_APP_DIR/Contents/MacOS/$CLI_BINARY"
+"$ROOT/scripts/build_onnx_gigaam_helper.sh" "$STAGED_APP_DIR/Contents/MacOS"
 
 # Bundle SwiftPM-linked frameworks (rpath is @loader_path, so they go next to the binary)
 for framework in "$BIN_DIR"/*.framework; do
@@ -226,7 +227,7 @@ if [[ "$SKIP_SIGN" != "1" ]]; then
 
   # Sign loose native runtime libraries loaded via dlopen. Hardened runtime
   # library validation requires these to have the same Team ID as the app.
-  find "$APP_DIR/Contents/MacOS" -maxdepth 1 \( -name "liblocalvqe*.dylib" -o -name "libggml*.dylib" -o -name "libggml*.so" \) -type f | while read -r library; do
+  find "$APP_DIR/Contents/MacOS" -maxdepth 1 \( -name "liblocalvqe*.dylib" -o -name "libggml*.dylib" -o -name "libggml*.so" -o -name "libonnxruntime*.dylib" \) -type f | while read -r library; do
     if file "$library" | grep -q "Mach-O"; then
       codesign --force --options runtime "$CODESIGN_TIMESTAMP" \
         --sign "$SIGN_IDENTITY" \
@@ -243,6 +244,10 @@ if [[ "$SKIP_SIGN" != "1" ]]; then
   codesign --force --options runtime "$CODESIGN_TIMESTAMP" \
     --sign "$SIGN_IDENTITY" \
     "$APP_DIR/Contents/MacOS/muesli-cli"
+
+  codesign --force --options runtime "$CODESIGN_TIMESTAMP" \
+    --sign "$SIGN_IDENTITY" \
+    "$APP_DIR/Contents/MacOS/onnx-gigaam-helper"
 
   # Sign the app bundle with hardened runtime, secure timestamp, and entitlements
   ENTITLEMENTS="${MUESLI_ENTITLEMENTS:-$ROOT/scripts/Muesli.entitlements}"
@@ -407,6 +412,9 @@ else
 
   if [[ -f "$APP_DIR/Contents/MacOS/muesli-cli" ]]; then
     codesign --force --sign "$LOCAL_SIGN_IDENTITY" "$APP_DIR/Contents/MacOS/muesli-cli"
+  fi
+  if [[ -f "$APP_DIR/Contents/MacOS/onnx-gigaam-helper" ]]; then
+    codesign --force --sign "$LOCAL_SIGN_IDENTITY" "$APP_DIR/Contents/MacOS/onnx-gigaam-helper"
   fi
 
   # Sign the bundle last so the Info.plist binding / identity stick.

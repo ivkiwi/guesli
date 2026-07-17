@@ -86,6 +86,8 @@ final class AppState {
     var meetingStartStatus: String?
     var liveMeetingTranscript: String = ""
     var liveMeetingTranscriptOwnerID: Int64? = nil
+    var liveMeetingPartialYou: String = ""
+    var liveMeetingPartialOthers: String = ""
     var activeMeetingAudioWarning: ActiveMeetingAudioWarning?
     var dictationState: DictationState = .idle
     var lastTranscriptCleanupWarning: String?

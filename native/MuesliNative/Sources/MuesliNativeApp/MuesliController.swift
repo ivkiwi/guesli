@@ -4150,12 +4150,12 @@ final class MuesliController: NSObject {
         guard !speechSegments.isEmpty else { return "" }
 
         let transcription: SpeechTranscriptionResult
-        if backend.backend == SherpaGigaAMRNNTModelStore.backendIdentifier {
+        if backend.backend == ONNXGigaAMModelStore.backendIdentifier {
             transcription = try await MeetingRetranscriptionPipeline.transcribeSegmentedAudio(
                 samples: preparedAudio.samples,
                 vadSegments: speechSegments
             ) { [transcriptionCoordinator] segmentAudio in
-                try await transcriptionCoordinator.transcribeMeetingBatchWithSherpaGigaAMRNNT(
+                try await transcriptionCoordinator.transcribeMeetingBatchWithONNXGigaAM(
                     samplesBatch: segmentAudio.map(\.samples)
                 )
             }
@@ -4366,7 +4366,7 @@ final class MuesliController: NSObject {
         }
 
         let transcription: SpeechTranscriptionResult
-        if backend.backend == SherpaGigaAMRNNTModelStore.backendIdentifier {
+        if backend.backend == ONNXGigaAMModelStore.backendIdentifier {
             transcription = try await MeetingRetranscriptionPipeline.transcribeSegmentedAudio(
                 samples: wavData.samples,
                 vadSegments: speechSegments,
@@ -4374,7 +4374,7 @@ final class MuesliController: NSObject {
                 diagnosticsLabel: "[muesli-native] source-track retranscribe meeting_id=\(meetingID)",
                 logger: { DiagnosticsLog.write($0) }
             ) { [transcriptionCoordinator] segmentAudio in
-                try await transcriptionCoordinator.transcribeMeetingBatchWithSherpaGigaAMRNNT(
+                try await transcriptionCoordinator.transcribeMeetingBatchWithONNXGigaAM(
                     samplesBatch: segmentAudio.map(\.samples)
                 )
             }
@@ -5654,8 +5654,18 @@ final class MuesliController: NSObject {
                         self.appState.liveMeetingTranscript += LiveTranscriptCheckpointAssembler.renderedText(from: entries) + "\n"
                     }
                 }
+                meetingSession.onLivePartialsChanged = { [weak self] you, others in
+                    Task { @MainActor [weak self] in
+                        guard let self,
+                              self.appState.liveMeetingTranscriptOwnerID == meetingID else { return }
+                        self.appState.liveMeetingPartialYou = you
+                        self.appState.liveMeetingPartialOthers = others
+                    }
+                }
                 appState.liveMeetingTranscriptOwnerID = meetingID
                 appState.liveMeetingTranscript = ""
+                appState.liveMeetingPartialYou = ""
+                appState.liveMeetingPartialOthers = ""
                 liveTranscriptOverlapByMeetingSpeaker.removeAll()
                 let micHealthWarningLock = NSLock()
                 var lastForwardedMicHealthWarning: String?
@@ -6438,6 +6448,8 @@ final class MuesliController: NSObject {
                 if self.appState.liveMeetingTranscriptOwnerID == liveMeetingID {
                     self.appState.liveMeetingTranscript = ""
                     self.appState.liveMeetingTranscriptOwnerID = nil
+                    self.appState.liveMeetingPartialYou = ""
+                    self.appState.liveMeetingPartialOthers = ""
                 }
                 self.liveTranscriptOverlapByMeetingSpeaker.removeAll()
                 if let finalMeetingResult {
