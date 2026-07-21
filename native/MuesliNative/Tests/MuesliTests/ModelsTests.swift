@@ -1594,6 +1594,22 @@ struct HotkeyMonitorTests {
 @Suite("MeetingResummarizationPolicy", .muesliHermeticSupport)
 struct MeetingResummarizationPolicyTests {
 
+    @Test("only the latest summary request may persist")
+    func latestSummaryRequestWins() {
+        var gate = MeetingSummaryRequestGate()
+        let first = gate.begin(meetingID: 42)
+        let second = gate.begin(meetingID: 42)
+
+        #expect(!gate.isCurrent(first, meetingID: 42))
+        #expect(gate.isCurrent(second, meetingID: 42))
+
+        gate.finish(first, meetingID: 42)
+        #expect(gate.isCurrent(second, meetingID: 42))
+
+        gate.finish(second, meetingID: 42)
+        #expect(!gate.isCurrent(second, meetingID: 42))
+    }
+
     @Test("resummarize preserves the existing meeting title")
     func preservesExistingMeetingTitle() {
         let meeting = MeetingRecord(

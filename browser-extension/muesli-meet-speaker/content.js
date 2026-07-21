@@ -265,12 +265,15 @@ function mergeSpeakerGroups(groups) {
 }
 
 function detectActiveSpeakers() {
-  return mergeSpeakerGroups([
-    activeSpeakersFromRecentCaptions(),
+  const explicitSpeakers = mergeSpeakerGroups([
     activeSpeakersFromAriaLabels(),
     activeSpeakersFromLiveRegions(),
     activeSpeakersFromMeetTiles()
   ]);
+  return speakerDetection?.preferExplicitSpeakers(
+    explicitSpeakers,
+    activeSpeakersFromRecentCaptions()
+  ) || explicitSpeakers;
 }
 
 async function sendObservation(activeSpeakers) {

@@ -470,7 +470,9 @@ struct MeetingDetailView: View {
                         syncPendingTemplateSelectionIfNeeded(
                             for: controller.meeting(id: meeting.id) ?? meeting
                         )
-                        summaryErrorMessage = error.localizedDescription
+                        if !(error is CancellationError) {
+                            summaryErrorMessage = error.localizedDescription
+                        }
                     }
                 }
                 if hasPendingTemplateChange(for: meeting) {

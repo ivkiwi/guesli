@@ -78,6 +78,37 @@ struct MeetingPromptStateMachineTests {
         #expect(second.candidate?.id == candidate.id)
     }
 
+    @Test("focused Meet URL requires live media evidence before prompt dwell starts")
+    func focusedMeetURLRequiresLiveMediaEvidence() {
+        let machine = MeetingPromptStateMachine()
+        let urlOnly = candidate(evidence: [.browserURL, .foregroundApp])
+        let withAudio = candidate(evidence: [.browserURL, .foregroundApp, .audioInputProcess])
+
+        let beforeAudio = decision(machine, candidate: urlOnly, now: now)
+        let audioStarted = decision(machine, candidate: withAudio, now: now.addingTimeInterval(10))
+        let afterFreshDwell = decision(machine, candidate: withAudio, now: now.addingTimeInterval(13.1))
+
+        #expect(beforeAudio.action == .none)
+        #expect(beforeAudio.reason == .noCandidate)
+        #expect(audioStarted.reason == .candidatePending)
+        #expect(afterFreshDwell.action == .show)
+        #expect(afterFreshDwell.candidate?.id == withAudio.id)
+    }
+
+    @Test("visible Meet prompt survives transient URL-only evidence for same candidate")
+    func visibleMeetPromptSurvivesTransientURLOnlyEvidence() {
+        let machine = immediateMachine()
+        let withAudio = candidate(evidence: [.browserURL, .foregroundApp, .audioInputProcess])
+        let urlOnly = candidate(evidence: [.browserURL, .foregroundApp])
+
+        machine.markShown(withAudio)
+        let result = decision(machine, candidate: urlOnly, visible: true, promptID: withAudio.id)
+
+        #expect(result.action == .none)
+        #expect(result.reason == .promptAlreadyVisible)
+        #expect(result.candidate?.id == urlOnly.id)
+    }
+
     @Test("candidate change restarts stability delay")
     func candidateChangeRestartsStabilityDelay() {
         let machine = MeetingPromptStateMachine()

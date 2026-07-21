@@ -28,7 +28,26 @@ enum MeetingBrowserSort: Hashable {
     }
 }
 
+enum MeetingActiveBannerPhase: Equatable {
+    case preparing
+    case recording
+    case paused
+    case finalizing
+}
+
 enum MeetingBrowserLogic {
+    static func activeBannerPhase(
+        meetingStatus: MeetingStatus,
+        isStarting: Bool,
+        isRecording: Bool,
+        isPaused: Bool
+    ) -> MeetingActiveBannerPhase {
+        guard meetingStatus == .recording else { return .finalizing }
+        if isStarting && !isRecording { return .preparing }
+        guard isRecording else { return .finalizing }
+        return isPaused ? .paused : .recording
+    }
+
     static func availableFilters(
         for meetings: [MeetingRecord],
         now: Date = Date(),
@@ -642,6 +661,7 @@ struct MeetingsView: View {
 
     @ViewBuilder
     private func activeMeetingBanner(_ meeting: MeetingRecord) -> some View {
+        let phase = activeMeetingBannerPhase(for: meeting)
         HStack(spacing: MuesliTheme.spacing12) {
             HStack(spacing: 8) {
                 Circle()
@@ -677,7 +697,7 @@ struct MeetingsView: View {
             }
             .buttonStyle(.plain)
 
-            if meeting.status == .recording {
+            if phase == .recording || phase == .paused {
                 Button {
                     controller.toggleMeetingRecordingPause()
                 } label: {
@@ -728,14 +748,30 @@ struct MeetingsView: View {
         )
     }
 
+    private func activeMeetingBannerPhase(for meeting: MeetingRecord) -> MeetingActiveBannerPhase {
+        MeetingBrowserLogic.activeBannerPhase(
+            meetingStatus: meeting.status,
+            isStarting: appState.isMeetingStarting,
+            isRecording: appState.isMeetingRecording,
+            isPaused: appState.isMeetingRecordingPaused
+        )
+    }
+
     private func activeMeetingStatusText(for meeting: MeetingRecord) -> String {
-        guard meeting.status == .recording else { return "Finalizing notes" }
-        return appState.isMeetingRecordingPaused ? "Recording paused" : "Recording now"
+        switch activeMeetingBannerPhase(for: meeting) {
+        case .preparing: return "Preparing recording"
+        case .recording: return "Recording now"
+        case .paused: return "Recording paused"
+        case .finalizing: return "Finalizing notes"
+        }
     }
 
     private func activeMeetingStatusColor(for meeting: MeetingRecord) -> Color {
-        guard meeting.status == .recording else { return MuesliTheme.accent }
-        return appState.isMeetingRecordingPaused ? MuesliTheme.transcribing : MuesliTheme.recording
+        switch activeMeetingBannerPhase(for: meeting) {
+        case .preparing, .paused: return MuesliTheme.transcribing
+        case .recording: return MuesliTheme.recording
+        case .finalizing: return MuesliTheme.accent
+        }
     }
 
     @ViewBuilder

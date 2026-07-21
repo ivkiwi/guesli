@@ -4,6 +4,8 @@ import os
 final class MeetingRecordingWriter {
     static let minimumRecoverableDuration: TimeInterval = 1
     private static let sampleRate = 16_000
+    // ponytail: callbacks have no timestamps; keep one second for re-alignment and timestamp chunks if tighter sync is needed.
+    private static let maximumBufferedSkewSamples = sampleRate
     private static let bytesPerSample = MemoryLayout<Int16>.size
     private static let filePrefix = "live-meeting"
 
@@ -13,6 +15,8 @@ final class MeetingRecordingWriter {
         var bytesWritten: Int = 0
         var pendingMic: [Int16] = []
         var pendingSystem: [Int16] = []
+        var micWasMissing = false
+        var systemWasMissing = false
     }
 
     private let lock = OSAllocatedUnfairLock(initialState: State())
@@ -73,6 +77,8 @@ final class MeetingRecordingWriter {
     func markPauseBoundary() {
         lock.withLock { state in
             writeMixedSamples(state: &state, flushAll: true)
+            state.micWasMissing = false
+            state.systemWasMissing = false
         }
     }
 
@@ -159,32 +165,65 @@ final class MeetingRecordingWriter {
             state.fileHandle = nil
         }
     }
+
+    func pendingSampleCountsForTesting() -> (mic: Int, system: Int) {
+        lock.withLock { ($0.pendingMic.count, $0.pendingSystem.count) }
+    }
 #endif
 
     private func append(_ samples: [Int16], toMic: Bool) {
         guard !samples.isEmpty else { return }
         lock.withLock { state in
             if toMic {
-                state.pendingMic.append(contentsOf: samples)
+                var samplesToAppend = samples[...]
+                if state.micWasMissing {
+                    writeSamples(state: &state, count: max(state.pendingSystem.count - samples.count, 0))
+                    samplesToAppend = samples.dropFirst(max(samples.count - state.pendingSystem.count, 0))
+                    state.micWasMissing = false
+                }
+                state.pendingMic.append(contentsOf: samplesToAppend)
             } else {
-                state.pendingSystem.append(contentsOf: samples)
+                var samplesToAppend = samples[...]
+                if state.systemWasMissing {
+                    writeSamples(state: &state, count: max(state.pendingMic.count - samples.count, 0))
+                    samplesToAppend = samples.dropFirst(max(samples.count - state.pendingMic.count, 0))
+                    state.systemWasMissing = false
+                }
+                state.pendingSystem.append(contentsOf: samplesToAppend)
             }
             writeMixedSamples(state: &state, flushAll: false)
         }
     }
 
     private func writeMixedSamples(state: inout State, flushAll: Bool) {
-        let availableCount = flushAll
-            ? max(state.pendingMic.count, state.pendingSystem.count)
-            : min(state.pendingMic.count, state.pendingSystem.count)
-        guard availableCount > 0 else { return }
+        let matchedCount = min(state.pendingMic.count, state.pendingSystem.count)
+        writeSamples(state: &state, count: matchedCount)
+
+        if flushAll {
+            writeSamples(state: &state, count: max(state.pendingMic.count, state.pendingSystem.count))
+            return
+        }
+
+        if state.pendingMic.count > Self.maximumBufferedSkewSamples {
+            let count = state.pendingMic.count - Self.maximumBufferedSkewSamples
+            writeSamples(state: &state, count: count)
+            state.systemWasMissing = true
+        } else if state.pendingSystem.count > Self.maximumBufferedSkewSamples {
+            let count = state.pendingSystem.count - Self.maximumBufferedSkewSamples
+            writeSamples(state: &state, count: count)
+            state.micWasMissing = true
+        }
+    }
+
+    private func writeSamples(state: inout State, count: Int) {
+        guard count > 0 else { return }
 
         let mixedSamples = Self.mix(
-            mic: Array(state.pendingMic.prefix(availableCount)),
-            system: Array(state.pendingSystem.prefix(availableCount))
+            mic: Array(state.pendingMic.prefix(count)),
+            system: Array(state.pendingSystem.prefix(count))
         )
-        state.pendingMic.removeFirst(min(availableCount, state.pendingMic.count))
-        state.pendingSystem.removeFirst(min(availableCount, state.pendingSystem.count))
+        state.pendingMic.removeFirst(min(count, state.pendingMic.count))
+        state.pendingSystem.removeFirst(min(count, state.pendingSystem.count))
 
         let pcmData = mixedSamples.withUnsafeBufferPointer { Data(buffer: $0) }
         state.fileHandle?.write(pcmData)

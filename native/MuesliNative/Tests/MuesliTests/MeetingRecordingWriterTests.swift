@@ -44,6 +44,72 @@ struct MeetingRecordingWriterTests {
         #expect(samples == [1000, 3000, 5000, 7000])
     }
 
+    @Test("stalled system input leaves healthy mic audio recoverable on disk")
+    func stalledSystemInputLeavesRecoverableMicAudio() throws {
+        let writer = try MeetingRecordingWriter()
+        let mic = [Int16](repeating: 1_200, count: 48_000)
+        writer.appendMic(mic)
+
+        let partialURL = try #require(writer.partialURLForTesting())
+        defer { try? FileManager.default.removeItem(at: partialURL) }
+        let attributes = try FileManager.default.attributesOfItem(atPath: partialURL.path)
+        let fileSize = try #require(attributes[.size] as? NSNumber).intValue
+        let pending = writer.pendingSampleCountsForTesting()
+
+        #expect(fileSize > 44)
+        #expect(pending.mic <= 16_000)
+        #expect(pending.system == 0)
+        writer.closeWithoutFinalizingForTesting()
+        #expect(try MeetingRecordingWriter.finalizePartialRecordingIfNonTrivial(at: partialURL))
+        #expect(try readMonoPCM16WAVSamples(from: partialURL) == Array(mic.prefix(32_000)))
+    }
+
+    @Test("stalled mic input cannot keep healthy system audio only in memory")
+    func stalledMicInputFlushesSystemToDisk() throws {
+        let writer = try MeetingRecordingWriter()
+        let system = [Int16](repeating: -900, count: 48_000)
+        writer.appendSystem(system)
+
+        let partialURL = try #require(writer.partialURLForTesting())
+        let attributes = try FileManager.default.attributesOfItem(atPath: partialURL.path)
+        let fileSize = try #require(attributes[.size] as? NSNumber).intValue
+        let pending = writer.pendingSampleCountsForTesting()
+
+        #expect(fileSize > 44)
+        #expect(pending.mic == 0)
+        #expect(pending.system <= 16_000)
+        #expect(try readMonoPCM16WAVSamples(from: #require(writer.stop())) == system)
+    }
+
+    @Test("a resumed input aligns with the latest buffered audio")
+    func resumedInputAlignsWithLatestBufferedAudio() throws {
+        let writer = try MeetingRecordingWriter()
+        writer.appendMic(
+            [Int16](repeating: 1_000, count: 16_000)
+                + [Int16](repeating: 3_000, count: 16_000)
+        )
+        writer.appendSystem([Int16](repeating: 5_000, count: 8_000))
+
+        let samples = try readMonoPCM16WAVSamples(from: #require(writer.stop()))
+
+        #expect(Array(samples.prefix(16_000)) == [Int16](repeating: 1_000, count: 16_000))
+        #expect(Array(samples[16_000..<24_000]) == [Int16](repeating: 3_000, count: 8_000))
+        #expect(Array(samples.suffix(8_000)) == [Int16](repeating: 4_000, count: 8_000))
+    }
+
+    @Test("backlogged input cannot extend an already silence-padded timeline")
+    func backloggedInputDoesNotExtendTimeline() throws {
+        let writer = try MeetingRecordingWriter()
+        writer.appendMic([Int16](repeating: 1_000, count: 48_000))
+        writer.appendSystem([Int16](repeating: 3_000, count: 48_000))
+
+        let samples = try readMonoPCM16WAVSamples(from: #require(writer.stop()))
+
+        #expect(samples.count == 48_000)
+        #expect(Array(samples.prefix(32_000)) == [Int16](repeating: 1_000, count: 32_000))
+        #expect(Array(samples.suffix(16_000)) == [Int16](repeating: 2_000, count: 16_000))
+    }
+
     @Test("dual-track writer keeps mic and system streams separate and ordered")
     func dualTrackWriterKeepsStreamsSeparateAndOrdered() throws {
         let tempRoot = makeTemporaryDirectory()

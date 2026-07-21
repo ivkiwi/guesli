@@ -47,6 +47,25 @@ enum MeetingResummarizationPolicy {
     }
 }
 
+struct MeetingSummaryRequestGate {
+    private var currentRequestByMeetingID: [Int64: UUID] = [:]
+
+    mutating func begin(meetingID: Int64) -> UUID {
+        let requestID = UUID()
+        currentRequestByMeetingID[meetingID] = requestID
+        return requestID
+    }
+
+    func isCurrent(_ requestID: UUID, meetingID: Int64) -> Bool {
+        currentRequestByMeetingID[meetingID] == requestID
+    }
+
+    mutating func finish(_ requestID: UUID, meetingID: Int64) {
+        guard isCurrent(requestID, meetingID: meetingID) else { return }
+        currentRequestByMeetingID.removeValue(forKey: meetingID)
+    }
+}
+
 enum MeetingSummaryPersistenceError: Error, LocalizedError {
     case failedToSaveSummary(underlying: Error)
 
@@ -133,6 +152,7 @@ struct MeetSpeakerBridgeRoutingStats: Equatable, Sendable {
     var bufferedNoActiveMeeting = 0
     var droppedNoActiveMeeting = 0
     var droppedSourceMismatch = 0
+    var droppedStale = 0
 
     mutating func recordReceived(_ observation: MeetSpeakerObservation) {
         received.record(observation)
@@ -144,18 +164,30 @@ enum MeetSpeakerObservationRoute: Equatable {
     case bufferPendingMeeting
     case dropNoActiveMeeting
     case dropSourceMismatch
+    case dropStale
 }
 
 enum MeetSpeakerObservationRouting {
     static func route(
         matchesActiveSource: Bool,
+        isTemporallyRelevant: Bool,
         hasActiveRecordingSession: Bool,
         canBufferForPendingMeeting: Bool
     ) -> MeetSpeakerObservationRoute {
         guard matchesActiveSource else { return .dropSourceMismatch }
+        guard isTemporallyRelevant else { return .dropStale }
         if hasActiveRecordingSession { return .recordToActiveMeeting }
         if canBufferForPendingMeeting { return .bufferPendingMeeting }
         return .dropNoActiveMeeting
+    }
+
+    static func matches(meetingURL rawURL: String?, activeSource source: MeetingAutoStopSource?) -> Bool {
+        guard let source else { return true }
+        guard let rawURL,
+              let normalized = MeetingURLNormalizer.normalize(rawURL) else { return false }
+        return source.candidateID == normalized.id
+            || source.suppressionID == normalized.id
+            || source.normalizedURL == normalized.url
     }
 }
 
@@ -266,6 +298,7 @@ struct MeetingRecordingSaveRequest: Sendable {
     let meetingTitle: String
     let startedAt: Date
     let destinationDirectory: URL
+    let recoveryDirectory: URL
     let fileFormat: MeetingRecordingFileFormat
 }
 
@@ -280,6 +313,13 @@ enum MeetingRecordingSavePlan {
 struct PreparedMeetingRecordingSave {
     let path: String?
     let error: MeetingLifecycleError?
+    let preservesTemporaryRecording: Bool
+
+    init(path: String?, error: MeetingLifecycleError?, preservesTemporaryRecording: Bool = false) {
+        self.path = path
+        self.error = error
+        self.preservesTemporaryRecording = preservesTemporaryRecording
+    }
 
     static let none = PreparedMeetingRecordingSave(path: nil, error: nil)
 }
@@ -411,6 +451,8 @@ final class MuesliController: NSObject {
     private var meetingDetectionMonitorStarted = false
 
     private var searchTask: Task<Void, Never>?
+    private var meetingSummaryTasks: [Int64: Task<Void, Never>] = [:]
+    private var meetingSummaryRequestGate = MeetingSummaryRequestGate()
     private var onboardingModelPreparationTask: Task<Void, Never>?
     private var maraudersMapCountdown: MaraudersMapCountdownController?
 
@@ -439,7 +481,7 @@ final class MuesliController: NSObject {
     private var liveManualNotesPersistWorkItems: [Int64: DispatchWorkItem] = [:]
     private let liveManualNotesPersistInterval: TimeInterval = 0.75
     private let pendingMeetSpeakerObservationLimit = 2000
-    private let pendingMeetSpeakerObservationRetention: TimeInterval = 2 * 60 * 60
+    private let pendingMeetSpeakerObservationRetention: TimeInterval = 5 * 60
     private let pendingMeetSpeakerObservationFutureTolerance: TimeInterval = 5 * 60
     private var staleLiveMeetingRecoveryFailures = Set<Int64>()
     private var dictationState: DictationState = .idle
@@ -488,6 +530,7 @@ final class MuesliController: NSObject {
     private var isStoppingMeetingRecording = false
     private var isPresentingMeetingTerminationConfirmation = false
     private var isTerminatingAfterMeetingConfirmation = false
+    private var terminateAfterMeetingProcessing = false
     private var backgroundMeetingProcessingCount = 0
     private var pendingMeetingCompletionNotification: PendingMeetingCompletionNotification?
     private var contributionMilestonePromptDismissedThisLaunch = false
@@ -2516,6 +2559,7 @@ final class MuesliController: NSObject {
         meetSpeakerBridgeStats.recordReceived(observation)
         switch MeetSpeakerObservationRouting.route(
             matchesActiveSource: meetSpeakerObservationMatchesActiveSource(observation),
+            isTemporallyRelevant: meetSpeakerObservationIsTemporallyRelevant(observation),
             hasActiveRecordingSession: activeMeetingSession?.isRecording == true,
             canBufferForPendingMeeting: canBufferMeetSpeakerObservationForPendingMeeting
         ) {
@@ -2535,6 +2579,8 @@ final class MuesliController: NSObject {
             meetSpeakerBridgeStats.droppedNoActiveMeeting += 1
         case .dropSourceMismatch:
             meetSpeakerBridgeStats.droppedSourceMismatch += 1
+        case .dropStale:
+            meetSpeakerBridgeStats.droppedStale += 1
         }
     }
 
@@ -2555,16 +2601,27 @@ final class MuesliController: NSObject {
     }
 
     private var canBufferMeetSpeakerObservationForPendingMeeting: Bool {
-        isStartingMeetingRecording || meetingStartMeetingID != nil || activeMeetingID != nil
+        isStartingMeetingRecording || meetingStartMeetingID != nil
     }
 
     private func meetSpeakerObservationMatchesActiveSource(_ observation: MeetSpeakerObservation) -> Bool {
-        guard let rawURL = observation.meetingURL,
-              let normalized = MeetingURLNormalizer.normalize(rawURL),
-              let source = activeMeetingAutoStop.source else { return true }
-        return source.candidateID == normalized.id
-            || source.suppressionID == normalized.id
-            || source.normalizedURL == normalized.url
+        MeetSpeakerObservationRouting.matches(
+            meetingURL: observation.meetingURL,
+            activeSource: activeMeetingAutoStop.source
+        )
+    }
+
+    private func meetSpeakerObservationIsTemporallyRelevant(
+        _ observation: MeetSpeakerObservation,
+        now: Date = Date()
+    ) -> Bool {
+        guard observation.observedAt.timeIntervalSince(now) <= pendingMeetSpeakerObservationFutureTolerance else {
+            return false
+        }
+        if let meetingStart = activeMeetingSession?.startTime {
+            return observation.observedAt >= meetingStart.addingTimeInterval(-2)
+        }
+        return now.timeIntervalSince(observation.observedAt) <= pendingMeetSpeakerObservationRetention
     }
 
     private func bufferMeetSpeakerObservation(_ observation: MeetSpeakerObservation) {
@@ -2584,7 +2641,7 @@ final class MuesliController: NSObject {
     private func recordBufferedMeetSpeakerObservations(to session: MeetingSession) {
         prunePendingMeetSpeakerObservations()
         let meetingStart = session.startTime ?? Date()
-        let earliestUsefulObservation = meetingStart.addingTimeInterval(-pendingMeetSpeakerObservationRetention)
+        let earliestUsefulObservation = meetingStart.addingTimeInterval(-2)
         let latestUsefulObservation = Date().addingTimeInterval(pendingMeetSpeakerObservationFutureTolerance)
         let buffered = pendingMeetSpeakerObservations
         pendingMeetSpeakerObservations.removeAll(keepingCapacity: true)
@@ -2606,7 +2663,7 @@ final class MuesliController: NSObject {
         let stats = meetSpeakerBridgeStats
         let sessionStats = session.speakerObservationStats()
         DiagnosticsLog.write("""
-        [meet-speaker] meeting stop observationsReceived=\(stats.received.observationsReceived) speakerEvents=\(stats.received.speakerEvents) participantSnapshots=\(stats.received.participantSnapshots) matchedToMeeting=\(stats.matchedToMeeting) bufferedNoActiveMeeting=\(stats.bufferedNoActiveMeeting) droppedNoActiveMeeting=\(stats.droppedNoActiveMeeting) droppedSourceMismatch=\(stats.droppedSourceMismatch) sessionObservations=\(sessionStats.observationsReceived) sessionSpeakerEvents=\(sessionStats.speakerEvents) sessionParticipantSnapshots=\(sessionStats.participantSnapshots)
+        [meet-speaker] meeting stop observationsReceived=\(stats.received.observationsReceived) speakerEvents=\(stats.received.speakerEvents) participantSnapshots=\(stats.received.participantSnapshots) matchedToMeeting=\(stats.matchedToMeeting) bufferedNoActiveMeeting=\(stats.bufferedNoActiveMeeting) droppedNoActiveMeeting=\(stats.droppedNoActiveMeeting) droppedSourceMismatch=\(stats.droppedSourceMismatch) droppedStale=\(stats.droppedStale) sessionObservations=\(sessionStats.observationsReceived) sessionSpeakerEvents=\(sessionStats.speakerEvents) sessionParticipantSnapshots=\(sessionStats.participantSnapshots)
         """)
     }
 
@@ -2662,22 +2719,31 @@ final class MuesliController: NSObject {
             return false
         }
         autoRecordedCalendarEventIDs.insert(key)
-        let didStart = startMeetingRecording(
+        let didScheduleStart = startMeetingRecording(
             title: event.title,
             calendarEventID: event.id,
             openDocument: true,
             endDate: event.endDate,
             autoStopSource: event.meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) },
-            startOrigin: .calendarAutoRecord
+            startOrigin: .calendarAutoRecord,
+            onStartResolved: { [weak self] didStart in
+                guard let self else { return }
+                if didStart {
+                    DiagnosticsLog.write("[calendar] auto-record started key=\(key) title=\(event.title) source=\(event.source.rawValue)")
+                    self.showAutoRecordStartedNotification(event, notificationKey: key)
+                } else {
+                    self.autoRecordedCalendarEventIDs.remove(key)
+                    DiagnosticsLog.write("[calendar] auto-record failed key=\(key) title=\(event.title) source=\(event.source.rawValue)")
+                }
+            }
         )
-        if didStart {
-            DiagnosticsLog.write("[calendar] auto-record started key=\(key) title=\(event.title) source=\(event.source.rawValue)")
-            showAutoRecordStartedNotification(event, notificationKey: key)
+        if didScheduleStart {
+            DiagnosticsLog.write("[calendar] auto-record starting key=\(key) title=\(event.title) source=\(event.source.rawValue)")
         } else {
             DiagnosticsLog.write("[calendar] auto-record failed key=\(key) title=\(event.title) source=\(event.source.rawValue)")
             autoRecordedCalendarEventIDs.remove(key)
         }
-        return didStart
+        return didScheduleStart
     }
 
     private func syncAutoRecordWakes() {
@@ -3965,7 +4031,9 @@ final class MuesliController: NSObject {
         using templateSnapshot: MeetingTemplateSnapshot,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        Task { [weak self] in
+        meetingSummaryTasks[meeting.id]?.cancel()
+        let requestID = meetingSummaryRequestGate.begin(meetingID: meeting.id)
+        meetingSummaryTasks[meeting.id] = Task { [weak self] in
             guard let self else { return }
             let plan = MeetingResummarizationPolicy.plan(for: meeting)
             do {
@@ -3977,6 +4045,11 @@ final class MuesliController: NSObject {
                     existingNotes: self.notesContextForResummary(meeting),
                     manualNotesToRetain: meeting.manualNotes
                 )
+                guard !Task.isCancelled,
+                      self.meetingSummaryRequestGate.isCurrent(requestID, meetingID: meeting.id) else {
+                    completion(.failure(CancellationError()))
+                    return
+                }
                 try self.dictationStore.updateMeetingSummary(
                     id: meeting.id,
                     title: plan.persistedTitle,
@@ -3986,6 +4059,8 @@ final class MuesliController: NSObject {
                     selectedTemplateKind: templateSnapshot.kind,
                     selectedTemplatePrompt: templateSnapshot.prompt
                 )
+                self.meetingSummaryRequestGate.finish(requestID, meetingID: meeting.id)
+                self.meetingSummaryTasks.removeValue(forKey: meeting.id)
                 await MainActor.run {
                     self.scheduleICloudSyncAfterLocalChange()
                     self.syncAppState()
@@ -3993,6 +4068,12 @@ final class MuesliController: NSObject {
                     completion(.success(()))
                 }
             } catch {
+                guard self.meetingSummaryRequestGate.isCurrent(requestID, meetingID: meeting.id) else {
+                    completion(.failure(CancellationError()))
+                    return
+                }
+                self.meetingSummaryRequestGate.finish(requestID, meetingID: meeting.id)
+                self.meetingSummaryTasks.removeValue(forKey: meeting.id)
                 DiagnosticsLog.write("[muesli-native] failed to generate or persist meeting summary: \(error.localizedDescription)")
                 await MainActor.run {
                     if error is MeetingSummaryError {
@@ -5086,7 +5167,7 @@ final class MuesliController: NSObject {
         alert.messageText = messageText
         alert.informativeText = informativeText
         alert.addButton(withTitle: "Keep Guesli Running")
-        alert.addButton(withTitle: "Quit Anyway")
+        alert.addButton(withTitle: state == .recording ? "Stop, Save & Quit" : "Finish & Quit")
 
         isPresentingMeetingTerminationConfirmation = true
         let didPresent = presentAlert(alert, fallbackLogContext: "meeting termination confirmation") { [weak self] response in
@@ -5094,9 +5175,7 @@ final class MuesliController: NSObject {
                 guard let self else { return }
                 self.isPresentingMeetingTerminationConfirmation = false
                 guard response == .alertSecondButtonReturn else { return }
-                self.discardMeetingStateForTermination()
-                self.isTerminatingAfterMeetingConfirmation = true
-                NSApp.terminate(nil)
+                self.requestTerminationAfterMeetingSafetyWork(state: state)
             }
         }
         if !didPresent {
@@ -5106,23 +5185,34 @@ final class MuesliController: NSObject {
         return false
     }
 
-    private func discardMeetingStateForTermination() {
-        activeMeetingSession?.discard()
-        activeMeetingSession = nil
-        disarmMeetingAutoStop()
-        if let meetingStartMeetingID {
-            canceledMeetingStartIDs.insert(meetingStartMeetingID)
-            resolveLiveMeetingAfterStartFailure(id: meetingStartMeetingID)
+    private func requestTerminationAfterMeetingSafetyWork(state: MeetingTerminationState) {
+        terminateAfterMeetingProcessing = true
+        switch state {
+        case .recording:
+            stopMeetingRecording()
+        case .starting:
+            statusBarController?.setStatus("Finishing meeting before quit...")
+            statusBarController?.refresh()
+        case .processing:
+            if activeMeetingSession != nil {
+                stopMeetingRecording()
+            } else {
+                statusBarController?.setStatus("Finishing meeting before quit...")
+                statusBarController?.refresh()
+            }
+        case .none:
+            finishTerminationAfterMeetingSafetyWorkIfNeeded()
         }
-        meetingStartTask?.cancel()
-        meetingStartTask = nil
-        meetingStartMeetingID = nil
-        isStartingMeetingRecording = false
-        isStoppingMeetingRecording = false
-        updateMeetingStartStatus(nil)
-        updateMeetingNotificationVisibility()
-        endMeetingActivity()
-        syncAppState()
+    }
+
+    private func finishTerminationAfterMeetingSafetyWorkIfNeeded() {
+        guard terminateAfterMeetingProcessing,
+              !isStartingMeetingRecording,
+              activeMeetingSession == nil,
+              backgroundMeetingProcessingCount == 0 else { return }
+        terminateAfterMeetingProcessing = false
+        isTerminatingAfterMeetingConfirmation = true
+        NSApp.terminate(nil)
     }
 
     @objc func toggleMeetingRecording() {
@@ -5222,7 +5312,8 @@ final class MuesliController: NSObject {
         openDocument: Bool = false,
         endDate: Date? = nil,
         autoStopSource: MeetingAutoStopSource? = nil,
-        startOrigin: MeetingRecordingStartOrigin = .manual
+        startOrigin: MeetingRecordingStartOrigin = .manual,
+        onStartResolved: ((Bool) -> Void)? = nil
     ) -> Bool {
         guard !isMeetingRecording(), !isStartingMeetingRecording else { return false }
         guard let meetingBackend = normalizeMeetingTranscriptionSelectionForAvailability() else {
@@ -5286,6 +5377,11 @@ final class MuesliController: NSObject {
 
         meetingStartTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            var didStart = false
+            defer {
+                self.finishMeetingStartAttempt(meetingID: meetingID)
+                onStartResolved?(didStart)
+            }
             do {
                 try Task.checkCancellation()
                 try await self.startMeetingRecordingWithSystemAudioRecovery(
@@ -5296,6 +5392,7 @@ final class MuesliController: NSObject {
                     backend: meetingBackend,
                     endDate: endDate
                 )
+                didStart = true
             } catch is CancellationError {
                 if self.meetingStartMeetingID == meetingID {
                     self.disarmMeetingAutoStop()
@@ -5332,7 +5429,6 @@ final class MuesliController: NSObject {
                     self.presentMeetingStartFailureAlert(error: error)
                 }
             }
-            self.finishMeetingStartAttempt(meetingID: meetingID)
         }
         return true
     }
@@ -5365,6 +5461,7 @@ final class MuesliController: NSObject {
                 self.importTask = nil
                 self.importSessionID = nil
                 self.syncAppState()
+                self.finishTerminationAfterMeetingSafetyWorkIfNeeded()
                 return
             }
             await self.importAudioFile(from: sourceURL, sessionID: sessionID)
@@ -5432,6 +5529,7 @@ final class MuesliController: NSObject {
                 self.syncAppState()
                 self.historyWindowController?.reload()
                 self.showMeetingDocument(id: result.meetingID)
+                self.finishTerminationAfterMeetingSafetyWorkIfNeeded()
             }
         } catch is CancellationError {
             await MainActor.run {
@@ -5444,6 +5542,7 @@ final class MuesliController: NSObject {
                 self.statusBarController?.setStatus("Idle")
                 self.statusBarController?.refresh()
                 self.syncAppState()
+                self.finishTerminationAfterMeetingSafetyWorkIfNeeded()
             }
         } catch {
             await MainActor.run {
@@ -5460,6 +5559,7 @@ final class MuesliController: NSObject {
                     title: "Import Failed",
                     message: error.localizedDescription
                 )
+                self.finishTerminationAfterMeetingSafetyWorkIfNeeded()
             }
         }
     }
@@ -5544,6 +5644,7 @@ final class MuesliController: NSObject {
         updateMeetingStartStatus(nil)
         updateMeetingNotificationVisibility()
         syncAppState()
+        finishTerminationAfterMeetingSafetyWorkIfNeeded()
     }
 
     private func finishMeetingStartAttempt(meetingID: Int64) {
@@ -5560,6 +5661,13 @@ final class MuesliController: NSObject {
         }
         syncAppState()
         syncDictationRecorderWarmup(intent: .idlePrewarm(.meetingStateChanged))
+        if terminateAfterMeetingProcessing {
+            if didStartActiveSession {
+                stopMeetingRecording()
+            } else {
+                finishTerminationAfterMeetingSafetyWorkIfNeeded()
+            }
+        }
     }
 
     private func cancelMeetingRecordingHotkeyToggleAfterFailedStart(meetingID: Int64) {
@@ -5581,13 +5689,15 @@ final class MuesliController: NSObject {
         statusBarController?.setStatus("Meeting transcription will start shortly.")
         statusBarController?.refresh()
         try Task.checkCancellation()
-        try await transcriptionCoordinator.preloadRequired(
-            backend: backend,
-            enablePostProcessor: false,
-            includeMeetingHelpers: true
-        )
-        try Task.checkCancellation()
-        try checkMeetingStartStillCurrent(meetingID)
+        if config.resolvedMeetingProcessingMode != .post {
+            try await transcriptionCoordinator.preloadRequired(
+                backend: backend,
+                enablePostProcessor: false,
+                includeMeetingHelpers: true
+            )
+            try Task.checkCancellation()
+            try checkMeetingStartStillCurrent(meetingID)
+        }
 
         while true {
             try Task.checkCancellation()
@@ -5710,6 +5820,15 @@ final class MuesliController: NSObject {
                 indicator.setMeetingRecording(true, config: config)
                 statusBarController?.refresh()
                 syncAppState()
+                if config.resolvedMeetingProcessingMode == .post {
+                    Task { [transcriptionCoordinator, backend] in
+                        await transcriptionCoordinator.preload(
+                            backend: backend,
+                            enablePostProcessor: false,
+                            includeMeetingHelpers: true
+                        )
+                    }
+                }
                 scheduleMeetingEndNotification(endDate: endDate, title: title)
                 return
             } catch {
@@ -6296,8 +6415,11 @@ final class MuesliController: NSObject {
         meetingRecordingHotkeyMonitor.cancelToggleMode()
         guard !isStoppingMeetingRecording else { return }
         guard let sessionToStop = activeMeetingSession else {
+            if isStartingMeetingRecording {
+                cancelMeetingPreparation()
+                return
+            }
             // Fallback recovery: reset indicator if session is nil
-            guard !isStartingMeetingRecording else { return }
             disarmMeetingAutoStop()
             if let activeMeetingID {
                 resolveLiveMeetingAfterStopFailure(id: activeMeetingID)
@@ -6364,6 +6486,7 @@ final class MuesliController: NSObject {
             var completedMeetingID: Int64?
             var meetingResult: MeetingSessionResult?
             var failedLiveMeetingID: Int64?
+            var preservesTemporaryRecording = false
             do {
                 let result = try await sessionToStop.stop()
                 if result.liveCollectorDrainTimeoutDroppedChunkCount > 0 {
@@ -6389,6 +6512,7 @@ final class MuesliController: NSObject {
                     for: result,
                     saveDecision: recordingSaveDecision
                 )
+                preservesTemporaryRecording = preparedRecordingSave.preservesTemporaryRecording
                 let persistenceResult = try await MainActor.run {
                     try self.persistCompletedMeetingResultAndDispatchHook(
                         result,
@@ -6433,6 +6557,7 @@ final class MuesliController: NSObject {
             let finalMeetingResult = meetingResult
             let finalCompletedMeetingID = completedMeetingID
             let finalMeetingTitle = meetingTitle
+            let finalPreservesTemporaryRecording = preservesTemporaryRecording
             await MainActor.run {
                 self.backgroundMeetingProcessingCount -= 1
                 if let finalFailedLiveMeetingID {
@@ -6453,7 +6578,10 @@ final class MuesliController: NSObject {
                 }
                 self.liveTranscriptOverlapByMeetingSpeaker.removeAll()
                 if let finalMeetingResult {
-                    self.cleanupTemporaryMeetingAudioFiles(for: finalMeetingResult)
+                    self.cleanupTemporaryMeetingAudioFiles(
+                        for: finalMeetingResult,
+                        preservesRetainedRecording: finalPreservesTemporaryRecording
+                    )
                 }
 
                 self.enqueueOrShowMeetingCompletionNotification(
@@ -6461,6 +6589,7 @@ final class MuesliController: NSObject {
                     title: finalMeetingTitle
                 )
                 self.updateMeetingNotificationVisibility()
+                self.finishTerminationAfterMeetingSafetyWorkIfNeeded()
             }
         }
     }
@@ -6485,8 +6614,8 @@ final class MuesliController: NSObject {
         let meetingID: Int64
         let savedRecordingPath = preparedRecordingSave.path
         let recordingSaveError = preparedRecordingSave.error
-        let micAudioPath = result.sourceMicRecordingURL?.path
-        let systemAudioPath = result.sourceSystemRecordingURL?.path
+        let micAudioPath = existingRecordingPath(result.sourceMicRecordingURL)
+        let systemAudioPath = existingRecordingPath(result.sourceSystemRecordingURL)
 
         do {
             if let existingMeetingID {
@@ -6539,6 +6668,11 @@ final class MuesliController: NSObject {
         }
         scheduleICloudSyncAfterLocalChange()
         return CompletedMeetingPersistenceResult(meetingID: meetingID, recordingSaveError: recordingSaveError)
+    }
+
+    private func existingRecordingPath(_ url: URL?) -> String? {
+        guard let url, FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url.path
     }
 
     private func recordUnpersistedRecordingForRecovery(
@@ -6641,7 +6775,9 @@ final class MuesliController: NSObject {
         for result: MeetingSessionResult,
         saveDecision: Bool? = nil
     ) -> MeetingRecordingSavePlan {
-        if let retainedRecordingSavedURL = result.retainedRecordingSavedURL {
+        let stagedPostRecordingURL = postMeetingStagingURL(for: result)
+        if let retainedRecordingSavedURL = result.retainedRecordingSavedURL,
+           stagedPostRecordingURL == nil {
             return .alreadySaved(retainedRecordingSavedURL)
         }
 
@@ -6660,7 +6796,7 @@ final class MuesliController: NSObject {
         }
 
         guard shouldSave else {
-            if let retainedRecordingURL = result.retainedRecordingURL {
+            if let retainedRecordingURL = stagedPostRecordingURL ?? result.retainedRecordingURL {
                 return .discard(url: retainedRecordingURL)
             }
             return .none
@@ -6670,7 +6806,7 @@ final class MuesliController: NSObject {
             return .failed(.failedToSaveRecording(underlying: retainedRecordingError))
         }
 
-        guard let retainedRecordingURL = result.retainedRecordingURL else {
+        guard let retainedRecordingURL = stagedPostRecordingURL ?? result.retainedRecordingURL else {
             return .none
         }
 
@@ -6682,6 +6818,9 @@ final class MuesliController: NSObject {
                 config: config,
                 supportDirectory: configStore.supportDirectory()
             ),
+            recoveryDirectory: MeetingRecordingStorage.defaultDirectory(
+                supportDirectory: configStore.supportDirectory()
+            ).appendingPathComponent("recovered", isDirectory: true),
             fileFormat: config.resolvedMeetingRecordingFileFormat
         ))
     }
@@ -6691,20 +6830,87 @@ final class MuesliController: NSObject {
         saveDecision: Bool? = nil
     ) async -> PreparedMeetingRecordingSave {
         let plan = meetingRecordingSavePlan(for: result, saveDecision: saveDecision)
-        return await Self.prepareMeetingRecordingSave(plan)
+        let prepared = await Self.prepareMeetingRecordingSave(plan)
+        guard isPostMeetingStagingResult(result) else { return prepared }
+        let stagingAnchorURL = postMeetingStagingURL(for: result)
+            ?? result.sourceMicRecordingURL
+            ?? result.sourceSystemRecordingURL
+        let stagingSidecarURL = stagingAnchorURL.map { postMeetingSourceSidecarURL(anchorURL: $0) }
+        if let path = prepared.path, let stagingSidecarURL {
+            let destinationSidecarURL = postMeetingSourceSidecarURL(
+                anchorURL: URL(fileURLWithPath: path)
+            )
+            if stagingSidecarURL != destinationSidecarURL,
+               FileManager.default.fileExists(atPath: stagingSidecarURL.path) {
+                do {
+                    let stagedSidecar = try JSONDecoder().decode(
+                        PostMeetingSourceTrackSidecar.self,
+                        from: Data(contentsOf: stagingSidecarURL)
+                    )
+                    let finalSidecar = PostMeetingSourceTrackSidecar(
+                        meetingID: stagedSidecar.meetingID,
+                        micAudioPath: existingRecordingPath(result.sourceMicRecordingURL),
+                        systemAudioPath: existingRecordingPath(result.sourceSystemRecordingURL),
+                        savedRecordingPath: path,
+                        micStartOffset: stagedSidecar.micStartOffset,
+                        systemStartOffset: stagedSidecar.systemStartOffset
+                    )
+                    try JSONEncoder().encode(finalSidecar).write(
+                        to: destinationSidecarURL,
+                        options: [.atomic]
+                    )
+                    try FileManager.default.removeItem(at: stagingSidecarURL)
+                } catch {
+                    DiagnosticsLog.write(
+                        "[meeting-stop] failed_to_finalize_post_source_sidecar source=\(stagingSidecarURL.path) destination=\(destinationSidecarURL.path) error=\(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+
+        let shouldKeepSourceTracks: Bool
+        if let saveDecision {
+            shouldKeepSourceTracks = saveDecision
+        } else {
+            shouldKeepSourceTracks = config.meetingRecordingSavePolicy == .always
+        }
+        if !shouldKeepSourceTracks {
+            if let stagingSidecarURL {
+                try? FileManager.default.removeItem(at: stagingSidecarURL)
+            }
+            for url in [result.sourceMicRecordingURL, result.sourceSystemRecordingURL].compactMap({ $0 }) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        return prepared
     }
 
-    private func persistPostMeetingRecording(
+    private func postMeetingStagingURL(for result: MeetingSessionResult) -> URL? {
+        guard let savedURL = result.retainedRecordingSavedURL else { return nil }
+        return isPostMeetingRecoveryURL(savedURL) ? savedURL : nil
+    }
+
+    private func isPostMeetingStagingResult(_ result: MeetingSessionResult) -> Bool {
+        postMeetingStagingURL(for: result) != nil ||
+            [result.sourceMicRecordingURL, result.sourceSystemRecordingURL]
+            .compactMap { $0 }
+            .contains(where: isPostMeetingRecoveryURL)
+    }
+
+    private func isPostMeetingRecoveryURL(_ url: URL) -> Bool {
+        let recoveryDirectory = MeetingRecordingStorage.defaultDirectory(
+            supportDirectory: configStore.supportDirectory()
+        ).appendingPathComponent("recovered", isDirectory: true)
+        return url.deletingLastPathComponent().standardizedFileURL == recoveryDirectory.standardizedFileURL
+    }
+
+    func persistPostMeetingRecording(
         _ request: PostMeetingRecordingFinalizeRequest,
         meetingID: Int64
     ) async throws -> PersistedPostMeetingRecording {
-        let destinationDirectory = MeetingRecordingStorage.directory(
-            config: config,
+        let recoveryDirectory = MeetingRecordingStorage.defaultDirectory(
             supportDirectory: configStore.supportDirectory()
-        )
-        func existingFallbackURL(_ url: URL) -> URL? {
-            FileManager.default.fileExists(atPath: url.path) ? url : nil
-        }
+        ).appendingPathComponent("recovered", isDirectory: true)
         func persistSourceTrack(_ sourceURL: URL?, trackName: String) -> URL? {
             guard let sourceURL else { return nil }
             do {
@@ -6713,14 +6919,13 @@ final class MuesliController: NSObject {
                     meetingTitle: request.meetingTitle,
                     startedAt: request.startedAt,
                     trackName: trackName,
-                    destinationDirectory: destinationDirectory
+                    destinationDirectory: recoveryDirectory
                 )
             } catch {
-                let fallbackURL = existingFallbackURL(sourceURL)
                 DiagnosticsLog.write(
-                    "[meeting-stop] failed_to_persist_post_\(trackName)_track meeting_id=\(meetingID) source=\(sourceURL.path) fallback=\(fallbackURL?.path ?? "nil") error=\(error.localizedDescription)"
+                    "[meeting-stop] failed_to_stage_post_\(trackName)_track meeting_id=\(meetingID) source=\(sourceURL.path) error=\(error.localizedDescription)"
                 )
-                return fallbackURL
+                return nil
             }
         }
 
@@ -6734,12 +6939,12 @@ final class MuesliController: NSObject {
                     from: mixedTempURL,
                     meetingTitle: request.meetingTitle,
                     startedAt: request.startedAt,
-                    destinationDirectory: destinationDirectory,
-                    fileFormat: .m4a
+                    destinationDirectory: recoveryDirectory,
+                    fileFormat: .wav
                 )
             } catch {
                 DiagnosticsLog.write(
-                    "[meeting-stop] failed_to_persist_post_mixed_recording meeting_id=\(meetingID) source=\(mixedTempURL.path) error=\(error.localizedDescription)"
+                    "[meeting-stop] failed_to_stage_post_mixed_recording meeting_id=\(meetingID) source=\(mixedTempURL.path) error=\(error.localizedDescription)"
                 )
                 mixedURL = nil
             }
@@ -6858,16 +7063,27 @@ final class MuesliController: NSObject {
                 )
                 return PreparedMeetingRecordingSave(path: outputURL.path, error: nil)
             } catch {
+                let recoveredURL = try? MeetingRecordingStorage.persistTemporaryRecording(
+                    from: request.tempURL,
+                    meetingTitle: request.meetingTitle,
+                    startedAt: request.startedAt,
+                    destinationDirectory: request.recoveryDirectory,
+                    fileFormat: .wav
+                )
                 return PreparedMeetingRecordingSave(
-                    path: nil,
-                    error: .failedToSaveRecording(underlying: error)
+                    path: recoveredURL?.path,
+                    error: .failedToSaveRecording(underlying: error),
+                    preservesTemporaryRecording: recoveredURL == nil
                 )
             }
         }
     }
 
-    private func cleanupTemporaryMeetingAudioFiles(for result: MeetingSessionResult) {
-        if let retainedRecordingURL = result.retainedRecordingURL {
+    private func cleanupTemporaryMeetingAudioFiles(
+        for result: MeetingSessionResult,
+        preservesRetainedRecording: Bool = false
+    ) {
+        if !preservesRetainedRecording, let retainedRecordingURL = result.retainedRecordingURL {
             try? FileManager.default.removeItem(at: retainedRecordingURL)
         }
         if let systemRecordingURL = result.systemRecordingURL {
@@ -6919,8 +7135,7 @@ final class MuesliController: NSObject {
     @MainActor
     private func recordingSaveDecision(for result: MeetingSessionResult) async -> Bool? {
         guard config.meetingRecordingSavePolicy == .prompt else { return nil }
-        guard result.retainedRecordingSavedURL == nil,
-              result.retainedRecordingURL != nil,
+        guard result.retainedRecordingURL != nil || postMeetingStagingURL(for: result) != nil,
               result.retainedRecordingError == nil else { return nil }
         return await promptToSaveMeetingRecording(for: result.title)
     }

@@ -790,6 +790,205 @@ struct MeetingsNavigationTests {
         #expect(FileManager.default.fileExists(atPath: savedRecordingURL.path))
     }
 
+    @Test("failed recording save moves the last WAV to durable recovery")
+    func failedRecordingSavePreservesRecoverableAudio() async throws {
+        let store = try makeStore()
+        let configStore = makeConfigStore()
+        let controller = makeController(configStore: configStore, dictationStore: store)
+        let blockedDestination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("muesli-blocked-recordings-\(UUID().uuidString)")
+        try Data("not a directory".utf8).write(to: blockedDestination)
+        defer { try? FileManager.default.removeItem(at: blockedDestination) }
+        controller.updateConfig {
+            $0.meetingRecordingSavePolicy = .always
+            $0.meetingRecordingFolderPath = blockedDestination.path
+        }
+        let tempURL = try makeRetainedRecordingURL()
+        let result = MeetingSessionResult(
+            title: "Recover failed save",
+            originalTitle: "Meeting",
+            calendarEventID: nil,
+            startTime: Date(),
+            endTime: Date().addingTimeInterval(30),
+            durationSeconds: 30,
+            rawTranscript: "The transcript survived.",
+            formattedNotes: "## Summary\nRecovered.",
+            retainedRecordingURL: tempURL,
+            retainedRecordingError: nil,
+            systemRecordingURL: nil,
+            templateSnapshot: MeetingTemplates.auto.snapshot
+        )
+
+        let prepared = await controller.prepareMeetingRecordingSave(for: result)
+        let recoveredPath = try #require(prepared.path)
+        defer { try? FileManager.default.removeItem(atPath: recoveredPath) }
+        let persistence = try controller.persistCompletedMeetingResult(
+            result,
+            preparedRecordingSave: prepared
+        )
+
+        let storedMeeting = try #require(try store.meeting(id: persistence.meetingID))
+        #expect(prepared.error != nil)
+        #expect(storedMeeting.savedRecordingPath == recoveredPath)
+        #expect(FileManager.default.fileExists(atPath: recoveredPath))
+        #expect(FileManager.default.fileExists(atPath: tempURL.path) == false)
+        #expect(URL(fileURLWithPath: recoveredPath).pathExtension == "wav")
+    }
+
+    @Test("post-mode staging survives blocked configured folder without linking temp files")
+    func postModeRecordingFallsBackToDurableRecovery() async throws {
+        let store = try makeStore()
+        let configStore = makeConfigStore()
+        let controller = makeController(configStore: configStore, dictationStore: store)
+        let blockedDestination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("muesli-blocked-post-recordings-\(UUID().uuidString)")
+        try Data("not a directory".utf8).write(to: blockedDestination)
+        defer { try? FileManager.default.removeItem(at: blockedDestination) }
+        controller.updateConfig {
+            $0.meetingRecordingSavePolicy = .always
+            $0.meetingRecordingFolderPath = blockedDestination.path
+        }
+
+        let startedAt = Date()
+        let meetingID = try store.createLiveMeeting(
+            title: "Post recovery",
+            calendarEventID: nil,
+            startTime: startedAt
+        )
+        let micTempURL = try makeRetainedRecordingURL()
+        let systemTempURL = try makeRetainedRecordingURL()
+        let mixedTempURL = try makeRetainedRecordingURL()
+        let staged = try await controller.persistPostMeetingRecording(
+            PostMeetingRecordingFinalizeRequest(
+                sourceTracks: MeetingSourceTrackRecording(
+                    micURL: micTempURL,
+                    systemURL: systemTempURL,
+                    micStartOffset: 0,
+                    systemStartOffset: 0.25
+                ),
+                mixedTempURL: mixedTempURL,
+                meetingTitle: "Post recovery",
+                startedAt: startedAt
+            ),
+            meetingID: meetingID
+        )
+        let stagedMicURL = try #require(staged.micURL)
+        let stagedSystemURL = try #require(staged.systemURL)
+        let stagedMixedURL = try #require(staged.mixedURL)
+        let recoveryDirectory = MeetingRecordingStorage.defaultDirectory(
+            supportDirectory: configStore.supportDirectory()
+        ).appendingPathComponent("recovered", isDirectory: true)
+        #expect(stagedMicURL.deletingLastPathComponent() == recoveryDirectory)
+        #expect(stagedSystemURL.deletingLastPathComponent() == recoveryDirectory)
+        #expect(stagedMixedURL.deletingLastPathComponent() == recoveryDirectory)
+        #expect(!FileManager.default.fileExists(atPath: micTempURL.path))
+        #expect(!FileManager.default.fileExists(atPath: systemTempURL.path))
+        #expect(!FileManager.default.fileExists(atPath: mixedTempURL.path))
+
+        let result = MeetingSessionResult(
+            title: "Post recovery",
+            originalTitle: "Meeting",
+            calendarEventID: nil,
+            startTime: startedAt,
+            endTime: startedAt.addingTimeInterval(30),
+            durationSeconds: 30,
+            rawTranscript: "Recovered post transcript.",
+            formattedNotes: "## Summary\nRecovered.",
+            retainedRecordingURL: nil,
+            retainedRecordingError: nil,
+            retainedRecordingSavedURL: stagedMixedURL,
+            systemRecordingURL: nil,
+            sourceMicRecordingURL: stagedMicURL,
+            sourceSystemRecordingURL: stagedSystemURL,
+            templateSnapshot: MeetingTemplates.auto.snapshot
+        )
+        let prepared = await controller.prepareMeetingRecordingSave(for: result)
+        let recoveredMixedPath = try #require(prepared.path)
+        let persistence = try controller.persistCompletedMeetingResult(
+            result,
+            existingMeetingID: meetingID,
+            preparedRecordingSave: prepared
+        )
+
+        let storedMeeting = try #require(try store.meeting(id: persistence.meetingID))
+        #expect(prepared.error != nil)
+        #expect(storedMeeting.micAudioPath == stagedMicURL.path)
+        #expect(storedMeeting.systemAudioPath == stagedSystemURL.path)
+        #expect(storedMeeting.savedRecordingPath == recoveredMixedPath)
+        #expect(URL(fileURLWithPath: recoveredMixedPath).deletingLastPathComponent() == recoveryDirectory)
+        #expect(FileManager.default.fileExists(atPath: recoveredMixedPath))
+        let finalSidecarURL = URL(fileURLWithPath: recoveredMixedPath)
+            .appendingPathExtension("sources.json")
+        let finalSidecar = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: finalSidecarURL)) as? [String: Any]
+        )
+        #expect(finalSidecar["savedRecordingPath"] as? String == recoveredMixedPath)
+        #expect(finalSidecar["micAudioPath"] as? String == stagedMicURL.path)
+        #expect(finalSidecar["systemAudioPath"] as? String == stagedSystemURL.path)
+    }
+
+    @Test("post-mode never policy removes recovery staging and stores no audio paths")
+    func postModeNeverPolicyDiscardsStaging() async throws {
+        let store = try makeStore()
+        let configStore = makeConfigStore()
+        let controller = makeController(configStore: configStore, dictationStore: store)
+        controller.updateConfig { $0.meetingRecordingSavePolicy = .never }
+        let startedAt = Date()
+        let meetingID = try store.createLiveMeeting(
+            title: "Discard post staging",
+            calendarEventID: nil,
+            startTime: startedAt
+        )
+        let staged = try await controller.persistPostMeetingRecording(
+            PostMeetingRecordingFinalizeRequest(
+                sourceTracks: MeetingSourceTrackRecording(
+                    micURL: try makeRetainedRecordingURL(),
+                    systemURL: try makeRetainedRecordingURL(),
+                    micStartOffset: 0,
+                    systemStartOffset: 0
+                ),
+                mixedTempURL: try makeRetainedRecordingURL(),
+                meetingTitle: "Discard post staging",
+                startedAt: startedAt
+            ),
+            meetingID: meetingID
+        )
+        let stagedMicURL = try #require(staged.micURL)
+        let stagedSystemURL = try #require(staged.systemURL)
+        let stagedMixedURL = try #require(staged.mixedURL)
+        let result = MeetingSessionResult(
+            title: "Discard post staging",
+            originalTitle: "Meeting",
+            calendarEventID: nil,
+            startTime: startedAt,
+            endTime: startedAt.addingTimeInterval(30),
+            durationSeconds: 30,
+            rawTranscript: "Transcript remains.",
+            formattedNotes: "## Summary\nAudio discarded.",
+            retainedRecordingURL: nil,
+            retainedRecordingError: nil,
+            retainedRecordingSavedURL: stagedMixedURL,
+            systemRecordingURL: nil,
+            sourceMicRecordingURL: stagedMicURL,
+            sourceSystemRecordingURL: stagedSystemURL,
+            templateSnapshot: MeetingTemplates.auto.snapshot
+        )
+        let prepared = await controller.prepareMeetingRecordingSave(for: result)
+        _ = try controller.persistCompletedMeetingResult(
+            result,
+            existingMeetingID: meetingID,
+            preparedRecordingSave: prepared
+        )
+
+        let storedMeeting = try #require(try store.meeting(id: meetingID))
+        #expect(storedMeeting.savedRecordingPath == nil)
+        #expect(storedMeeting.micAudioPath == nil)
+        #expect(storedMeeting.systemAudioPath == nil)
+        #expect(!FileManager.default.fileExists(atPath: stagedMixedURL.path))
+        #expect(!FileManager.default.fileExists(atPath: stagedMicURL.path))
+        #expect(!FileManager.default.fileExists(atPath: stagedSystemURL.path))
+    }
+
     @Test("persistCompletedMeetingResult leaves recovery marker when DB persistence fails after recording save")
     func persistCompletedMeetingResultLeavesRecoveryMarkerAfterDBFailure() async throws {
         let store = try makeStore()
@@ -1189,6 +1388,22 @@ struct MeetingsNavigationTests {
 
 @Suite("Meeting browser logic", .muesliHermeticSupport)
 struct MeetingBrowserLogicTests {
+
+    @Test("live row stays preparing until a recorder is active")
+    func liveRowDoesNotClaimRecordingDuringStart() {
+        #expect(MeetingBrowserLogic.activeBannerPhase(
+            meetingStatus: .recording,
+            isStarting: true,
+            isRecording: false,
+            isPaused: false
+        ) == .preparing)
+        #expect(MeetingBrowserLogic.activeBannerPhase(
+            meetingStatus: .recording,
+            isStarting: true,
+            isRecording: true,
+            isPaused: false
+        ) == .recording)
+    }
 
     @Test("available filters expand with older meeting history")
     func availableFiltersExpandWithHistory() {

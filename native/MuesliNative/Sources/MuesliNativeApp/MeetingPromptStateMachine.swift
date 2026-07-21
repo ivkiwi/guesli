@@ -86,6 +86,17 @@ final class MeetingPromptStateMachine {
                 : MeetingPromptDecision(action: .hide, candidate: nil, reason: .noCandidate)
         }
 
+        let hasLiveMediaEvidence = candidate.evidence.contains(.micActive)
+            || candidate.evidence.contains(.cameraActive)
+            || candidate.evidence.contains(.audioInputProcess)
+        guard hasLiveMediaEvidence || visiblePromptID == candidate.id else {
+            lastCandidateID = nil
+            resetPendingCandidate()
+            return visiblePromptID == nil
+                ? MeetingPromptDecision(action: .none, candidate: nil, reason: .noCandidate)
+                : MeetingPromptDecision(action: .hide, candidate: nil, reason: .noCandidate)
+        }
+
         if candidate.id != lastCandidateID {
             lastCandidateID = candidate.id
         }

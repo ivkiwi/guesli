@@ -310,8 +310,8 @@ struct MeetingNotificationControllerTests {
             index(of: "self.meetingMonitor.suppress", in: dismiss))
     }
 
-    @Test("Calendar auto-record still shows a visible notification")
-    func calendarAutoRecordShowsVisibleNotification() throws {
+    @Test("Calendar auto-record reports success only after the async start resolves")
+    func calendarAutoRecordWaitsForResolvedStart() throws {
         let source = try muesliControllerSource()
         let autoRecord = try sourceSection(
             in: source,
@@ -319,8 +319,40 @@ struct MeetingNotificationControllerTests {
             to: "private func syncAutoRecordWakes"
         )
 
+        #expect(autoRecord.contains("[calendar] auto-record starting"))
+        #expect(autoRecord.contains("onStartResolved: { [weak self] didStart in"))
+        #expect(try index(of: "onStartResolved:", in: autoRecord) <
+            index(of: "showAutoRecordStartedNotification", in: autoRecord))
         #expect(autoRecord.contains("showAutoRecordStartedNotification(event, notificationKey: key)"))
         #expect(autoRecord.contains("[calendar] auto-record started"))
+        #expect(autoRecord.contains("self.autoRecordedCalendarEventIDs.remove(key)"))
+    }
+
+    @Test("Post-mode recording starts before model preload")
+    func postModeRecordingDoesNotAwaitPreload() throws {
+        let source = try muesliControllerSource()
+        let start = try sourceSection(
+            in: source,
+            from: "private func startMeetingRecordingWithSystemAudioRecovery",
+            to: "private func checkMeetingStartStillCurrent"
+        )
+
+        #expect(start.contains("if config.resolvedMeetingProcessingMode != .post"))
+        #expect(try index(of: "activeMeetingSession = meetingSession", in: start) <
+            index(of: "await transcriptionCoordinator.preload(", in: start))
+    }
+
+    @Test("Stop cancels a meeting that is still preparing")
+    func stopCancelsMeetingPreparation() throws {
+        let source = try muesliControllerSource()
+        let stop = try sourceSection(
+            in: source,
+            from: "func stopMeetingRecording()",
+            to: "func revealMeetingRecordingInFinder"
+        )
+
+        #expect(stop.contains("if isStartingMeetingRecording"))
+        #expect(stop.contains("cancelMeetingPreparation()"))
     }
 
     @Test("Calendar refresh re-arms on wake outside the timer path")

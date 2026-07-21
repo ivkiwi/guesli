@@ -285,6 +285,32 @@ struct MeetSpeakerBridgeTests {
         #expect(map["spk_0"] == "Bob Reviewer")
     }
 
+    @Test("speaker map ignores unmatched backup events when scoring a real match")
+    func speakerMapIgnoresUnmatchedBackupEvents() {
+        let start = Date(timeIntervalSince1970: 1000)
+        let diarization = [
+            makeDiarSeg(speakerId: "spk_0", start: 10.0, end: 12.0),
+        ]
+        let observations = [
+            observation(name: "Alice Owner", activeSpeakers: ["Alice Owner"], start: start, offset: 11.0),
+        ] + (0..<20).map { index in
+            observation(
+                name: "Alice Owner",
+                activeSpeakers: ["Alice Owner"],
+                start: start,
+                offset: 100.0 + Double(index)
+            )
+        }
+
+        let map = MeetingSession.speakerNameMap(
+            diarizationSegments: diarization,
+            observations: observations,
+            meetingStart: start
+        )
+
+        #expect(map["spk_0"] == "Alice Owner")
+    }
+
     @Test("merges calendar and observed Meet participants")
     func mergesCalendarAndObservedMeetParticipants() {
         let calendar = [
@@ -411,6 +437,7 @@ struct MeetSpeakerBridgeTests {
 
         let route = MeetSpeakerObservationRouting.route(
             matchesActiveSource: true,
+            isTemporallyRelevant: true,
             hasActiveRecordingSession: session.isRecording,
             canBufferForPendingMeeting: false
         )
@@ -445,6 +472,7 @@ struct MeetSpeakerBridgeTests {
         let observation = try #require(MeetSpeakerBridgeServer.parseObservation(data))
         let route = MeetSpeakerObservationRouting.route(
             matchesActiveSource: true,
+            isTemporallyRelevant: true,
             hasActiveRecordingSession: false,
             canBufferForPendingMeeting: false
         )
@@ -460,6 +488,35 @@ struct MeetSpeakerBridgeTests {
         #expect(stats.received.speakerEvents == 1)
         #expect(stats.droppedNoActiveMeeting == 1)
         #expect(stats.matchedToMeeting == 0)
+    }
+
+    @Test("bridge routing drops stale backup observations")
+    func bridgeRoutingDropsStaleBackupObservations() {
+        let route = MeetSpeakerObservationRouting.route(
+            matchesActiveSource: true,
+            isTemporallyRelevant: false,
+            hasActiveRecordingSession: true,
+            canBufferForPendingMeeting: true
+        )
+
+        #expect(route == .dropStale)
+    }
+
+    @Test("bridge requires a matching Meet URL when recording source is known")
+    func bridgeRequiresMatchingMeetURLForKnownSource() throws {
+        let source = try #require(MeetingAutoStopSource(
+            meetingURL: URL(string: "https://meet.google.com/abc-defg-hij")!
+        ))
+
+        #expect(MeetSpeakerObservationRouting.matches(
+            meetingURL: "https://meet.google.com/abc-defg-hij?authuser=1",
+            activeSource: source
+        ))
+        #expect(!MeetSpeakerObservationRouting.matches(meetingURL: nil, activeSource: source))
+        #expect(!MeetSpeakerObservationRouting.matches(
+            meetingURL: "https://meet.google.com/other-room",
+            activeSource: source
+        ))
     }
 
     private func makeDiarSeg(speakerId: String, start: Float, end: Float) -> TimedSpeakerSegment {

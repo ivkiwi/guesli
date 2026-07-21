@@ -294,6 +294,24 @@ private enum MeetingStopPhaseTimeouts {
     static let summaryGeneration: TimeInterval = 180
 }
 
+private enum MeetingCaptureStartError: LocalizedError {
+    case systemAudioTimedOut(seconds: TimeInterval)
+
+    var errorDescription: String? {
+        switch self {
+        case .systemAudioTimedOut(let seconds):
+            return "Timed out while starting system audio capture after \(String(format: "%.1f", seconds)) seconds"
+        }
+    }
+}
+
+private enum MeetingSystemAudioStartOutcome: @unchecked Sendable {
+    case started
+    case failed(Error)
+    case cancelled
+    case timedOut
+}
+
 private enum MeetingStopPhaseError: LocalizedError, Sendable {
     case timedOut(phase: String, seconds: TimeInterval)
 
@@ -398,8 +416,28 @@ final class MeetingSession {
     var onPostMeetingRecordingReady: ((PostMeetingRecordingFinalizeRequest) async throws -> PersistedPostMeetingRecording?)?
     var onChunkTranscribed: (([SpeechSegment], String) -> Void)?
     var onLivePartialsChanged: ((String, String) -> Void)?
-    private var micLivePartialSession: MeetingStreamingPartialSession?
-    private var systemLivePartialSession: MeetingStreamingPartialSession?
+    private struct LivePartialsState {
+        var generation: UInt64 = 0
+        var preparationTask: Task<Void, Never>?
+        var micSession: MeetingStreamingPartialSession?
+        var systemSession: MeetingStreamingPartialSession?
+    }
+    private let livePartialsState = OSAllocatedUnfairLock(initialState: LivePartialsState())
+    private let livePartialEngineFactory: (@Sendable () async throws -> (
+        mic: MeetingStreamingPartialEngine,
+        system: MeetingStreamingPartialEngine
+    ))?
+    private let postModePreload: (@Sendable (BackendOption) async throws -> Void)?
+    private struct CaptureStartState {
+        var generation: UInt64 = 0
+        var isStarting = false
+        var operationIsRunning = false
+        var continuation: AsyncStream<MeetingSystemAudioStartOutcome>.Continuation?
+        var operationTask: Task<Void, Never>?
+        var timeoutTask: Task<Void, Never>?
+    }
+    private let captureStartState = OSAllocatedUnfairLock(initialState: CaptureStartState())
+    private let systemAudioStartTimeout: TimeInterval
     private let screenContextCollector = MeetingScreenContextCollector()
     private var diagnostics: MeetingSessionDiagnostics?
 
@@ -431,7 +469,13 @@ final class MeetingSession {
         transcriptionCoordinator: TranscriptionCoordinator,
         transcriptCleaner: any MeetingTranscriptCleaning = ChatGPTMeetingTranscriptCleaner(),
         meetingMicRecorder: MeetingMicRecording = RouteAwareMeetingMicRecorder(),
-        systemAudioRecorder: SystemAudioCapturing? = nil
+        systemAudioRecorder: SystemAudioCapturing? = nil,
+        livePartialEngineFactory: (@Sendable () async throws -> (
+            mic: MeetingStreamingPartialEngine,
+            system: MeetingStreamingPartialEngine
+        ))? = nil,
+        postModePreload: (@Sendable (BackendOption) async throws -> Void)? = nil,
+        systemAudioStartTimeout: TimeInterval = 15
     ) {
         self.title = title
         self.calendarEventID = calendarEventID
@@ -444,6 +488,9 @@ final class MeetingSession {
         self.transcriptionCoordinator = transcriptionCoordinator
         self.transcriptCleaner = transcriptCleaner
         self.meetingMicRecorder = meetingMicRecorder
+        self.livePartialEngineFactory = livePartialEngineFactory
+        self.postModePreload = postModePreload
+        self.systemAudioStartTimeout = systemAudioStartTimeout
         if let systemAudioRecorder {
             self.systemAudioRecorder = systemAudioRecorder
         } else if config.useCoreAudioTap {
@@ -609,18 +656,193 @@ final class MeetingSession {
         )
     }
 
+    /// Starts system capture without allowing a stuck backend to keep the whole
+    /// meeting in a fake "recording" state forever. The microphone starts only
+    /// after this succeeds, so cancellation cannot discard valid mic audio.
+    private func startSystemAudioWithTimeout() async throws -> UInt64 {
+        let timeout = min(max(systemAudioStartTimeout, 0.001), 300)
+        let (stream, continuation) = AsyncStream<MeetingSystemAudioStartOutcome>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let generation = captureStartState.withLock { state -> UInt64 in
+            state.generation &+= 1
+            state.isStarting = true
+            state.operationIsRunning = true
+            state.continuation = continuation
+            return state.generation
+        }
+
+        let operationTask = Task<Void, Never> { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.systemAudioRecorder.start()
+                guard let completion = self.claimSystemAudioStartCompletion(generation) else {
+                    self.stopAndDeleteSystemAudioAfterFailedStart()
+                    return
+                }
+                completion.yield(.started)
+                completion.finish()
+            } catch {
+                guard let completion = self.claimSystemAudioStartCompletion(generation) else {
+                    // The caller may already have timed out or cancelled while
+                    // the backend ignored cancellation. Its throw still marks
+                    // the end of that serialized start attempt, so it is now
+                    // safe to tear down any partially-created capture state.
+                    self.stopAndDeleteSystemAudioAfterFailedStart()
+                    return
+                }
+                completion.yield(.failed(error))
+                completion.finish()
+            }
+        }
+        let timeoutTask = Task<Void, Never> { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(timeout))
+            } catch {
+                return
+            }
+            self?.cancelPendingCaptureStart(
+                generation: generation,
+                outcome: .timedOut,
+                requireUnclaimedOutcome: true
+            )
+        }
+        let shouldCancelTasks = captureStartState.withLock { state -> Bool in
+            guard state.generation == generation, state.isStarting else { return true }
+            state.operationTask = operationTask
+            state.timeoutTask = timeoutTask
+            return false
+        }
+        if shouldCancelTasks {
+            operationTask.cancel()
+            timeoutTask.cancel()
+        }
+
+        let outcome = await withTaskCancellationHandler {
+            var iterator = stream.makeAsyncIterator()
+            return await iterator.next()
+        } onCancel: { [weak self] in
+            self?.cancelPendingCaptureStart(generation: generation)
+        }
+
+        guard !Task.isCancelled else {
+            cancelPendingCaptureStart(generation: generation)
+            throw CancellationError()
+        }
+        switch outcome {
+        case .started:
+            return generation
+        case .failed(let error):
+            cancelPendingCaptureStart(generation: generation)
+            throw error
+        case .timedOut:
+            throw MeetingCaptureStartError.systemAudioTimedOut(seconds: timeout)
+        case .cancelled, .none:
+            cancelPendingCaptureStart(generation: generation)
+            throw CancellationError()
+        }
+    }
+
+    private func captureStartIsCurrent(_ generation: UInt64) -> Bool {
+        captureStartState.withLock { state in
+            state.generation == generation && state.isStarting
+        }
+    }
+
+    private func claimSystemAudioStartCompletion(
+        _ generation: UInt64
+    ) -> AsyncStream<MeetingSystemAudioStartOutcome>.Continuation? {
+        captureStartState.withLock { state in
+            state.operationIsRunning = false
+            guard state.generation == generation, state.isStarting else { return nil }
+            let continuation = state.continuation
+            state.continuation = nil
+            state.operationTask = nil
+            state.timeoutTask?.cancel()
+            state.timeoutTask = nil
+            return continuation
+        }
+    }
+
+    private func startMicrophoneIfCaptureStartIsCurrent(_ generation: UInt64) throws {
+        guard captureStartIsCurrent(generation) else { throw CancellationError() }
+        try meetingMicRecorder.start()
+        let didFinish = captureStartState.withLock { state -> Bool in
+            guard state.generation == generation, state.isStarting else { return false }
+            state.isStarting = false
+            return true
+        }
+        guard didFinish else {
+            meetingMicRecorder.cancel()
+            stopAndDeleteSystemAudioAfterFailedStart()
+            throw CancellationError()
+        }
+    }
+
+    private func cancelPendingCaptureStart(
+        generation expectedGeneration: UInt64? = nil,
+        outcome: MeetingSystemAudioStartOutcome = .cancelled,
+        requireUnclaimedOutcome: Bool = false
+    ) {
+        let cancellation = captureStartState.withLock { state -> (
+            continuation: AsyncStream<MeetingSystemAudioStartOutcome>.Continuation?,
+            operationTask: Task<Void, Never>?,
+            timeoutTask: Task<Void, Never>?,
+            canStopSynchronously: Bool
+        )? in
+            guard state.isStarting,
+                  expectedGeneration == nil || state.generation == expectedGeneration,
+                  !requireUnclaimedOutcome || state.continuation != nil else {
+                return nil
+            }
+            state.generation &+= 1
+            state.isStarting = false
+            let pending = (
+                state.continuation,
+                state.operationTask,
+                state.timeoutTask,
+                !state.operationIsRunning
+            )
+            state.continuation = nil
+            state.operationTask = nil
+            state.timeoutTask = nil
+            return pending
+        }
+        guard let cancellation else { return }
+        cancellation.operationTask?.cancel()
+        cancellation.timeoutTask?.cancel()
+        cancellation.continuation?.yield(outcome)
+        cancellation.continuation?.finish()
+        if cancellation.canStopSynchronously {
+            stopAndDeleteSystemAudioAfterFailedStart()
+        }
+    }
+
+    private func stopAndDeleteSystemAudioAfterFailedStart() {
+        systemAudioRecorder.onPCMSamples = nil
+        if let url = systemAudioRecorder.stop() {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private func stopSystemAudioUnlessStartIsRunning() -> URL? {
+        let startIsRunning = captureStartState.withLock { $0.operationIsRunning }
+        guard !startIsRunning else { return nil }
+        return systemAudioRecorder.stop()
+    }
+
     func start() async throws {
-        let vadManager = await transcriptionCoordinator.getVadManager()
         let now = Date()
         diagnostics = MeetingSessionDiagnostics(title: title, startedAt: now)
         stopIntakeRequested.store(false, ordering: .releasing)
-        await prepareLiveStreamingPartialsIfAvailable()
 
         if config.resolvedMeetingProcessingMode == .post {
             try await startPostProcessingMode(startedAt: now)
+            startLiveStreamingPartialsPreparationIfAvailable()
             return
         }
 
+        let vadManager = await transcriptionCoordinator.getVadManager()
         // AEC must be loaded before audio pipeline starts (streaming mode)
         await neuralAec.preload()
 
@@ -636,9 +858,10 @@ final class MeetingSession {
             try prepareRealtimeAudioPipeline(vadManager: vadManager)
             try meetingMicRecorder.prepare()
             try setupRetainedRecordingWriterIfNeeded()
-            try await systemAudioRecorder.start()
-            try meetingMicRecorder.start()
+            let captureStartGeneration = try await startSystemAudioWithTimeout()
+            try startMicrophoneIfCaptureStartIsCurrent(captureStartGeneration)
         } catch {
+            cancelPendingCaptureStart()
             vadController?.stop()
             vadController = nil
             systemVadController?.stop()
@@ -660,13 +883,14 @@ final class MeetingSession {
                 systemChunkTimingTracker.discard()
             }
             meetingMicRecorder.cancel()
-            if let url = systemAudioRecorder.stop() {
+            if let url = stopSystemAudioUnlessStartIsRunning() {
                 try? FileManager.default.removeItem(at: url)
             }
             systemChunkCollector.cancelAll()
             stopLiveStreamingPartials()
             throw error
         }
+        startLiveStreamingPartialsPreparationIfAvailable()
         if vadController != nil {
             fputs("[meeting] started with VAD-driven chunk rotation\n", stderr)
         } else {
@@ -694,9 +918,10 @@ final class MeetingSession {
                 self?.enqueuePostModeSystemSamples(samples)
             }
             try meetingMicRecorder.prepare()
-            try await systemAudioRecorder.start()
-            try meetingMicRecorder.start()
+            let captureStartGeneration = try await startSystemAudioWithTimeout()
+            try startMicrophoneIfCaptureStartIsCurrent(captureStartGeneration)
         } catch {
+            cancelPendingCaptureStart()
             stopIntakeRequested.store(true, ordering: .releasing)
             meetingMicRecorder.onRawPCMSamples = nil
             systemAudioRecorder.onPCMSamples = nil
@@ -708,7 +933,7 @@ final class MeetingSession {
                 startTime = nil
             }
             meetingMicRecorder.cancel()
-            if let url = systemAudioRecorder.stop() {
+            if let url = stopSystemAudioUnlessStartIsRunning() {
                 try? FileManager.default.removeItem(at: url)
             }
             stopLiveStreamingPartials()
@@ -737,8 +962,9 @@ final class MeetingSession {
 
         meetingMicRecorder.pause()
         systemAudioRecorder.pause()
-        micLivePartialSession?.suspend()
-        systemLivePartialSession?.suspend()
+        let livePartials = livePartialSessions()
+        livePartials.mic?.suspend()
+        livePartials.system?.suspend()
         Task { await screenContextCollector.setPaused(true) }
         fputs("[meeting] recording paused\n", stderr)
     }
@@ -753,14 +979,16 @@ final class MeetingSession {
 
         meetingMicRecorder.resume()
         systemAudioRecorder.resume()
-        micLivePartialSession?.resume()
-        systemLivePartialSession?.resume()
+        let livePartials = livePartialSessions()
+        livePartials.mic?.resume()
+        livePartials.system?.resume()
         Task { await screenContextCollector.setPaused(false) }
         fputs("[meeting] recording resumed\n", stderr)
     }
 
     /// Abandon the recording — stop everything, delete temp files, don't transcribe.
     func discard() {
+        cancelPendingCaptureStart()
         stopIntakeRequested.store(true, ordering: .releasing)
         Task { await screenContextCollector.stopAndDrain() }
         let (rawRecorder, systemRecorder) = chunkRotationQueue.sync { () -> (PCMChunkRecorder?, PCMChunkRecorder?) in
@@ -788,7 +1016,7 @@ final class MeetingSession {
         meetingMicRecorder.onRawPCMSamples = nil
         meetingMicRecorder.cancel()
         systemAudioRecorder.onPCMSamples = nil
-        if let url = systemAudioRecorder.stop() {
+        if let url = stopSystemAudioUnlessStartIsRunning() {
             try? FileManager.default.removeItem(at: url)
         }
         micChunkCollector.cancelAll()
@@ -798,6 +1026,7 @@ final class MeetingSession {
     }
 
     func stop() async throws -> MeetingSessionResult {
+        cancelPendingCaptureStart()
         onProgress?(.transcribingAudio)
         let endTime = Date()
         if config.resolvedMeetingProcessingMode == .post {
@@ -829,7 +1058,7 @@ final class MeetingSession {
         noteStopPhaseForTesting("mic_recorder_stop")
         let rawStreamingMicURL = meetingMicRecorder.stop()
         noteStopPhaseForTesting("system_recorder_stop")
-        let systemAudioURL = systemAudioRecorder.stop()
+        let systemAudioURL = stopSystemAudioUnlessStartIsRunning()
         let (meetingStart, lastChunkTiming, lastRawMicURL, lastSystemChunkTiming, lastSystemChunkURL) = chunkRotationQueue.sync { () -> (Date, MeetingChunkTimingSnapshot?, URL?, MeetingChunkTimingSnapshot?, URL?) in
             noteStopPhaseForTesting("chunk_queue_finalize")
             isRecording = false
@@ -848,7 +1077,6 @@ final class MeetingSession {
             return (meetingStart, lastChunkTiming, lastRawMicURL, lastSystemChunkTiming, lastSystemChunkURL)
         }
         stopIntakeRequested.store(true, ordering: .releasing)
-        await finishAndStopLiveStreamingPartials()
         let retainedRecordingTempURL = retainedRecordingWriter?.stop()
         retainedRecordingWriter = nil
         let retainedRecordingSavedURL = await finalizeRetainedRecordingEarly(
@@ -856,6 +1084,7 @@ final class MeetingSession {
             meetingStart: meetingStart
         )
         let retainedRecordingURL = retainedRecordingSavedURL == nil ? retainedRecordingTempURL : nil
+        stopLiveStreamingPartials()
         defer {
             if let rawStreamingMicURL {
                 try? FileManager.default.removeItem(at: rawStreamingMicURL)
@@ -1206,7 +1435,7 @@ final class MeetingSession {
         noteStopPhaseForTesting("mic_recorder_stop")
         let rawStreamingMicURL = meetingMicRecorder.stop()
         noteStopPhaseForTesting("system_recorder_stop")
-        let systemAudioURL = systemAudioRecorder.stop()
+        let systemAudioURL = stopSystemAudioUnlessStartIsRunning()
         let meetingStart = chunkRotationQueue.sync { () -> Date in
             noteStopPhaseForTesting("chunk_queue_finalize")
             isRecording = false
@@ -1214,7 +1443,6 @@ final class MeetingSession {
             return self.startTime ?? Date()
         }
         stopIntakeRequested.store(true, ordering: .releasing)
-        await finishAndStopLiveStreamingPartials()
         let sourceTracks = postModeTrackWriter?.stop() ?? MeetingSourceTrackRecording(
             micURL: nil,
             systemURL: nil,
@@ -1241,8 +1469,18 @@ final class MeetingSession {
         let sourceSystemURL = persistedRecording?.systemURL ?? sourceTracks.systemURL
         let retainedRecordingSavedURL = persistedRecording?.mixedURL
         let retainedRecordingURL = retainedRecordingSavedURL == nil ? mixedTempURL : nil
+        stopLiveStreamingPartials()
 
         let backend = currentBackend()
+        if let postModePreload {
+            try await postModePreload(backend)
+        } else {
+            try await transcriptionCoordinator.preloadRequired(
+                backend: backend,
+                enablePostProcessor: false,
+                includeMeetingHelpers: true
+            )
+        }
         let micTrack = try await transcribePostModeTrack(
             url: sourceMicURL,
             trackRole: .mic,
@@ -1751,10 +1989,6 @@ final class MeetingSession {
         for observation in observations {
             let evidences = speakerNameEvidence(from: observation)
             guard !evidences.isEmpty else { continue }
-            for evidence in evidences {
-                globalVotes[evidence.name, default: 0] += evidence.weight
-            }
-
             let relativeTime = Float(observation.observedAt.timeIntervalSince(meetingStart))
             guard relativeTime >= -2 else { continue }
             guard let speakerID = nearestSpeakerID(
@@ -1763,6 +1997,10 @@ final class MeetingSession {
                 maxGapSeconds: 3.0
             ) else { continue }
             for evidence in evidences {
+                // Only evidence that overlaps captured speech belongs in the prior.
+                // Backup events from before capture or Meet UI events during silence
+                // must not dilute a real speaker-to-cluster match.
+                globalVotes[evidence.name, default: 0] += evidence.weight
                 votes[speakerID, default: [:]][evidence.name, default: 0] += evidence.weight
                 if evidence.isExclusive {
                     exclusiveVotes[speakerID, default: [:]][evidence.name, default: 0] += 1
@@ -1970,7 +2208,7 @@ final class MeetingSession {
             return
         }
         let livePartialSegmentID = UUID()
-        micLivePartialSession?.markSegmentBoundary(id: livePartialSegmentID)
+        livePartialSessions().mic?.markSegmentBoundary(id: livePartialSegmentID)
 
         // Transcribe the completed chunk async
         let chunkOffset = chunkTiming.startTimeSeconds
@@ -1990,7 +2228,7 @@ final class MeetingSession {
             )
             // Durable ONNX output is authoritative. Advance the display-only
             // Parakeet boundary even when ONNX rejects a false-positive partial.
-            self.micLivePartialSession?.commitSegment(id: livePartialSegmentID)
+            self.livePartialSessions().mic?.commitSegment(id: livePartialSegmentID)
             return segments
         }
         let (registered, retireID) = micChunkCollector.add(task)
@@ -2026,7 +2264,7 @@ final class MeetingSession {
         let chunkOffset = chunkTiming.startTimeSeconds
         let chunkDuration = chunkTiming.durationSeconds
         let livePartialSegmentID = UUID()
-        systemLivePartialSession?.markSegmentBoundary(id: livePartialSegmentID)
+        livePartialSessions().system?.markSegmentBoundary(id: livePartialSegmentID)
         fputs("[meeting] rotating system chunk at offset=\(String(format: "%.0f", chunkOffset))s\n", stderr)
 
         let task = Task { [weak self] () -> [SpeechSegment] in
@@ -2038,7 +2276,7 @@ final class MeetingSession {
                 if !Task.isCancelled {
                     // Clear this display-only partial even for empty/failed ONNX
                     // output so it cannot linger as an apparent transcript.
-                    self.systemLivePartialSession?.commitSegment(id: livePartialSegmentID)
+                    self.livePartialSessions().system?.commitSegment(id: livePartialSegmentID)
                 }
             }
             do {
@@ -2124,15 +2362,40 @@ final class MeetingSession {
         }
     }
 
-    private func prepareLiveStreamingPartialsIfAvailable() async {
+    private func startLiveStreamingPartialsPreparationIfAvailable() {
         guard config.enableLiveStreamingPartials,
-              MeetingParakeetLiveCaptionModelStore.isDownloaded() else {
+              livePartialEngineFactory != nil || MeetingParakeetLiveCaptionModelStore.isDownloaded() else {
             publishLivePartials(you: "", others: "")
             return
         }
+        let generation = livePartialsState.withLock { state -> UInt64 in
+            state.generation &+= 1
+            state.preparationTask?.cancel()
+            return state.generation
+        }
+        let task = Task<Void, Never>(priority: .utility) { [weak self] in
+            guard let self else { return }
+            await self.prepareLiveStreamingPartials(generation: generation)
+        }
+        let shouldCancel = livePartialsState.withLock { state -> Bool in
+            guard state.generation == generation else { return true }
+            state.preparationTask = task
+            return false
+        }
+        if shouldCancel { task.cancel() }
+    }
 
+    private func prepareLiveStreamingPartials(generation: UInt64) async {
         do {
-            let engines = try await MeetingParakeetLiveCaptionModelStore.makeEngines()
+            let engines: (
+                mic: MeetingStreamingPartialEngine,
+                system: MeetingStreamingPartialEngine
+            )
+            if let livePartialEngineFactory {
+                engines = try await livePartialEngineFactory()
+            } else {
+                engines = try await MeetingParakeetLiveCaptionModelStore.makeEngines()
+            }
             let mic = MeetingStreamingPartialSession(engine: engines.mic, label: "You")
             let system = MeetingStreamingPartialSession(engine: engines.system, label: "Others")
             mic.onPartialUpdate = { [weak self] text in
@@ -2143,12 +2406,27 @@ final class MeetingSession {
             }
             await mic.connect()
             await system.connect()
-            micLivePartialSession = mic
-            systemLivePartialSession = system
+            let didAttach = livePartialsState.withLock { state -> Bool in
+                guard state.generation == generation, !Task.isCancelled else { return false }
+                state.micSession = mic
+                state.systemSession = system
+                state.preparationTask = nil
+                return true
+            }
+            guard didAttach else {
+                mic.stop()
+                system.stop()
+                return
+            }
             publishLivePartials(you: "", others: "")
             DiagnosticsLog.write("[meeting-partials] Parakeet EOU enabled")
         } catch {
-            stopLiveStreamingPartials()
+            let isCurrent = livePartialsState.withLock { state -> Bool in
+                guard state.generation == generation, !Task.isCancelled else { return false }
+                state.preparationTask = nil
+                return true
+            }
+            guard isCurrent else { return }
             DiagnosticsLog.write("[meeting-partials] unavailable error=\(error.localizedDescription)")
         }
     }
@@ -2174,18 +2452,32 @@ final class MeetingSession {
     }
 
     private func stopLiveStreamingPartials() {
-        micLivePartialSession?.stop()
-        systemLivePartialSession?.stop()
-        micLivePartialSession = nil
-        systemLivePartialSession = nil
+        let sessions = takeLivePartialSessionsForStopping()
+        sessions.mic?.stop()
+        sessions.system?.stop()
         publishLivePartials(you: "", others: "")
     }
 
-    private func finishAndStopLiveStreamingPartials() async {
-        async let micTail = micLivePartialSession?.finish()
-        async let systemTail = systemLivePartialSession?.finish()
-        _ = await (micTail, systemTail)
-        stopLiveStreamingPartials()
+    private func livePartialSessions() -> (
+        mic: MeetingStreamingPartialSession?,
+        system: MeetingStreamingPartialSession?
+    ) {
+        livePartialsState.withLock { ($0.micSession, $0.systemSession) }
+    }
+
+    private func takeLivePartialSessionsForStopping() -> (
+        mic: MeetingStreamingPartialSession?,
+        system: MeetingStreamingPartialSession?
+    ) {
+        livePartialsState.withLock { state in
+            state.generation &+= 1
+            state.preparationTask?.cancel()
+            state.preparationTask = nil
+            let sessions = (state.micSession, state.systemSession)
+            state.micSession = nil
+            state.systemSession = nil
+            return sessions
+        }
     }
 
     private func prepareRealtimeAudioPipeline(vadManager: VadManager?) throws {
@@ -2286,7 +2578,7 @@ final class MeetingSession {
             self.systemChunkTimingTracker.append(sampleCount: samples.count)
 
             let floatSamples = samples.map { Float($0) / 32767.0 }
-            self.systemLivePartialSession?.enqueue(floatSamples)
+            self.livePartialSessions().system?.enqueue(floatSamples)
             self.neuralAec.feedSystemSamples(floatSamples)
             let cleanedFloat = self.neuralAec.processStreamingMic([])
             self.appendCleanedMicSamplesOnQueue(cleanedFloat)
@@ -2313,7 +2605,7 @@ final class MeetingSession {
             let healthSnapshot = self.micHealthTracker.noteRawMicSamples(rawSamples)
             self.onMicHealthChanged?(healthSnapshot)
             self.postModeTrackWriter?.appendMic(rawSamples)
-            self.micLivePartialSession?.enqueue(rawSamples.map { Float($0) / 32767.0 })
+            self.livePartialSessions().mic?.enqueue(rawSamples.map { Float($0) / 32767.0 })
         }
     }
 
@@ -2329,7 +2621,7 @@ final class MeetingSession {
             let healthSnapshot = self.micHealthTracker.noteSystemSamples(samples)
             self.onMicHealthChanged?(healthSnapshot)
             self.postModeTrackWriter?.appendSystem(samples)
-            self.systemLivePartialSession?.enqueue(samples.map { Float($0) / 32767.0 })
+            self.livePartialSessions().system?.enqueue(samples.map { Float($0) / 32767.0 })
         }
     }
 
@@ -2339,7 +2631,7 @@ final class MeetingSession {
             Int16(max(-1.0, min(1.0, sample)) * 32767)
         }
         rawMicChunkRecorder?.append(cleanedInt16)
-        micLivePartialSession?.enqueue(cleanedFloat)
+        livePartialSessions().mic?.enqueue(cleanedFloat)
         chunkTimingTracker.append(sampleCount: cleanedInt16.count)
         diagnostics?.appendCleanedMicSamples(cleanedInt16)
     }

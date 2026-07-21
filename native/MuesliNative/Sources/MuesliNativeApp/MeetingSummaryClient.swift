@@ -107,7 +107,7 @@ enum MeetingSummaryRetryPolicy {
             return false
         }
         switch urlError.code {
-        case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+        case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .timedOut:
             return true
         default:
             return false
@@ -148,11 +148,14 @@ enum MeetingSummaryClient {
     private static let defaultChatGPTModel = "gpt-5.4-mini"
     private static let defaultOllamaModel = "qwen3.5"
     private static let defaultSummaryMaxOutputTokens = 2500
-    private static let ollamaSummaryTimeout: TimeInterval = 300
+    private static let remoteSummaryAttemptTimeout: TimeInterval = 90
+    private static let localSummaryAttemptTimeout: TimeInterval = 180
+    private static let summaryTotalTimeout: TimeInterval = 180
+    private static let ollamaSummaryTimeout = localSummaryAttemptTimeout
     private static let ollamaTitleTimeout: TimeInterval = 120
-    private static let lmStudioSummaryTimeout: TimeInterval = 300
+    private static let lmStudioSummaryTimeout = localSummaryAttemptTimeout
     private static let lmStudioTitleTimeout: TimeInterval = 120
-    private static let customLLMSummaryTimeout: TimeInterval = 300
+    private static let customLLMSummaryTimeout = localSummaryAttemptTimeout
     private static let customLLMTitleTimeout: TimeInterval = 120
     private static let transcriptCleanupTimeout: TimeInterval = 120
     private static let transcriptCleanupChunkCharacterLimit = 12_000
@@ -198,34 +201,42 @@ enum MeetingSummaryClient {
         manualNotesToRetain: String? = nil,
         visualContext: String? = nil
     ) async throws -> String {
-        try await withSummaryRetries(
-            maxRetries: config.meetingSummaryRetryCount,
-            localBackend: usesLocalSummaryRetryPolicy(config: config)
-        ) {
-            try await summarizeOnce(
-                transcript: transcript,
-                meetingTitle: meetingTitle,
-                config: config,
-                template: template,
-                existingNotes: existingNotes,
-                manualNotesToRetain: manualNotesToRetain,
-                visualContext: visualContext
-            )
+        let localBackend = usesLocalSummaryRetryPolicy(config: config)
+        return try await withSummaryTimeout(seconds: summaryTotalTimeout) {
+            try await withSummaryRetries(
+                maxRetries: config.meetingSummaryRetryCount,
+                localBackend: localBackend,
+                attemptTimeout: localBackend ? localSummaryAttemptTimeout : remoteSummaryAttemptTimeout
+            ) {
+                try await summarizeOnce(
+                    transcript: transcript,
+                    meetingTitle: meetingTitle,
+                    config: config,
+                    template: template,
+                    existingNotes: existingNotes,
+                    manualNotesToRetain: manualNotesToRetain,
+                    visualContext: visualContext
+                )
+            }
         }
     }
 
     static func withSummaryRetries(
         maxRetries: Int,
         localBackend: Bool = false,
+        attemptTimeout: TimeInterval? = nil,
         sleep: (TimeInterval) async throws -> Void = { delay in
             try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         },
-        operation: () async throws -> String
+        operation: @escaping () async throws -> String
     ) async throws -> String {
         let retryCount = MeetingSummaryRetryPolicy.clampedRetryCount(maxRetries)
         var attempt = 0
         while true {
             do {
+                if let attemptTimeout {
+                    return try await withSummaryTimeout(seconds: attemptTimeout, operation: operation)
+                }
                 return try await operation()
             } catch {
                 let effectiveRetryCount = MeetingSummaryRetryPolicy.effectiveRetryCount(
@@ -240,6 +251,28 @@ enum MeetingSummaryClient {
                 DiagnosticsLog.write("[summary] retrying summary generation after failure (\(attempt)/\(effectiveRetryCount)): \(error.localizedDescription)")
                 try await sleep(MeetingSummaryRetryPolicy.retryDelay(forAttempt: attempt))
             }
+        }
+    }
+
+    static func withSummaryTimeout(
+        seconds: TimeInterval,
+        operation: @escaping () async throws -> String
+    ) async throws -> String {
+        let boundedSeconds = min(max(seconds, 0.001), 86_400)
+        return try await withThrowingTaskGroup(of: String.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(boundedSeconds * 1_000_000_000))
+                throw MeetingSummaryError.requestFailed(
+                    backend: "Summary",
+                    underlying: URLError(.timedOut)
+                )
+            }
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else {
+                throw CancellationError()
+            }
+            return result
         }
     }
 
@@ -560,6 +593,7 @@ enum MeetingSummaryClient {
         ]
 
         var request = URLRequest(url: openAIURL)
+        request.timeoutInterval = remoteSummaryAttemptTimeout
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -688,6 +722,7 @@ enum MeetingSummaryClient {
         ]
 
         var request = URLRequest(url: openRouterURL)
+        request.timeoutInterval = remoteSummaryAttemptTimeout
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -733,7 +768,8 @@ enum MeetingSummaryClient {
                     manualNotes: manualNotes,
                     visualContext: visualContext
                 ),
-                model: resolvedChatGPTModel(config.chatGPTModel)
+                model: resolvedChatGPTModel(config.chatGPTModel),
+                timeout: remoteSummaryAttemptTimeout
             )
             if let text, !text.isEmpty {
                 return text

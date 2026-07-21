@@ -333,6 +333,48 @@ struct MeetingSummaryClientTests {
         }
     }
 
+    @Test("summary timeout cancels a stalled attempt promptly")
+    func summaryTimeoutCancelsStalledAttempt() async {
+        let startedAt = Date()
+
+        do {
+            _ = try await MeetingSummaryClient.withSummaryTimeout(seconds: 0.01) {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                return "Too late"
+            }
+            #expect(Bool(false), "Expected stalled summary to time out")
+        } catch {
+            #expect(Date().timeIntervalSince(startedAt) < 0.5)
+            guard case .requestFailed(_, let underlying) = error as? MeetingSummaryError,
+                  let urlError = underlying as? URLError else {
+                #expect(Bool(false), "Expected a summary timeout, got \(String(describing: error))")
+                return
+            }
+            #expect(urlError.code == .timedOut)
+        }
+    }
+
+    @Test("local summary timeout is not retried")
+    func localSummaryTimeoutIsNotRetried() async {
+        var attempts = 0
+
+        do {
+            _ = try await MeetingSummaryClient.withSummaryRetries(
+                maxRetries: 5,
+                localBackend: true,
+                attemptTimeout: 0.01,
+                sleep: { _ in }
+            ) {
+                attempts += 1
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                return "Too late"
+            }
+            #expect(Bool(false), "Expected local summary to time out")
+        } catch {
+            #expect(attempts == 1)
+        }
+    }
+
     @Test("summary retries cap local transient failures")
     func summaryRetriesCapLocalTransientFailures() async {
         var attempts = 0

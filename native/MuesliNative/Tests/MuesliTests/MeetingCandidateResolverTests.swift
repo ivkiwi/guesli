@@ -582,8 +582,8 @@ struct MeetingCandidateResolverTests {
         #expect(candidate?.sourcePID == 4321)
     }
 
-    @Test("focused Meet URL is eligible before mic flips")
-    func focusedMeetURLIsEligibleBeforeMicFlips() {
+    @Test("focused Meet URL remains available for activity before mic flips")
+    func focusedMeetURLRemainsAvailableForActivityBeforeMicFlips() {
         let candidate = resolver().resolve(snapshot(
             micActive: false,
             cameraActive: false,
@@ -604,6 +604,7 @@ struct MeetingCandidateResolverTests {
         #expect(candidate?.id == "googleMeet:meet.google.com/pwm-txwq-txy")
         #expect(candidate?.platform == .googleMeet)
         #expect(candidate?.sourceBundleID == "com.google.Chrome")
+        #expect(candidate?.evidence == [.browserURL, .foregroundApp])
     }
 
     @Test("Teams input-only process does not resolve")

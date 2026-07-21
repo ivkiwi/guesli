@@ -33,7 +33,13 @@
     return speech.length >= 2 ? matches[0] : "";
   }
 
-  const api = { participantNameMatches, captionSpeakerFromLines };
+  function preferExplicitSpeakers(explicitSpeakers, captionSpeakers) {
+    return Array.isArray(explicitSpeakers) && explicitSpeakers.length > 0
+      ? explicitSpeakers
+      : (Array.isArray(captionSpeakers) ? captionSpeakers : []);
+  }
+
+  const api = { participantNameMatches, captionSpeakerFromLines, preferExplicitSpeakers };
   root.MuesliMeetSpeakerDetection = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis === "undefined" ? this : globalThis);

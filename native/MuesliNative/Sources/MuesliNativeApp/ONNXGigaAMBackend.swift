@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import MuesliCore
 
@@ -222,24 +223,65 @@ private final class ONNXGigaAMLineReader: @unchecked Sendable {
         self.handle = handle
     }
 
-    func readLine() throws -> Data {
+    func readLine(timeout: TimeInterval? = nil) throws -> Data {
+        let deadline = timeout.map {
+            DispatchTime.now().uptimeNanoseconds + UInt64(max(0, $0) * 1_000_000_000)
+        }
         while true {
             if let newline = buffer.firstIndex(of: 0x0A) {
                 let line = buffer[..<newline]
                 buffer.removeSubrange(...newline)
                 return Data(line)
             }
-            guard let chunk = try handle.read(upToCount: 4096), !chunk.isEmpty else {
+            try Task.checkCancellation()
+            let waitMilliseconds: Int32
+            if let deadline {
+                let now = DispatchTime.now().uptimeNanoseconds
+                guard now < deadline else {
+                    throw NSError(domain: "ONNXGigaAMHelper", code: 3, userInfo: [
+                        NSLocalizedDescriptionKey: "GigaAM ONNX helper timed out waiting for a response.",
+                    ])
+                }
+                let remainingMilliseconds = (deadline - now + 999_999) / 1_000_000
+                waitMilliseconds = Int32(min(remainingMilliseconds, 100))
+            } else {
+                waitMilliseconds = 100
+            }
+            var descriptor = pollfd(
+                fd: handle.fileDescriptor,
+                events: Int16(POLLIN | POLLHUP | POLLERR),
+                revents: 0
+            )
+            let pollResult = Darwin.poll(&descriptor, 1, waitMilliseconds)
+            if pollResult == 0 { continue }
+            if pollResult < 0 {
+                if errno == EINTR { continue }
+                throw NSError(domain: "ONNXGigaAMHelper", code: 4, userInfo: [
+                    NSLocalizedDescriptionKey: "Could not read from GigaAM ONNX helper: \(String(cString: strerror(errno)))",
+                ])
+            }
+            var chunk = [UInt8](repeating: 0, count: 4096)
+            let byteCount = Darwin.read(handle.fileDescriptor, &chunk, chunk.count)
+            if byteCount < 0 {
+                if errno == EINTR { continue }
+                throw NSError(domain: "ONNXGigaAMHelper", code: 4, userInfo: [
+                    NSLocalizedDescriptionKey: "Could not read from GigaAM ONNX helper: \(String(cString: strerror(errno)))",
+                ])
+            }
+            guard byteCount > 0 else {
                 throw NSError(domain: "ONNXGigaAMHelper", code: 2, userInfo: [
                     NSLocalizedDescriptionKey: "GigaAM ONNX helper exited before returning a result.",
                 ])
             }
-            buffer.append(chunk)
+            buffer.append(contentsOf: chunk.prefix(byteCount))
         }
     }
 }
 
-private final class ONNXGigaAMHelperProcess: @unchecked Sendable {
+final class ONNXGigaAMHelperProcess: @unchecked Sendable {
+    static let readyTimeout: TimeInterval = 30
+    static let responseTimeout: TimeInterval = 180
+
     private struct Ready: Decodable { let ready: Bool }
     private struct Response: Decodable {
         let text: String?
@@ -259,8 +301,12 @@ private final class ONNXGigaAMHelperProcess: @unchecked Sendable {
         self.reader = reader
     }
 
-    static func start(modelDirectory: URL) throws -> ONNXGigaAMHelperProcess {
-        let helper = try helperURL()
+    static func start(
+        modelDirectory: URL,
+        readyTimeout: TimeInterval = ONNXGigaAMHelperProcess.readyTimeout,
+        helperURLOverride: URL? = nil
+    ) throws -> ONNXGigaAMHelperProcess {
+        let helper = try helperURLOverride ?? helperURL()
         let process = Process()
         let stdin = Pipe()
         let stdout = Pipe()
@@ -280,7 +326,10 @@ private final class ONNXGigaAMHelperProcess: @unchecked Sendable {
             reader: ONNXGigaAMLineReader(handle: stdout.fileHandleForReading)
         )
         do {
-            let ready = try JSONDecoder().decode(Ready.self, from: instance.reader.readLine())
+            let ready = try JSONDecoder().decode(
+                Ready.self,
+                from: instance.reader.readLine(timeout: readyTimeout)
+            )
             guard ready.ready else { throw helperError("GigaAM ONNX helper did not become ready.") }
             return instance
         } catch {
@@ -289,7 +338,10 @@ private final class ONNXGigaAMHelperProcess: @unchecked Sendable {
         }
     }
 
-    func transcribe(wavURL: URL) throws -> String {
+    func transcribe(
+        wavURL: URL,
+        responseTimeout: TimeInterval = ONNXGigaAMHelperProcess.responseTimeout
+    ) throws -> String {
         requestLock.lock()
         defer { requestLock.unlock() }
         lifecycleLock.lock()
@@ -298,7 +350,16 @@ private final class ONNXGigaAMHelperProcess: @unchecked Sendable {
         guard canRun else { throw Self.helperError("GigaAM ONNX helper is not running.") }
         guard !wavURL.path.contains("\n") else { throw Self.helperError("Invalid WAV path.") }
         try input.write(contentsOf: Data((wavURL.path + "\n").utf8))
-        let response = try JSONDecoder().decode(Response.self, from: reader.readLine())
+        let response: Response
+        do {
+            response = try JSONDecoder().decode(
+                Response.self,
+                from: reader.readLine(timeout: responseTimeout)
+            )
+        } catch let error as NSError where error.domain == "ONNXGigaAMHelper" && error.code == 3 {
+            terminate()
+            throw error
+        }
         if let error = response.error { throw Self.helperError(error) }
         return response.text ?? ""
     }
@@ -347,10 +408,20 @@ private final class ONNXGigaAMHelperProcess: @unchecked Sendable {
 }
 
 actor ONNXGigaAMTranscriber {
+    typealias HelperStarter = @Sendable (URL) throws -> ONNXGigaAMHelperProcess
+
     private var loadedDirectory: URL?
     private var activeDownloadTask: Task<URL, Error>?
+    private var activeHelperStart: (id: UUID, task: Task<ONNXGigaAMHelperProcess, Error>)?
     private var helper: ONNXGigaAMHelperProcess?
     private var generation = 0
+    private let helperStarter: HelperStarter
+
+    init(helperStarter: @escaping HelperStarter = { directory in
+        try ONNXGigaAMHelperProcess.start(modelDirectory: directory)
+    }) {
+        self.helperStarter = helperStarter
+    }
 
     func loadModels(progress: ((Double, String?) -> Void)? = nil) async throws {
         let expectedGeneration = generation
@@ -373,9 +444,8 @@ actor ONNXGigaAMTranscriber {
         }
         try Task.checkCancellation()
         guard generation == expectedGeneration else { throw CancellationError() }
-        if helper?.isRunning != true {
-            helper = try await Task.detached { try ONNXGigaAMHelperProcess.start(modelDirectory: directory) }.value
-        }
+        try await ensureHelperStarted(directory: directory, expectedGeneration: expectedGeneration)
+        try Task.checkCancellation()
         guard generation == expectedGeneration else {
             helper?.terminate()
             helper = nil
@@ -385,10 +455,51 @@ actor ONNXGigaAMTranscriber {
         progress?(1, nil)
     }
 
+    private func ensureHelperStarted(directory: URL, expectedGeneration: Int) async throws {
+        if helper?.isRunning != true {
+            let start: (id: UUID, task: Task<ONNXGigaAMHelperProcess, Error>)
+            if let activeHelperStart {
+                start = activeHelperStart
+            } else {
+                let id = UUID()
+                let helperStarter = self.helperStarter
+                let task = Task.detached {
+                    try helperStarter(directory)
+                }
+                start = (id, task)
+                activeHelperStart = start
+            }
+            let startedHelper: ONNXGigaAMHelperProcess
+            do {
+                startedHelper = try await start.task.value
+            } catch {
+                if activeHelperStart?.id == start.id { activeHelperStart = nil }
+                throw error
+            }
+            if activeHelperStart?.id == start.id { activeHelperStart = nil }
+            guard generation == expectedGeneration else {
+                startedHelper.terminate()
+                throw CancellationError()
+            }
+            helper = startedHelper
+        }
+    }
+
+#if DEBUG
+    func loadHelperForTesting(modelDirectory: URL) async throws {
+        let expectedGeneration = generation
+        try await ensureHelperStarted(directory: modelDirectory, expectedGeneration: expectedGeneration)
+        try Task.checkCancellation()
+        guard generation == expectedGeneration else { throw CancellationError() }
+    }
+#endif
+
     func shutdown() async {
         generation += 1
         activeDownloadTask?.cancel()
         activeDownloadTask = nil
+        activeHelperStart?.task.cancel()
+        activeHelperStart = nil
         helper?.terminate()
         helper = nil
         loadedDirectory = nil
