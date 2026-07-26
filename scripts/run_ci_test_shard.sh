@@ -53,6 +53,7 @@ case "${shard}" in
       DictationStateTests
       HotkeyConfigTests
       DictationStateIdleTests
+      DictationCorrectionMonitorTests
     )
     ;;
   meetings)
