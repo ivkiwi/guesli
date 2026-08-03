@@ -241,6 +241,296 @@ struct IndicatorFrameSizeTests {
     }
 }
 
+@Suite("Floating meeting transcript")
+struct FloatingMeetingTranscriptTests {
+    @Test("overlay routes header controls and leaves transcript body to SwiftUI")
+    func overlayClickRouting() {
+        let frame = NSRect(x: 100, y: 100, width: 360, height: 320)
+
+        #expect(FloatingMeetingTranscriptInteraction.action(
+            at: NSPoint(x: 390, y: 400), in: frame
+        ) == .dismiss)
+        #expect(FloatingMeetingTranscriptInteraction.action(
+            at: NSPoint(x: 430, y: 400), in: frame
+        ) == .copy)
+        #expect(FloatingMeetingTranscriptInteraction.action(
+            at: NSPoint(x: 250, y: 250), in: frame
+        ) == nil)
+        #expect(FloatingMeetingTranscriptInteraction.action(
+            at: NSPoint(x: 90, y: 250), in: frame
+        ) == nil)
+    }
+
+    @Test("floating panel can receive controls without becoming the main window")
+    @MainActor
+    func floatingPanelIsInteractive() {
+        let panel = InteractiveFloatingPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 320),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        var receivedMouseDown: NSPoint?
+        panel.leftMouseDownHandler = { point in
+            receivedMouseDown = point
+            return true
+        }
+        let event = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: NSPoint(x: 20, y: 20),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: panel.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        )
+        if let event {
+            panel.sendEvent(event)
+        }
+
+        #expect(panel.canBecomeKey)
+        #expect(!panel.canBecomeMain)
+        #expect(!panel.becomesKeyOnlyIfNeeded)
+        #expect(!panel.styleMask.contains(.nonactivatingPanel))
+        #expect(receivedMouseDown == NSPoint(x: 20, y: 20))
+    }
+
+    @Test("shown overlay retains its hosting view and routes dismissal")
+    @MainActor
+    func shownOverlayRoutesDismissal() {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 320),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let container = NSView(frame: panel.contentView?.bounds ?? .zero)
+        panel.contentView = container
+        var dismissCount = 0
+        let controller = FloatingMeetingTranscriptPanelController(
+            onHoverChanged: { _ in },
+            onOpenNotes: {},
+            onDismiss: { dismissCount += 1 }
+        )
+
+        controller.show(in: container, frame: container.bounds)
+
+        #expect(controller.isVisible)
+        #expect(!controller.handleClick(atWindowPoint: NSPoint(x: 180, y: 160)))
+        #expect(controller.handleClick(atWindowPoint: NSPoint(x: 290, y: 300)))
+        #expect(dismissCount == 1)
+    }
+
+    @Test("panel prefers the open side and remains inside the screen")
+    func panelPlacement() {
+        let screen = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let trailingIndicator = NSRect(x: 1350, y: 440, width: 76, height: 22)
+        let leadingIndicator = NSRect(x: 14, y: 440, width: 76, height: 22)
+
+        let leftFrame = FloatingMeetingTranscriptPlacement.frame(
+            beside: trailingIndicator,
+            visibleFrame: screen
+        )
+        let rightFrame = FloatingMeetingTranscriptPlacement.frame(
+            beside: leadingIndicator,
+            visibleFrame: screen
+        )
+
+        #expect(leftFrame.maxX == trailingIndicator.minX)
+        #expect(rightFrame.minX == leadingIndicator.maxX)
+        #expect(screen.insetBy(dx: 8, dy: 8).contains(leftFrame))
+        #expect(screen.insetBy(dx: 8, dy: 8).contains(rightFrame))
+    }
+
+    @Test("panel clamps vertically on short screens")
+    func verticalPlacementClamp() {
+        let screen = NSRect(x: 100, y: 50, width: 900, height: 360)
+        let indicator = NSRect(x: 950, y: 380, width: 40, height: 22)
+
+        let frame = FloatingMeetingTranscriptPlacement.frame(
+            beside: indicator,
+            visibleFrame: screen
+        )
+
+        #expect(frame.minY >= screen.minY + 8)
+        #expect(frame.maxY == screen.maxY - 8)
+    }
+
+    @Test("copy includes committed transcript and current partials")
+    func copyTextIncludesLiveTails() {
+        let text = LiveTranscriptCopyContent.text(
+            transcript: "[10:00:00] You: committed",
+            partialYou: "speaking now",
+            partialOthers: "current reply"
+        )
+
+        #expect(text == "[10:00:00] You: committed\nOthers: current reply\nYou: speaking now")
+    }
+
+    @Test("panel retains the complete committed transcript")
+    func completeTranscriptHistory() {
+        let transcript = (0..<12)
+            .map { "[10:00:\(String(format: "%02d", $0))] You: line \($0)" }
+            .joined(separator: "\n")
+
+        let messages = TranscriptChatMessage.messages(from: transcript)
+
+        #expect(messages.count == 12)
+        #expect(messages.first?.text == "line 0")
+        #expect(messages.last?.text == "line 11")
+    }
+
+    @Test("incremental panel updates retain unique message identities")
+    @MainActor
+    func incrementalUpdatesUseUniqueIDs() {
+        let model = LiveTranscriptPresentationModel()
+
+        model.update(
+            transcript: "[10:00:00] You: first\n",
+            partialYou: "",
+            partialOthers: ""
+        )
+        model.update(
+            transcript: "[10:00:00] You: first\n[10:00:05] Others: second\n",
+            partialYou: "",
+            partialOthers: ""
+        )
+
+        #expect(model.messages.map(\.id) == [0, 1])
+        #expect(model.messages.map(\.text) == ["first", "second"])
+    }
+}
+
+@Suite("Floating indicator pointer interaction")
+struct FloatingIndicatorPointerInteractionTests {
+    @Test("small pointer movement remains a click while deliberate movement drags")
+    func dragThreshold() {
+        let start = NSPoint(x: 100, y: 100)
+        #expect(!FloatingIndicatorPointerIntent.isDrag(
+            from: start,
+            to: NSPoint(x: 102, y: 102)
+        ))
+        #expect(FloatingIndicatorPointerIntent.isDrag(
+            from: start,
+            to: NSPoint(x: 104, y: 100)
+        ))
+    }
+
+    @MainActor
+    @Test("clicking the stop control stops the meeting")
+    func stopControlStopsMeeting() throws {
+        let indicator = makeIndicator()
+        var stopCount = 0
+        indicator.onStopMeeting = { stopCount += 1 }
+        indicator.setMeetingRecording(true, config: AppConfig())
+
+        let size = try #require(indicator.controlHitTestSizeForTesting)
+        let stopFrame = FloatingIndicatorControlLayout.trailingControlFrame(in: size)
+        indicator.handleClick(at: CGPoint(x: stopFrame.midX, y: stopFrame.midY))
+
+        #expect(stopCount == 1)
+        indicator.close()
+    }
+
+    @MainActor
+    @Test("clicking the pill body no longer stops the meeting")
+    func bodyClickLeavesMeetingRecording() throws {
+        let indicator = makeIndicator()
+        var stopCount = 0
+        var pauseCount = 0
+        indicator.onStopMeeting = { stopCount += 1 }
+        indicator.onToggleMeetingPause = { pauseCount += 1 }
+        indicator.setMeetingRecording(true, config: AppConfig())
+
+        let size = try #require(indicator.controlHitTestSizeForTesting)
+        let bodyPoint = CGPoint(x: size.width / 2, y: size.height / 2)
+        // Guard the assumption that the pill centre really is body, so a future
+        // narrower pill fails here rather than silently weakening the test.
+        #expect(FloatingIndicatorControlLayout.hit(at: bodyPoint, in: size) == .body)
+
+        indicator.handleClick(at: bodyPoint)
+
+        #expect(stopCount == 0)
+        #expect(pauseCount == 0)
+        indicator.close()
+    }
+
+    @Test("stop hit region tracks the drawn control instead of the pill body")
+    func stopHitRegionMatchesDrawnControl() {
+        let size = CGSize(width: 190, height: 34)
+        let stopFrame = FloatingIndicatorControlLayout.trailingControlFrame(in: size)
+
+        // The drawn dot and its immediate surround stop the recording.
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: stopFrame.midX, y: stopFrame.midY),
+            in: size
+        ) == .trailingControl)
+
+        // The old behaviour treated everything past x=30 as a stop.
+        for x in stride(from: 30.0, through: 150.0, by: 20.0) {
+            #expect(FloatingIndicatorControlLayout.hit(
+                at: CGPoint(x: x, y: size.height / 2),
+                in: size
+            ) == .body)
+        }
+    }
+
+    @Test("leading control keeps its own hit region")
+    func leadingHitRegionMatchesDrawnControl() {
+        let size = CGSize(width: 190, height: 34)
+        let leadingFrame = FloatingIndicatorControlLayout.leadingControlFrame(in: size)
+
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: leadingFrame.midX, y: leadingFrame.midY),
+            in: size
+        ) == .leadingControl)
+
+        // Just outside the widened target is body, not a control.
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: 40, y: size.height / 2),
+            in: size
+        ) == .body)
+    }
+
+    @Test("controls stay reachable across the pill's full height")
+    func controlsSpanFullPillHeight() {
+        let size = CGSize(width: 190, height: 34)
+        let stopFrame = FloatingIndicatorControlLayout.trailingControlFrame(in: size)
+
+        for y in [0.5, size.height / 2, size.height - 0.5] {
+            #expect(FloatingIndicatorControlLayout.hit(
+                at: CGPoint(x: stopFrame.midX, y: y),
+                in: size
+            ) == .trailingControl)
+        }
+    }
+
+    @Test("a narrow pill resolves overlapping targets to the nearer control")
+    func narrowPillPrefersNearerControl() {
+        let size = CGSize(width: 36, height: 34)
+        let leadingFrame = FloatingIndicatorControlLayout.leadingControlFrame(in: size)
+        let trailingFrame = FloatingIndicatorControlLayout.trailingControlFrame(in: size)
+
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: leadingFrame.midX, y: size.height / 2),
+            in: size
+        ) == .leadingControl)
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: trailingFrame.midX, y: size.height / 2),
+            in: size
+        ) == .trailingControl)
+    }
+
+    @MainActor
+    private func makeIndicator() -> FloatingIndicatorController {
+        let supportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        return FloatingIndicatorController(configStore: ConfigStore(supportDirectory: supportDirectory))
+    }
+}
+
 // MARK: - OpenAI Logo Shape
 
 @Suite("OpenAI Logo Shape", .muesliHermeticSupport)
