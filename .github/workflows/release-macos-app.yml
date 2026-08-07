@@ -38,8 +38,8 @@ jobs:
           TAG_NAME="beta-${SAFE_VERSION}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           RELEASE_TITLE="Guesli Beta ${VERSION}"
           PRERELEASE="true"
-          RELEASE_NOTES=$'Russian-focused Guesli build: Muesli fork with telemetry removed and Google Meet speaker bridge included.\n\nThis build is ad-hoc signed with local-only entitlements and is unnotarized. Testers should move the app to /Applications and may need to use System Settings > Privacy & Security > Open Anyway on first launch.'
-          ASSET_SUFFIX="-adhoc-unnotarized"
+          RELEASE_NOTES=$'Russian-focused Guesli build: Muesli fork with telemetry removed and Google Meet speaker bridge included.\n\nThis build uses the stable self-signed Guesli Dev identity with local-only entitlements, so macOS privacy grants survive Guesli updates. It is not Apple-notarized; first launch may require System Settings > Privacy & Security > Open Anyway.'
+          ASSET_SUFFIX="-selfsigned-unnotarized"
 
           APP_DIR="dist/Guesli.app"
           APP_ZIP="dist/Guesli-${SAFE_VERSION}${ASSET_SUFFIX}.zip"
@@ -74,6 +74,26 @@ jobs:
             echo "Meet speaker bridge tests are not present on this ref; skipping focused test step."
           fi
 
+      - name: Install Guesli signing identity
+        env:
+          SIGNING_P12_BASE64: ${{ secrets.GUESLI_SIGNING_P12_BASE64 }}
+          SIGNING_P12_PASSWORD: ${{ secrets.GUESLI_SIGNING_P12_PASSWORD }}
+        run: |
+          test -n "$SIGNING_P12_BASE64"
+          test -n "$SIGNING_P12_PASSWORD"
+          CERTIFICATE_PATH="$RUNNER_TEMP/Guesli-Dev.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/guesli-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          printf '%s' "$SIGNING_P12_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$SIGNING_P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm -f "$CERTIFICATE_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -F '358AF852086E36AA4924D01D84B47F462776D496 "Guesli Dev"'
+
       - name: Build app bundle
         env:
           MUESLI_INSTALL_DIR: ${{ github.workspace }}/dist
@@ -90,6 +110,7 @@ jobs:
           MUESLI_SPARKLE_EDKEY: x1xV1WAX32xkX4Yl4dxV9HctwCP/dm/K/9YUzWxk7Kc=
           MUESLI_ENTITLEMENTS: ${{ github.workspace }}/scripts/MuesliLocalOnly.entitlements
           MUESLI_SKIP_SIGN: "1"
+          MUESLI_SIGN_IDENTITY: Guesli Dev
           MUESLI_SWIFTPM_SCRATCH_PATH: ${{ runner.temp }}/muesli-spm
         run: ./scripts/build_native_app.sh release
 
@@ -106,16 +127,18 @@ jobs:
           test -x "$APP_DIR/Contents/MacOS/muesli-cli"
 
           codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+          codesign -dvv "$APP_DIR" 2>&1 | grep -F 'Authority=Guesli Dev'
+          codesign -d -r- "$APP_DIR" 2>&1 | grep -F 'certificate leaf = H"358af852086e36aa4924d01d84b47f462776d496"'
           codesign -d --entitlements :- "$APP_DIR" > "$ENTITLEMENTS_PLIST"
 
           if /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.icloud-services' "$ENTITLEMENTS_PLIST" >/dev/null 2>&1; then
-            echo "ERROR: ad-hoc Guesli release must not include CloudKit entitlements." >&2
+            echo "ERROR: self-signed Guesli release must not include CloudKit entitlements." >&2
             cat "$ENTITLEMENTS_PLIST" >&2
             exit 1
           fi
 
           if /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.icloud-container-identifiers' "$ENTITLEMENTS_PLIST" >/dev/null 2>&1; then
-            echo "ERROR: ad-hoc Guesli release must not include iCloud container entitlements." >&2
+            echo "ERROR: self-signed Guesli release must not include iCloud container entitlements." >&2
             cat "$ENTITLEMENTS_PLIST" >&2
             exit 1
           fi
