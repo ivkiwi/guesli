@@ -7,6 +7,7 @@ struct UpcomingMeetingEvent {
     let id: String
     let title: String
     let startDate: Date
+    var calendarOccurrence: CalendarOccurrenceReference? = nil
     var meetingURL: URL? = nil
 }
 
@@ -129,10 +130,16 @@ final class CalendarMonitor {
             guard !event.isAllDay else { continue }
             guard let startDate = event.startDate, let endDate = event.endDate else { continue }
             if startDate <= now && endDate > now {
+                let eventID = event.eventIdentifier ?? ""
                 return UpcomingMeetingEvent(
-                    id: event.eventIdentifier ?? "",
+                    id: eventID,
                     title: event.title ?? "Meeting",
                     startDate: startDate,
+                    calendarOccurrence: Self.occurrenceReference(
+                        for: event,
+                        eventID: eventID,
+                        startDate: startDate
+                    ),
                     meetingURL: Self.extractMeetingURL(from: event)
                 )
             }
@@ -189,14 +196,20 @@ final class CalendarMonitor {
         let unified: [UnifiedCalendarEvent] = events.compactMap { event in
             guard let startDate = event.startDate, let endDate = event.endDate else { return nil }
             guard !event.isAllDay else { return nil }
+            let eventID = event.eventIdentifier ?? UUID().uuidString
             return UnifiedCalendarEvent(
-                id: event.eventIdentifier ?? UUID().uuidString,
+                id: eventID,
                 title: event.title ?? "Meeting",
                 startDate: startDate,
                 endDate: endDate,
                 isAllDay: false,
                 source: .eventKit,
                 calendarID: event.calendar?.calendarIdentifier,
+                calendarOccurrence: Self.occurrenceReference(
+                    for: event,
+                    eventID: eventID,
+                    startDate: startDate
+                ),
                 meetingURL: Self.extractMeetingURL(from: event),
                 participants: Self.participants(from: event)
             )
@@ -205,6 +218,21 @@ final class CalendarMonitor {
             .filter(unified, disabledCalendarIDs: disabledCalendarIDs)
             .filter { $0.endDate > now && $0.startDate < future }
             .sorted { $0.startDate < $1.startDate }
+    }
+
+    static func occurrenceReference(
+        for event: EKEvent,
+        eventID: String,
+        startDate: Date
+    ) -> CalendarOccurrenceReference {
+        let isRecurring = event.hasRecurrenceRules || event.isDetached
+        return CalendarOccurrenceReference(
+            provider: .eventKit,
+            calendarID: event.calendar?.calendarIdentifier,
+            eventID: eventID,
+            seriesID: isRecurring ? (event.calendarItemExternalIdentifier ?? eventID) : nil,
+            originalStartTime: isRecurring ? (event.occurrenceDate ?? startDate) : startDate
+        )
     }
 
     /// Enumerate every event calendar EventKit exposes — iCloud, On-My-Mac,

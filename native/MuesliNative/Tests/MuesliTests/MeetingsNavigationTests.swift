@@ -1523,3 +1523,8 @@ struct MeetingBrowserLogicTests {
         )
     }
 }
+    @Test("background meeting start keeps notes hidden")
+    func backgroundMeetingStartKeepsNotesHidden() {
+        #expect(MeetingStartPresentation.foregroundNotes.showsNotes)
+        #expect(!MeetingStartPresentation.backgroundPill.showsNotes)
+    }

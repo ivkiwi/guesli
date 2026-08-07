@@ -88,6 +88,7 @@ public final class DictationStore {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             calendar_event_id TEXT,
+            calendar_occurrence_key TEXT,
             start_time TEXT NOT NULL,
             end_time TEXT,
             duration_seconds REAL,
@@ -190,7 +191,8 @@ public final class DictationStore {
             "ALTER TABLE meetings ADD COLUMN cloud_change_tag TEXT",
             "ALTER TABLE meetings ADD COLUMN cloud_transcript_record_name TEXT",
             "ALTER TABLE meetings ADD COLUMN last_synced_at REAL",
-            "ALTER TABLE meetings ADD COLUMN sync_dirty INTEGER NOT NULL DEFAULT 1"
+            "ALTER TABLE meetings ADD COLUMN sync_dirty INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE meetings ADD COLUMN calendar_occurrence_key TEXT"
         ] {
             _ = sqlite3_exec(db, sql, nil, nil, nil)
         }
@@ -669,6 +671,38 @@ public final class DictationStore {
         return makeMeetingRecord(statement)
     }
 
+    public func meetingByCalendarOccurrence(_ occurrence: CalendarOccurrenceReference) throws -> MeetingRecord? {
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+
+        let sql = """
+        SELECT \(Self.meetingColumns)
+        FROM meetings
+        WHERE deleted_at IS NULL
+          AND (
+            calendar_occurrence_key = ?
+            OR (
+              calendar_occurrence_key IS NULL
+              AND calendar_event_id = ?
+              AND date(start_time) = date(?, 'unixepoch')
+            )
+          )
+        ORDER BY id DESC
+        LIMIT 1
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, (occurrence.identityKey as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 2, (occurrence.eventID as NSString).utf8String, -1, nil)
+        sqlite3_bind_double(statement, 3, occurrence.originalStartTime.timeIntervalSince1970)
+
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return makeMeetingRecord(statement)
+    }
+
     @discardableResult
     public func insertMeeting(
         title: String,
@@ -685,7 +719,8 @@ public final class DictationStore {
         selectedTemplateName: String? = nil,
         selectedTemplateKind: MeetingTemplateKind? = nil,
         selectedTemplatePrompt: String? = nil,
-        source: MeetingSource = .meeting
+        source: MeetingSource = .meeting,
+        calendarOccurrence: CalendarOccurrenceReference? = nil
     ) throws -> Int64 {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
@@ -698,8 +733,8 @@ public final class DictationStore {
         func run(calendarEventID: String?) throws -> Int64 {
             let sql = """
             INSERT INTO meetings
-            (title, calendar_event_id, start_time, end_time, duration_seconds, raw_transcript, raw_original_transcript, formatted_notes, mic_audio_path, system_audio_path, saved_recording_path, word_count, selected_template_id, selected_template_name, selected_template_kind, selected_template_prompt, source, updated_at, sync_dirty)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            (title, calendar_event_id, calendar_occurrence_key, start_time, end_time, duration_seconds, raw_transcript, raw_original_transcript, formatted_notes, mic_audio_path, system_audio_path, saved_recording_path, word_count, selected_template_id, selected_template_name, selected_template_kind, selected_template_prompt, source, updated_at, sync_dirty)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             """
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -708,23 +743,24 @@ public final class DictationStore {
             defer { sqlite3_finalize(statement) }
 
             sqlite3_bind_text(statement, 1, (title as NSString).utf8String, -1, nil)
-            bindOptionalText(calendarEventID, at: 2, statement: statement)
-            sqlite3_bind_text(statement, 3, (startString as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(statement, 4, (endString as NSString).utf8String, -1, nil)
-            sqlite3_bind_double(statement, 5, durationSeconds)
-            sqlite3_bind_text(statement, 6, (rawTranscript as NSString).utf8String, -1, nil)
-            bindOptionalText(rawOriginalTranscript, at: 7, statement: statement)
-            sqlite3_bind_text(statement, 8, (formattedNotes as NSString).utf8String, -1, nil)
-            bindOptionalText(micAudioPath, at: 9, statement: statement)
-            bindOptionalText(systemAudioPath, at: 10, statement: statement)
-            bindOptionalText(savedRecordingPath, at: 11, statement: statement)
-            sqlite3_bind_int(statement, 12, Int32(wordCount))
-            bindOptionalText(selectedTemplateID, at: 13, statement: statement)
-            bindOptionalText(selectedTemplateName, at: 14, statement: statement)
-            bindOptionalText(selectedTemplateKind?.rawValue, at: 15, statement: statement)
-            bindOptionalText(selectedTemplatePrompt, at: 16, statement: statement)
-            sqlite3_bind_text(statement, 17, (source.rawValue as NSString).utf8String, -1, nil)
-            sqlite3_bind_double(statement, 18, Date().timeIntervalSince1970)
+            bindOptionalText(calendarOccurrence?.eventID ?? calendarEventID, at: 2, statement: statement)
+            bindOptionalText(calendarOccurrence?.identityKey, at: 3, statement: statement)
+            sqlite3_bind_text(statement, 4, (startString as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(statement, 5, (endString as NSString).utf8String, -1, nil)
+            sqlite3_bind_double(statement, 6, durationSeconds)
+            sqlite3_bind_text(statement, 7, (rawTranscript as NSString).utf8String, -1, nil)
+            bindOptionalText(rawOriginalTranscript, at: 8, statement: statement)
+            sqlite3_bind_text(statement, 9, (formattedNotes as NSString).utf8String, -1, nil)
+            bindOptionalText(micAudioPath, at: 10, statement: statement)
+            bindOptionalText(systemAudioPath, at: 11, statement: statement)
+            bindOptionalText(savedRecordingPath, at: 12, statement: statement)
+            sqlite3_bind_int(statement, 13, Int32(wordCount))
+            bindOptionalText(selectedTemplateID, at: 14, statement: statement)
+            bindOptionalText(selectedTemplateName, at: 15, statement: statement)
+            bindOptionalText(selectedTemplateKind?.rawValue, at: 16, statement: statement)
+            bindOptionalText(selectedTemplatePrompt, at: 17, statement: statement)
+            sqlite3_bind_text(statement, 18, (source.rawValue as NSString).utf8String, -1, nil)
+            sqlite3_bind_double(statement, 19, Date().timeIntervalSince1970)
 
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw lastError(db)
@@ -732,14 +768,7 @@ public final class DictationStore {
             return sqlite3_last_insert_rowid(db)
         }
 
-        do {
-            return try run(calendarEventID: calendarEventID)
-        } catch {
-            guard shouldRetryWithoutCalendarEventID(calendarEventID, error: error, operation: "insert meeting") else {
-                throw error
-            }
-            return try run(calendarEventID: nil)
-        }
+        return try run(calendarEventID: calendarEventID)
     }
 
     @discardableResult
@@ -750,7 +779,8 @@ public final class DictationStore {
         selectedTemplateID: String? = nil,
         selectedTemplateName: String? = nil,
         selectedTemplateKind: MeetingTemplateKind? = nil,
-        selectedTemplatePrompt: String? = nil
+        selectedTemplatePrompt: String? = nil,
+        calendarOccurrence: CalendarOccurrenceReference? = nil
     ) throws -> Int64 {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
@@ -760,8 +790,8 @@ public final class DictationStore {
         func run(calendarEventID: String?) throws -> Int64 {
             let sql = """
             INSERT INTO meetings
-            (title, calendar_event_id, start_time, end_time, duration_seconds, raw_transcript, formatted_notes, mic_audio_path, system_audio_path, saved_recording_path, meeting_status, manual_notes, word_count, selected_template_id, selected_template_name, selected_template_kind, selected_template_prompt, source, updated_at, sync_dirty)
-            VALUES (?, ?, ?, NULL, 0, '', '', NULL, NULL, NULL, ?, '', 0, ?, ?, ?, ?, 'meeting', ?, 1)
+            (title, calendar_event_id, calendar_occurrence_key, start_time, end_time, duration_seconds, raw_transcript, formatted_notes, mic_audio_path, system_audio_path, saved_recording_path, meeting_status, manual_notes, word_count, selected_template_id, selected_template_name, selected_template_kind, selected_template_prompt, source, updated_at, sync_dirty)
+            VALUES (?, ?, ?, ?, NULL, 0, '', '', NULL, NULL, NULL, ?, '', 0, ?, ?, ?, ?, 'meeting', ?, 1)
             """
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -770,14 +800,15 @@ public final class DictationStore {
             defer { sqlite3_finalize(statement) }
 
             sqlite3_bind_text(statement, 1, (title as NSString).utf8String, -1, nil)
-            bindOptionalText(calendarEventID, at: 2, statement: statement)
-            sqlite3_bind_text(statement, 3, (startString as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(statement, 4, (MeetingStatus.recording.rawValue as NSString).utf8String, -1, nil)
-            bindOptionalText(selectedTemplateID, at: 5, statement: statement)
-            bindOptionalText(selectedTemplateName, at: 6, statement: statement)
-            bindOptionalText(selectedTemplateKind?.rawValue, at: 7, statement: statement)
-            bindOptionalText(selectedTemplatePrompt, at: 8, statement: statement)
-            sqlite3_bind_double(statement, 9, Date().timeIntervalSince1970)
+            bindOptionalText(calendarOccurrence?.eventID ?? calendarEventID, at: 2, statement: statement)
+            bindOptionalText(calendarOccurrence?.identityKey, at: 3, statement: statement)
+            sqlite3_bind_text(statement, 4, (startString as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(statement, 5, (MeetingStatus.recording.rawValue as NSString).utf8String, -1, nil)
+            bindOptionalText(selectedTemplateID, at: 6, statement: statement)
+            bindOptionalText(selectedTemplateName, at: 7, statement: statement)
+            bindOptionalText(selectedTemplateKind?.rawValue, at: 8, statement: statement)
+            bindOptionalText(selectedTemplatePrompt, at: 9, statement: statement)
+            sqlite3_bind_double(statement, 10, Date().timeIntervalSince1970)
 
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw lastError(db)
@@ -785,14 +816,7 @@ public final class DictationStore {
             return sqlite3_last_insert_rowid(db)
         }
 
-        do {
-            return try run(calendarEventID: calendarEventID)
-        } catch {
-            guard shouldRetryWithoutCalendarEventID(calendarEventID, error: error, operation: "create live meeting") else {
-                throw error
-            }
-            return try run(calendarEventID: nil)
-        }
+        return try run(calendarEventID: calendarEventID)
     }
 
     public func dictationStats() throws -> DictationStats {
@@ -1269,48 +1293,38 @@ public final class DictationStore {
         let manualNotes = try manualNotesForMeeting(id: id, db: db)
         let wordCount = Self.countWords(in: rawTranscript) + Self.countWords(in: manualNotes)
 
-        func run(calendarEventID: String?) throws {
-            let sql = """
-            UPDATE meetings
-            SET title = ?, calendar_event_id = ?, start_time = ?, end_time = ?, duration_seconds = ?, raw_transcript = ?, raw_original_transcript = ?, formatted_notes = ?, mic_audio_path = ?, system_audio_path = ?, saved_recording_path = ?, meeting_status = ?, word_count = ?, selected_template_id = ?, selected_template_name = ?, selected_template_kind = ?, selected_template_prompt = ?, updated_at = ?, sync_dirty = 1
-            WHERE id = ?
-            """
-            var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-                throw lastError(db)
-            }
-            defer { sqlite3_finalize(statement) }
-
-            sqlite3_bind_text(statement, 1, (title as NSString).utf8String, -1, nil)
-            bindOptionalText(calendarEventID, at: 2, statement: statement)
-            sqlite3_bind_text(statement, 3, (startString as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(statement, 4, (endString as NSString).utf8String, -1, nil)
-            sqlite3_bind_double(statement, 5, durationSeconds)
-            sqlite3_bind_text(statement, 6, (rawTranscript as NSString).utf8String, -1, nil)
-            bindOptionalText(rawOriginalTranscript, at: 7, statement: statement)
-            sqlite3_bind_text(statement, 8, (formattedNotes as NSString).utf8String, -1, nil)
-            bindOptionalText(micAudioPath, at: 9, statement: statement)
-            bindOptionalText(systemAudioPath, at: 10, statement: statement)
-            bindOptionalText(savedRecordingPath, at: 11, statement: statement)
-            sqlite3_bind_text(statement, 12, (MeetingStatus.completed.rawValue as NSString).utf8String, -1, nil)
-            sqlite3_bind_int(statement, 13, Int32(wordCount))
-            bindOptionalText(selectedTemplateID, at: 14, statement: statement)
-            bindOptionalText(selectedTemplateName, at: 15, statement: statement)
-            bindOptionalText(selectedTemplateKind?.rawValue, at: 16, statement: statement)
-            bindOptionalText(selectedTemplatePrompt, at: 17, statement: statement)
-            sqlite3_bind_double(statement, 18, Date().timeIntervalSince1970)
-            sqlite3_bind_int64(statement, 19, id)
-            guard sqlite3_step(statement) == SQLITE_DONE else {
-                throw lastError(db)
-            }
+        let sql = """
+        UPDATE meetings
+        SET title = ?, calendar_event_id = ?, start_time = ?, end_time = ?, duration_seconds = ?, raw_transcript = ?, raw_original_transcript = ?, formatted_notes = ?, mic_audio_path = ?, system_audio_path = ?, saved_recording_path = ?, meeting_status = ?, word_count = ?, selected_template_id = ?, selected_template_name = ?, selected_template_kind = ?, selected_template_prompt = ?, updated_at = ?, sync_dirty = 1
+        WHERE id = ?
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
         }
-        do {
-            try run(calendarEventID: calendarEventID)
-        } catch {
-            guard shouldRetryWithoutCalendarEventID(calendarEventID, error: error, operation: "complete live meeting") else {
-                throw error
-            }
-            try run(calendarEventID: nil)
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, (title as NSString).utf8String, -1, nil)
+        bindOptionalText(calendarEventID, at: 2, statement: statement)
+        sqlite3_bind_text(statement, 3, (startString as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(statement, 4, (endString as NSString).utf8String, -1, nil)
+        sqlite3_bind_double(statement, 5, durationSeconds)
+        sqlite3_bind_text(statement, 6, (rawTranscript as NSString).utf8String, -1, nil)
+        bindOptionalText(rawOriginalTranscript, at: 7, statement: statement)
+        sqlite3_bind_text(statement, 8, (formattedNotes as NSString).utf8String, -1, nil)
+        bindOptionalText(micAudioPath, at: 9, statement: statement)
+        bindOptionalText(systemAudioPath, at: 10, statement: statement)
+        bindOptionalText(savedRecordingPath, at: 11, statement: statement)
+        sqlite3_bind_text(statement, 12, (MeetingStatus.completed.rawValue as NSString).utf8String, -1, nil)
+        sqlite3_bind_int(statement, 13, Int32(wordCount))
+        bindOptionalText(selectedTemplateID, at: 14, statement: statement)
+        bindOptionalText(selectedTemplateName, at: 15, statement: statement)
+        bindOptionalText(selectedTemplateKind?.rawValue, at: 16, statement: statement)
+        bindOptionalText(selectedTemplatePrompt, at: 17, statement: statement)
+        sqlite3_bind_double(statement, 18, Date().timeIntervalSince1970)
+        sqlite3_bind_int64(statement, 19, id)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw lastError(db)
         }
         guard sqlite3_changes(db) > 0 else {
             throw DictationStoreError.meetingNotFound(id: id)
@@ -2554,48 +2568,19 @@ public final class DictationStore {
     }
 
     private func migrateMeetingCalendarEventIndex(db: OpaquePointer?) throws {
-        try exec("DROP INDEX IF EXISTS idx_meetings_calendar_event_id", db: db)
-        let clearDuplicateEventIDs = """
-        UPDATE meetings
-        SET calendar_event_id = NULL,
-            updated_at = strftime('%s', 'now'),
-            sync_dirty = 1
-        WHERE calendar_event_id IS NOT NULL
-          AND date(start_time) IS NOT NULL
-          AND id NOT IN (
-              SELECT MIN(id)
-              FROM meetings
-              WHERE calendar_event_id IS NOT NULL
-                AND date(start_time) IS NOT NULL
-              GROUP BY calendar_event_id, date(start_time)
-          )
-        """
-        try exec(clearDuplicateEventIDs, db: db)
         try exec(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_meetings_calendar_event_id_day
-            ON meetings(calendar_event_id, date(start_time))
-            WHERE calendar_event_id IS NOT NULL
+            DROP INDEX IF EXISTS idx_meetings_calendar_event_id;
+            DROP INDEX IF EXISTS idx_meetings_calendar_event_id_day;
+            CREATE INDEX IF NOT EXISTS idx_meetings_calendar_event_lookup
+                ON meetings(calendar_event_id)
+                WHERE calendar_event_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_meetings_calendar_occurrence_key
+                ON meetings(calendar_occurrence_key)
+                WHERE calendar_occurrence_key IS NOT NULL;
             """,
             db: db
         )
-    }
-
-    public static func isCalendarEventUniquenessError(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        guard nsError.domain == "MuesliDB", nsError.code == SQLITE_CONSTRAINT else { return false }
-        let message = nsError.localizedDescription.lowercased()
-        return message.contains("calendar_event_id") || message.contains("idx_meetings_calendar_event_id")
-    }
-
-    private func shouldRetryWithoutCalendarEventID(
-        _ calendarEventID: String?,
-        error: Error,
-        operation: String
-    ) -> Bool {
-        guard let calendarEventID, Self.isCalendarEventUniquenessError(error) else { return false }
-        diagnosticsLogger?("[muesli-native] \(operation) hit calendar_event_id uniqueness for \(calendarEventID); retrying without calendar linkage")
-        return true
     }
 
     private func lastError(_ db: OpaquePointer?) -> NSError {

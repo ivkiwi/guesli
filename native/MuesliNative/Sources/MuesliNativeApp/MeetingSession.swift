@@ -1292,6 +1292,13 @@ final class MeetingSession {
         }
         async let pendingCleanup = cleanupMeetingTranscript(rawTranscript)
 
+        let manualNotes = await stopPhaseValue(
+            "manual_notes_provider",
+            timeout: MeetingStopPhaseTimeouts.manualNotes,
+            fallback: Optional<String>.none
+        ) {
+            await self.manualNotesProvider?()
+        }
         let generatedTitle: String
         onProgress?(.generatingTitle)
         let liveTitle = await stopPhaseValue(
@@ -1314,7 +1321,11 @@ final class MeetingSession {
                 timeout: MeetingStopPhaseTimeouts.titleGeneration,
                 fallback: Optional<String>.none
             ) {
-                await MeetingSummaryClient.generateTitle(transcript: rawTranscript, config: self.config)
+                await MeetingSummaryClient.generateTitle(
+                    transcript: rawTranscript,
+                    manualNotes: manualNotes,
+                    config: self.config
+                )
             }
             if let autoTitle, !autoTitle.isEmpty {
                 generatedTitle = autoTitle
@@ -1342,13 +1353,6 @@ final class MeetingSession {
         Self.logger.info("visual context drained chars=\(visualContext.count) includedInPrompt=\(!summaryContext.isEmpty) useOCR=\(self.config.useCoreAudioTap)")
         fputs("[meeting] visual context drained chars=\(visualContext.count) participants=\(allParticipantCandidates.count) observedParticipants=\(observedParticipants.count) includedInPrompt=\(!summaryContext.isEmpty) useOCR=\(config.useCoreAudioTap)\n", stderr)
         onProgress?(.summarizingNotes)
-        let manualNotes = await stopPhaseValue(
-            "manual_notes_provider",
-            timeout: MeetingStopPhaseTimeouts.manualNotes,
-            fallback: Optional<String>.none
-        ) {
-            await self.manualNotesProvider?()
-        }
         let formattedNotes: String
         do {
             formattedNotes = try await withStopPhaseTimeout(
@@ -1554,6 +1558,13 @@ final class MeetingSession {
         }
         async let pendingCleanup = cleanupMeetingTranscript(rawTranscript)
 
+        let manualNotes = await stopPhaseValue(
+            "manual_notes_provider",
+            timeout: MeetingStopPhaseTimeouts.manualNotes,
+            fallback: Optional<String>.none
+        ) {
+            await self.manualNotesProvider?()
+        }
         let generatedTitle: String
         onProgress?(.generatingTitle)
         let liveTitle = await stopPhaseValue(
@@ -1576,7 +1587,11 @@ final class MeetingSession {
                 timeout: MeetingStopPhaseTimeouts.titleGeneration,
                 fallback: Optional<String>.none
             ) {
-                await MeetingSummaryClient.generateTitle(transcript: rawTranscript, config: self.config)
+                await MeetingSummaryClient.generateTitle(
+                    transcript: rawTranscript,
+                    manualNotes: manualNotes,
+                    config: self.config
+                )
             }
             if let autoTitle, !autoTitle.isEmpty {
                 generatedTitle = autoTitle
@@ -1604,13 +1619,6 @@ final class MeetingSession {
         Self.logger.info("visual context drained chars=\(visualContext.count) includedInPrompt=\(!summaryContext.isEmpty) useOCR=\(self.config.useCoreAudioTap)")
         fputs("[meeting] visual context drained chars=\(visualContext.count) participants=\(allParticipantCandidates.count) observedParticipants=\(observedParticipants.count) includedInPrompt=\(!summaryContext.isEmpty) useOCR=\(config.useCoreAudioTap)\n", stderr)
         onProgress?(.summarizingNotes)
-        let manualNotes = await stopPhaseValue(
-            "manual_notes_provider",
-            timeout: MeetingStopPhaseTimeouts.manualNotes,
-            fallback: Optional<String>.none
-        ) {
-            await self.manualNotesProvider?()
-        }
         let formattedNotes: String
         do {
             formattedNotes = try await withStopPhaseTimeout(

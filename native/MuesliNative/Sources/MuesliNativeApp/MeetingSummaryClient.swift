@@ -171,7 +171,8 @@ enum MeetingSummaryClient {
     }
 
     private static let titleInstructions = """
-    Generate a short, descriptive meeting title (3-7 words) from these transcript excerpts. \
+    Generate a short, descriptive meeting title (3-7 words) from these transcript excerpts and any written notes. \
+    Treat written notes as high-priority context: they may contain the clearest statement of the meeting's topic or outcome. \
     Prefer the main topic and outcome across the whole meeting over opening small talk or setup. \
     Return ONLY the title text, nothing else. No quotes, no prefix, no explanation. \
     Examples: "Q3 Sprint Planning", "Customer Onboarding Review", "Security Audit Discussion"
@@ -1377,9 +1378,13 @@ enum MeetingSummaryClient {
     }
 
     static func generateTitle(transcript: String, config: AppConfig) async -> String? {
+        await generateTitle(transcript: transcript, manualNotes: nil, config: config)
+    }
+
+    static func generateTitle(transcript: String, manualNotes: String?, config: AppConfig) async -> String? {
         let backend = (config.meetingSummaryBackend.isEmpty ? MeetingSummaryBackendOption.chatGPT.backend : config.meetingSummaryBackend).lowercased()
 
-        let excerpt = titleTranscriptExcerpt(from: transcript)
+        let excerpt = titlePrompt(transcript: transcript, manualNotes: manualNotes)
 
         if backend == MeetingSummaryBackendOption.chatGPT.backend {
             return await generateTitleWithChatGPT(transcript: excerpt, config: config)
@@ -1425,6 +1430,19 @@ enum MeetingSummaryClient {
             maxTokens: nil,
             extraHeaders: [:]
         )
+    }
+
+    static func titlePrompt(transcript: String, manualNotes: String? = nil) -> String {
+        let excerpt = titleTranscriptExcerpt(from: transcript)
+        let notes = manualNotes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !notes.isEmpty else { return excerpt }
+        return """
+        Meeting transcript excerpts:
+        \(excerpt)
+
+        Written notes captured by the user during the meeting:
+        \(notes)
+        """
     }
 
     static func titleTranscriptExcerpt(from transcript: String, segmentLength: Int = 900) -> String {

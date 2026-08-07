@@ -96,8 +96,8 @@ struct MeetingHookIntegrationTests {
         #expect(invocation.config.autoExportMarkdownEnabled)
     }
 
-    @Test("calendar event conflict drops linkage and still dispatches hook")
-    func calendarEventConflictDropsLinkageAndStillDispatchesHook() throws {
+    @Test("same-day calendar meetings preserve linkage and dispatch hooks")
+    func sameDayCalendarMeetingsPreserveLinkageAndDispatchHooks() throws {
         let store = try makeStore()
         let spy = MeetingHookDispatcherSpy()
         let controller = makeController(store: store, dispatcher: spy)
@@ -121,7 +121,7 @@ struct MeetingHookIntegrationTests {
         #expect(spy.invocations.count == 1)
         #expect(spy.invocations.first?.meetingID == persistence.meetingID)
         let persisted = try #require(try store.meeting(id: persistence.meetingID))
-        #expect(persisted.calendarEventID == nil)
+        #expect(persisted.calendarEventID == "duplicate-event")
     }
 
     private func makeController(

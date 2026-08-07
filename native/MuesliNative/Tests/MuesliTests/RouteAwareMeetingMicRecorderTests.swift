@@ -58,8 +58,33 @@ struct RouteAwareMeetingMicRecorderTests {
         #expect(failureCount == 0)
     }
 
+    @Test("route handoff keeps old recorder until replacement produces audio")
+    func routeHandoffWaitsForFirstBuffer() async throws {
+        let system = FakeMeetingMicRecorder(kind: .systemDefaultStreaming)
+        let appScoped = FakeMeetingMicRecorder(kind: .appScopedAudioQueue)
+        let recorder = RouteAwareMeetingMicRecorder(
+            systemDefaultRecorder: system,
+            appScopedRecorder: appScoped,
+            handoffTimeoutScheduler: { _, _ in }
+        )
+        var samples: [[Int16]] = []
+        recorder.onRawPCMSamples = { samples.append($0) }
+
+        try recorder.start()
+        recorder.preferredInputDeviceID = 82
+        try await waitUntil { appScoped.startCalls == 1 }
+
+        system.onRawPCMSamples?([1])
+        appScoped.onRawPCMSamples?([2])
+        try await waitUntil { system.stopCalls == 1 }
+        system.onRawPCMSamples?([3])
+
+        #expect(samples == [[1], [2]])
+        #expect(recorder.activeRecorderKindForDebug() == .appScoped)
+    }
+
     @Test("lifecycle delegates to active recorder and cancels inactive recorder on stop")
-    func lifecycleDelegatesToActiveRecorderAndCancelsInactiveRecorderOnStop() throws {
+    func lifecycleDelegatesToActiveRecorderAndCancelsInactiveRecorderOnStop() async throws {
         let system = FakeMeetingMicRecorder(kind: .systemDefaultStreaming)
         let appScoped = FakeMeetingMicRecorder(kind: .appScopedAudioQueue)
         let recorder = RouteAwareMeetingMicRecorder(systemDefaultRecorder: system, appScopedRecorder: appScoped)
@@ -69,6 +94,7 @@ struct RouteAwareMeetingMicRecorderTests {
         recorder.pause()
         recorder.resume()
         _ = recorder.stop()
+        try await waitUntil { system.cancelCalls >= 1 }
 
         #expect(appScoped.startCalls == 1)
         #expect(appScoped.pauseCalls == 1)
@@ -151,6 +177,17 @@ struct RouteAwareMeetingMicRecorderTests {
         #expect(system.startCalls == 0)
         #expect(appScoped.startCalls == 1)
         #expect(appScoped.preferredInputDeviceID == 82)
+    }
+
+    private func waitUntil(_ condition: @escaping () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !condition() {
+            guard ContinuousClock.now < deadline else {
+                Issue.record("Timed out waiting for recorder state")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
     }
 }
 

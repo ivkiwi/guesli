@@ -391,7 +391,8 @@ final class MuesliController: NSObject {
         let title: String
         let request: PendingMeetingJoinRecordingPolicy.Request
         let endDate: Date?
-        let calendarEventID: String?
+        let calendarOccurrence: CalendarOccurrenceReference?
+        let presentation: MeetingStartPresentation
     }
 
     private let runtime: RuntimePaths
@@ -2230,7 +2231,11 @@ final class MuesliController: NSObject {
     }
 
     func meetingTemplateSnapshot(for meeting: MeetingRecord) -> MeetingTemplateSnapshot {
-        MeetingTemplates.snapshot(for: meeting, customTemplates: config.customMeetingTemplates)
+        MeetingTemplates.snapshot(
+            for: meeting,
+            customTemplates: config.customMeetingTemplates,
+            defaultTemplateID: config.defaultMeetingTemplateID
+        )
     }
 
     func updateDefaultMeetingTemplate(id: String) {
@@ -2721,8 +2726,8 @@ final class MuesliController: NSObject {
         autoRecordedCalendarEventIDs.insert(key)
         let didScheduleStart = startMeetingRecording(
             title: event.title,
-            calendarEventID: event.id,
-            openDocument: true,
+            calendarOccurrence: event.resolvedCalendarOccurrence,
+            openDocument: false,
             endDate: event.endDate,
             autoStopSource: event.meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) },
             startOrigin: .calendarAutoRecord,
@@ -2882,6 +2887,7 @@ final class MuesliController: NSObject {
                 id: event.id,
                 title: event.title,
                 startDate: event.startDate,
+                calendarOccurrence: event.resolvedCalendarOccurrence,
                 meetingURL: event.meetingURL
             )
 
@@ -2908,7 +2914,7 @@ final class MuesliController: NSObject {
                               ) else { return }
                         self.showMeetingStartingNowNotification(
                             title: event.title,
-                            calendarEventID: key,
+                            calendarOccurrence: event.resolvedCalendarOccurrence,
                             meetingURL: event.meetingURL,
                             endDate: event.endDate
                         )
@@ -2924,7 +2930,12 @@ final class MuesliController: NSObject {
 
     /// Show a "Meeting starting now" notification — independent of Marauder's Map.
     @discardableResult
-    private func showMeetingStartingNowNotification(title: String, calendarEventID: String?, meetingURL: URL?, endDate: Date?) -> Bool {
+    private func showMeetingStartingNowNotification(
+        title: String,
+        calendarOccurrence: CalendarOccurrenceReference?,
+        meetingURL: URL?,
+        endDate: Date?
+    ) -> Bool {
         guard ScheduledMeetingNotificationPolicy.shouldShowStartingNowPrompt(meetingURL: meetingURL),
               config.showScheduledMeetingNotifications,
               !isMeetingRecording(),
@@ -2945,16 +2956,23 @@ final class MuesliController: NSObject {
                 self.isShowingCalendarNotification = false
                 self.startForegroundMeetingRecording(
                     title: title,
-                    calendarEventID: calendarEventID,
+                    calendarOccurrence: calendarOccurrence,
                     endDate: endDate,
                     autoStopSource: autoStopSource,
+                    presentation: .backgroundPill,
                     startOrigin: .scheduledMeetingPrompt
                 )
             },
             onJoinAndRecord: meetingURL != nil ? { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
-                self.joinAndRecord(title: title, meetingURL: meetingURL!, endDate: endDate, calendarEventID: calendarEventID)
+                self.joinAndRecord(
+                    title: title,
+                    meetingURL: meetingURL!,
+                    endDate: endDate,
+                    calendarOccurrence: calendarOccurrence,
+                    presentation: .backgroundPill
+                )
             } : nil,
             onJoinOnly: meetingURL != nil ? { [weak self] in
                 guard let self else { return }
@@ -4944,7 +4962,8 @@ final class MuesliController: NSObject {
     }
 
     func createMeetingFromCalendarEvent(_ event: UnifiedCalendarEvent, folderID: Int64?) {
-        if let existing = try? dictationStore.meetingByCalendarEventID(event.id, startTime: event.startDate) {
+        let occurrence = event.resolvedCalendarOccurrence
+        if let existing = try? dictationStore.meetingByCalendarOccurrence(occurrence) {
             if let folderID {
                 try? dictationStore.moveMeeting(id: existing.id, toFolder: folderID)
             }
@@ -4962,7 +4981,8 @@ final class MuesliController: NSObject {
                 rawTranscript: "",
                 formattedNotes: "",
                 micAudioPath: nil,
-                systemAudioPath: nil
+                systemAudioPath: nil,
+                calendarOccurrence: occurrence
             )
             if let folderID {
                 try? dictationStore.moveMeeting(id: meetingID, toFolder: folderID)
@@ -5263,7 +5283,7 @@ final class MuesliController: NSObject {
         if let payload = sender.representedObject as? CalendarMenuMeetingPayload {
             startForegroundMeetingRecording(
                 title: payload.title,
-                calendarEventID: payload.calendarEventID,
+                calendarOccurrence: payload.calendarOccurrence,
                 endDate: payload.endDate,
                 autoStopSource: payload.autoStopSource,
                 startOrigin: .scheduledMeetingPrompt
@@ -5279,28 +5299,35 @@ final class MuesliController: NSObject {
     func startForegroundMeetingRecording(
         title: String = "Meeting",
         calendarEventID: String? = nil,
+        calendarOccurrence: CalendarOccurrenceReference? = nil,
         participantCandidates: [MeetingParticipant] = [],
         endDate: Date? = nil,
         autoStopSource: MeetingAutoStopSource? = nil,
+        presentation: MeetingStartPresentation = .foregroundNotes,
         startOrigin: MeetingRecordingStartOrigin = .manual
     ) -> Bool {
         guard ensureBasicDictationPermissionsBeforeDashboard() else { return false }
         if isMeetingRecording() {
-            presentHistoryWindow(tab: .meetings)
+            if presentation.showsNotes {
+                presentHistoryWindow(tab: .meetings)
+            }
             return false
         }
         guard !isStartingMeetingRecording else { return false }
         let didStart = startMeetingRecording(
             title: title,
             calendarEventID: calendarEventID,
+            calendarOccurrence: calendarOccurrence,
             participantCandidates: participantCandidates,
-            openDocument: true,
+            openDocument: presentation.showsNotes,
             endDate: endDate,
             autoStopSource: autoStopSource,
             startOrigin: startOrigin
         )
         guard didStart else { return false }
-        presentHistoryWindow(tab: .meetings)
+        if presentation.showsNotes {
+            presentHistoryWindow(tab: .meetings)
+        }
         return true
     }
 
@@ -5308,6 +5335,7 @@ final class MuesliController: NSObject {
     func startMeetingRecording(
         title: String = "Meeting",
         calendarEventID: String? = nil,
+        calendarOccurrence: CalendarOccurrenceReference? = nil,
         participantCandidates: [MeetingParticipant] = [],
         openDocument: Bool = false,
         endDate: Date? = nil,
@@ -5324,16 +5352,18 @@ final class MuesliController: NSObject {
             return false
         }
         let templateSnapshot = defaultMeetingTemplate()
+        let resolvedCalendarEventID = calendarOccurrence?.eventID ?? calendarEventID
         let meetingID: Int64
         do {
             meetingID = try dictationStore.createLiveMeeting(
                 title: title,
-                calendarEventID: calendarEventID,
+                calendarEventID: resolvedCalendarEventID,
                 startTime: Date(),
                 selectedTemplateID: templateSnapshot.id,
                 selectedTemplateName: templateSnapshot.name,
                 selectedTemplateKind: templateSnapshot.kind,
-                selectedTemplatePrompt: templateSnapshot.prompt
+                selectedTemplatePrompt: templateSnapshot.prompt,
+                calendarOccurrence: calendarOccurrence
             )
             activeMeetingID = meetingID
             activeMeetingAudioWarning = nil
@@ -5360,7 +5390,7 @@ final class MuesliController: NSObject {
             response: startOrigin.signalLossResponse
         )
         let resolvedParticipantCandidates = participantCandidates.isEmpty
-            ? self.participantCandidates(forCalendarEventID: calendarEventID)
+            ? self.participantCandidates(forCalendarEventID: resolvedCalendarEventID)
             : participantCandidates
         isStartingMeetingRecording = true
         // Keep this after backend normalization and live-meeting creation so
@@ -5866,7 +5896,13 @@ final class MuesliController: NSObject {
 
     /// Open the meeting URL, then start recording once the matching meeting shows joined activity.
     /// Single entry point for "Join & Record" from both notification panel and Coming Up section.
-    func joinAndRecord(title: String, meetingURL: URL, endDate: Date?, calendarEventID: String? = nil) {
+    func joinAndRecord(
+        title: String,
+        meetingURL: URL,
+        endDate: Date?,
+        calendarOccurrence: CalendarOccurrenceReference? = nil,
+        presentation: MeetingStartPresentation = .foregroundNotes
+    ) {
         guard !isMeetingRecording(), !isStartingMeetingRecording else {
             presentHistoryWindow(tab: .meetings)
             return
@@ -5891,7 +5927,8 @@ final class MuesliController: NSObject {
         let pendingID = beginPendingMeetingJoinRecording(
             title: title,
             request: request,
-            calendarEventID: calendarEventID,
+            calendarOccurrence: calendarOccurrence,
+            presentation: presentation,
             endDate: endDate
         )
         openMeetingURL(meetingURL) { [weak self] opened in
@@ -5923,7 +5960,8 @@ final class MuesliController: NSObject {
     private func beginPendingMeetingJoinRecording(
         title: String,
         request: PendingMeetingJoinRecordingPolicy.Request,
-        calendarEventID: String?,
+        calendarOccurrence: CalendarOccurrenceReference?,
+        presentation: MeetingStartPresentation,
         endDate: Date?
     ) -> UUID {
         pendingMeetingJoinRecordingTimeoutTask?.cancel()
@@ -5932,7 +5970,8 @@ final class MuesliController: NSObject {
             title: title,
             request: request,
             endDate: endDate,
-            calendarEventID: calendarEventID
+            calendarOccurrence: calendarOccurrence,
+            presentation: presentation
         )
         pendingMeetingJoinRecording = pending
         statusBarController?.setStatus("Waiting for meeting to start...")
@@ -5976,9 +6015,10 @@ final class MuesliController: NSObject {
 
         if startForegroundMeetingRecording(
             title: pending.title,
-            calendarEventID: pending.calendarEventID,
+            calendarOccurrence: pending.calendarOccurrence,
             endDate: pending.endDate,
             autoStopSource: MeetingAutoStopSource(candidate: candidate),
+            presentation: pending.presentation,
             startOrigin: .joinAndRecord
         ) {
             meetingMonitor.markRecordingStarted(candidate)
@@ -7629,6 +7669,7 @@ final class MuesliController: NSObject {
                 if self.startForegroundMeetingRecording(
                     title: title,
                     autoStopSource: MeetingAutoStopSource(candidate: candidate),
+                    presentation: .backgroundPill,
                     startOrigin: .detectedPrompt
                 ) {
                     self.meetingMonitor.markRecordingStarted(candidate)
@@ -8960,7 +9001,7 @@ final class MuesliController: NSObject {
                 // Reuse the same notification method as the timer path
                 self.showMeetingStartingNowNotification(
                     title: event.title,
-                    calendarEventID: event.id,
+                    calendarOccurrence: event.resolvedCalendarOccurrence,
                     meetingURL: event.meetingURL,
                     endDate: event.endDate
                 )
@@ -8986,9 +9027,10 @@ final class MuesliController: NSObject {
     private func handleUpcomingMeeting(_ event: UpcomingMeetingEvent, notificationKey: String? = nil) -> Bool {
         // Look up end date and meeting URL from unified calendar events
         let calendarEvent = appState.upcomingCalendarEvents
-            .first(where: { $0.id == event.id })
+            .first(where: { $0.id == event.id && $0.startDate == event.startDate })
         let calendarEndDate = calendarEvent?.endDate
         let meetingURL = event.meetingURL ?? calendarEvent?.meetingURL
+        let calendarOccurrence = event.calendarOccurrence ?? calendarEvent?.resolvedCalendarOccurrence
         let autoStopSource = meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) }
 
         // Show notification panel for calendar events (if not auto-recording)
@@ -9022,9 +9064,10 @@ final class MuesliController: NSObject {
                 self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
                 self.startForegroundMeetingRecording(
                     title: title,
-                    calendarEventID: event.id,
+                    calendarOccurrence: calendarOccurrence,
                     endDate: calendarEndDate,
                     autoStopSource: autoStopSource,
+                    presentation: .backgroundPill,
                     startOrigin: .scheduledMeetingPrompt
                 )
             },
@@ -9032,7 +9075,13 @@ final class MuesliController: NSObject {
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
                 self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
-                self.joinAndRecord(title: title, meetingURL: meetingURL!, endDate: calendarEndDate, calendarEventID: event.id)
+                self.joinAndRecord(
+                    title: title,
+                    meetingURL: meetingURL!,
+                    endDate: calendarEndDate,
+                    calendarOccurrence: calendarOccurrence,
+                    presentation: .backgroundPill
+                )
             } : nil,
             onJoinOnly: meetingURL != nil ? { [weak self] in
                 guard let self else { return }

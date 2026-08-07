@@ -95,6 +95,17 @@ struct MeetingSummaryClientTests {
         #expect(prompt.contains("- User typed decision"))
     }
 
+    @Test("title prompt includes written notes")
+    func titlePromptIncludesWrittenNotes() {
+        let prompt = MeetingSummaryClient.titlePrompt(
+            transcript: "Transcript body",
+            manualNotes: "Decision: launch the new workflow"
+        )
+
+        #expect(prompt.contains("Transcript body"))
+        #expect(prompt.contains("Decision: launch the new workflow"))
+    }
+
     @Test("final notes retain manual notes verbatim")
     func finalNotesRetainManualNotesVerbatim() {
         let result = MeetingSummaryClient.notesByRetainingManualNotes(

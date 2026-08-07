@@ -86,7 +86,8 @@ jobs:
           MUESLI_EXECUTABLE_NAME: Guesli
           MUESLI_SUPPORT_DIR_NAME: Guesli
           MUESLI_BUNDLE_ID: com.ivkiwi.guesli
-          MUESLI_SPARKLE_FEED_URL: ""
+          MUESLI_SPARKLE_FEED_URL: https://raw.githubusercontent.com/ivkiwi/guesli/main/docs/appcast-guesli.xml
+          MUESLI_SPARKLE_EDKEY: x1xV1WAX32xkX4Yl4dxV9HctwCP/dm/K/9YUzWxk7Kc=
           MUESLI_ENTITLEMENTS: ${{ github.workspace }}/scripts/MuesliLocalOnly.entitlements
           MUESLI_SKIP_SIGN: "1"
           MUESLI_SWIFTPM_SCRATCH_PATH: ${{ runner.temp }}/muesli-spm
@@ -194,3 +195,27 @@ jobs:
             ASSETS+=("$EXTENSION_ZIP")
           fi
           gh release upload "$TAG_NAME" "${ASSETS[@]}" --clobber
+
+      - name: Publish Sparkle appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          DMG_PATH: ${{ steps.meta.outputs.dmg_path }}
+        run: |
+          test -n "$SPARKLE_PRIVATE_KEY"
+          UPDATES_DIR="$RUNNER_TEMP/guesli-sparkle"
+          mkdir -p "$UPDATES_DIR"
+          cp "$DMG_PATH" "$UPDATES_DIR/"
+          GENERATE_APPCAST="$RUNNER_TEMP/muesli-spm/artifacts/sparkle/Sparkle/bin/generate_appcast"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/ivkiwi/guesli/releases/download/${TAG_NAME}/" \
+            --link "https://github.com/ivkiwi/guesli/releases" \
+            -o appcast-guesli.xml \
+            "$UPDATES_DIR"
+          cp "$UPDATES_DIR/appcast-guesli.xml" docs/appcast-guesli.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/appcast-guesli.xml
+          git diff --cached --quiet || git commit -m "Update Guesli Sparkle appcast"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

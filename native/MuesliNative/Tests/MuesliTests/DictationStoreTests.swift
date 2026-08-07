@@ -154,8 +154,8 @@ struct DictationStoreTests {
         try store.migrateIfNeeded() // idempotent
     }
 
-    @Test("migration keeps recurring calendar IDs unique per day")
-    func migrationKeepsRecurringCalendarIDsUniquePerDay() throws {
+    @Test("migration preserves legacy calendar linkage")
+    func migrationPreservesLegacyCalendarLinkage() throws {
         let store = try makeStoreFromRawSQL(
             """
             CREATE TABLE meetings (
@@ -186,9 +186,8 @@ struct DictationStoreTests {
         let meetings = try store.recentMeetings(limit: nil)
         #expect(meetings.count == 3)
         let linked = meetings.filter { $0.calendarEventID == "daily-event" }
-        #expect(linked.count == 2)
+        #expect(linked.count == 3)
         #expect(Set(linked.map { String($0.startTime.prefix(10)) }) == ["2026-07-06", "2026-07-07"])
-        #expect(meetings.filter { $0.calendarEventID == nil }.count == 1)
     }
 
     @Test("recurring calendar ID can be inserted on different days")
@@ -208,13 +207,9 @@ struct DictationStoreTests {
         #expect(second.startTime == "2026-07-06T08:15:00Z")
     }
 
-    @Test("same-day calendar conflict drops linkage and still creates meeting")
-    func sameDayCalendarConflictDropsLinkageAndStillCreatesMeeting() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("muesli-conflict-test-\(UUID().uuidString).db")
-        var diagnostics: [String] = []
-        let store = DictationStore(databaseURL: url, diagnosticsLogger: { diagnostics.append($0) })
-        try store.migrateIfNeeded()
+    @Test("same-day calendar meetings preserve linkage")
+    func sameDayCalendarMeetingsPreserveLinkage() throws {
+        let store = try makeStore()
         let firstStart = try date("2026-07-06T08:15:00Z")
         let restartStart = try date("2026-07-06T08:20:00Z")
 
@@ -223,8 +218,7 @@ struct DictationStoreTests {
 
         var restarted = try #require(try store.meeting(id: restartedID))
         #expect(restarted.status == .recording)
-        #expect(restarted.calendarEventID == nil)
-        #expect(diagnostics.contains { $0.contains("create live meeting") && $0.contains("retrying without calendar linkage") })
+        #expect(restarted.calendarEventID == "daily-event")
 
         try store.completeLiveMeeting(
             id: restartedID,
@@ -240,8 +234,7 @@ struct DictationStoreTests {
 
         restarted = try #require(try store.meeting(id: restartedID))
         #expect(restarted.status == .completed)
-        #expect(restarted.calendarEventID == nil)
-        #expect(diagnostics.contains { $0.contains("complete live meeting") && $0.contains("retrying without calendar linkage") })
+        #expect(restarted.calendarEventID == "daily-event")
     }
 
     @Test("migration canonicalizes numeric meeting start time")
@@ -1193,6 +1186,64 @@ struct DictationStoreTests {
         #expect(meeting.formattedNotes == "")
         #expect(meeting.selectedTemplateID == "auto")
         #expect(meeting.source == .meeting)
+    }
+
+    @Test("recurring calendar occurrences keep separate meeting identity")
+    func recurringCalendarOccurrencesStaySeparate() throws {
+        let store = try makeStore()
+        let firstStart = Date(timeIntervalSince1970: 1_800_000_000)
+        let secondStart = firstStart.addingTimeInterval(7 * 24 * 60 * 60)
+        let first = CalendarOccurrenceReference(
+            provider: .googleCalendar,
+            calendarID: "primary",
+            eventID: "instance-1",
+            seriesID: "weekly",
+            originalStartTime: firstStart
+        )
+        let second = CalendarOccurrenceReference(
+            provider: .googleCalendar,
+            calendarID: "primary",
+            eventID: "instance-2",
+            seriesID: "weekly",
+            originalStartTime: secondStart
+        )
+
+        let firstID = try store.createLiveMeeting(
+            title: "Weekly",
+            calendarEventID: nil,
+            startTime: firstStart,
+            calendarOccurrence: first
+        )
+        let secondID = try store.createLiveMeeting(
+            title: "Weekly",
+            calendarEventID: nil,
+            startTime: secondStart,
+            calendarOccurrence: second
+        )
+
+        #expect(firstID != secondID)
+        #expect(try store.meetingByCalendarOccurrence(first)?.id == firstID)
+        #expect(try store.meetingByCalendarOccurrence(second)?.id == secondID)
+    }
+
+    @Test("calendar occurrence lookup finds legacy same-day meeting")
+    func calendarOccurrenceLookupFindsLegacyMeeting() throws {
+        let store = try makeStore()
+        let scheduledStart = Date(timeIntervalSince1970: 1_800_000_000)
+        let legacyID = try store.createLiveMeeting(
+            title: "Legacy weekly",
+            calendarEventID: "legacy-instance",
+            startTime: scheduledStart.addingTimeInterval(5 * 60)
+        )
+        let occurrence = CalendarOccurrenceReference(
+            provider: .eventKit,
+            calendarID: "calendar",
+            eventID: "legacy-instance",
+            seriesID: "weekly",
+            originalStartTime: scheduledStart
+        )
+
+        #expect(try store.meetingByCalendarOccurrence(occurrence)?.id == legacyID)
     }
 
     @Test("manual notes update independently from final notes")

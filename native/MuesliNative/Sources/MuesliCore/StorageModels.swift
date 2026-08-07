@@ -209,6 +209,46 @@ public struct ComputerUseTraceEvent: Identifiable, Codable, Equatable, Sendable 
     }
 }
 
+public struct CalendarOccurrenceReference: Codable, Equatable, Sendable {
+    public enum Provider: String, Codable, Sendable {
+        case eventKit
+        case googleCalendar
+    }
+
+    public let provider: Provider
+    public let calendarID: String?
+    public let eventID: String
+    public let seriesID: String?
+    public let originalStartTime: Date
+
+    public init(
+        provider: Provider,
+        calendarID: String?,
+        eventID: String,
+        seriesID: String? = nil,
+        originalStartTime: Date
+    ) {
+        self.provider = provider
+        self.calendarID = calendarID
+        self.eventID = eventID
+        self.seriesID = seriesID
+        self.originalStartTime = originalStartTime
+    }
+
+    public var identityKey: String {
+        let calendar = Self.component(calendarID ?? "")
+        if let seriesID {
+            let startMilliseconds = Int64((originalStartTime.timeIntervalSince1970 * 1_000).rounded())
+            return "v1|recurring|\(provider.rawValue)|\(calendar)|\(Self.component(seriesID))|\(startMilliseconds)"
+        }
+        return "v1|single|\(provider.rawValue)|\(calendar)|\(Self.component(eventID))"
+    }
+
+    private static func component(_ value: String) -> String {
+        Data(value.utf8).base64EncodedString()
+    }
+}
+
 public struct MeetingRecord: Identifiable, Codable, Sendable {
     public let id: Int64
     public let title: String

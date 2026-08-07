@@ -442,7 +442,12 @@ struct MeetingsView: View {
                                    !appState.isMeetingRecording,
                                    !appState.isMeetingStarting {
                                     Button {
-                                        controller.joinAndRecord(title: event.title, meetingURL: meetingURL, endDate: event.endDate)
+                                        controller.joinAndRecord(
+                                            title: event.title,
+                                            meetingURL: meetingURL,
+                                            endDate: event.endDate,
+                                            calendarOccurrence: event.resolvedCalendarOccurrence
+                                        )
                                     } label: {
                                         HStack(spacing: 4) {
                                             Image(systemName: "video.fill")

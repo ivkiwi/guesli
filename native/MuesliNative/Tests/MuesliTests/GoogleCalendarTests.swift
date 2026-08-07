@@ -370,11 +370,15 @@ struct GoogleCalendarTests {
         let item: [String: Any] = [
             "id": "ev1",
             "summary": "Sync",
+            "recurringEventId": "weekly-series",
+            "originalStartTime": ["dateTime": "2026-04-10T14:00:00Z"],
             "start": ["dateTime": "2026-04-10T14:00:00Z"],
             "end": ["dateTime": "2026-04-10T15:00:00Z"],
         ]
         let event = GoogleCalendarClient().parseEvent(item, calendarID: "team@dockstreet.com")
         #expect(event?.calendarID == "team@dockstreet.com")
+        #expect(event?.calendarOccurrence?.seriesID == "weekly-series")
+        #expect(event?.calendarOccurrence?.identityKey.contains("|recurring|") == true)
     }
 
     @Test("event sync cache resets when upcoming window changes")
