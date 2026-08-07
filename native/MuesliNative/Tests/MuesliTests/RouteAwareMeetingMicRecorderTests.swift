@@ -73,13 +73,13 @@ struct RouteAwareMeetingMicRecorderTests {
         try recorder.start()
         recorder.preferredInputDeviceID = 82
         try await waitUntil { appScoped.startCalls == 1 }
+        system.onStop = { system.onRawPCMSamples?([3]) }
 
         system.onRawPCMSamples?([1])
         appScoped.onRawPCMSamples?([2])
         try await waitUntil { system.stopCalls == 1 }
-        system.onRawPCMSamples?([3])
 
-        #expect(samples == [[1], [2]])
+        #expect(samples == [[1], [2], [3]])
         #expect(recorder.activeRecorderKindForDebug() == .appScoped)
     }
 
@@ -203,6 +203,7 @@ private final class FakeMeetingMicRecorder: MeetingMicRecording {
     var resumeCalls = 0
     var stopCalls = 0
     var cancelCalls = 0
+    var onStop: (() -> Void)?
 
     init(kind: MeetingMicRecorderKind) {
         self.kind = kind
@@ -225,6 +226,7 @@ private final class FakeMeetingMicRecorder: MeetingMicRecording {
     }
 
     func stop() -> URL? {
+        onStop?()
         stopCalls += 1
         return nil
     }
