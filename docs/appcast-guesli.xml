@@ -3,14 +3,14 @@
     <channel>
         <title>Guesli</title>
         <item>
-            <title>0.7.2.10</title>
-            <pubDate>Fri, 07 Aug 2026 12:20:10 +0000</pubDate>
+            <title>0.7.2.11</title>
+            <pubDate>Fri, 07 Aug 2026 16:36:12 +0000</pubDate>
             <link>https://github.com/ivkiwi/guesli/releases</link>
-            <sparkle:version>13.1</sparkle:version>
-            <sparkle:shortVersionString>0.7.2.10</sparkle:shortVersionString>
+            <sparkle:version>16.1</sparkle:version>
+            <sparkle:shortVersionString>0.7.2.11</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/ivkiwi/guesli/releases/download/beta-0.7.2.10-13-1/Guesli-0.7.2.10-adhoc-unnotarized.dmg" length="84063529" type="application/octet-stream" sparkle:edSignature="5LN9T7B7w8GZVnr0f6aGZfMVfq0ruR3opeTJYP5Wsv31JKH733KsZpX+tW3DgczVrMdTwKMOCHBZcxkrvfBlCg=="/>
+            <enclosure url="https://github.com/ivkiwi/guesli/releases/download/beta-0.7.2.11-16-1/Guesli-0.7.2.11-selfsigned-unnotarized.dmg" length="84079100" type="application/octet-stream" sparkle:edSignature="jBMjQUTmG4MXO7qKdqorqLtgdavA1dZo4Hj5AIzH86Atmc+LusJAmmdsDvYyI14iiw4tFQd3sB8v0Dbjr4V0Cg=="/>
         </item>
     </channel>
 </rss>
