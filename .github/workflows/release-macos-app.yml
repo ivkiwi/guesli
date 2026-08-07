@@ -75,6 +75,7 @@ jobs:
           fi
 
       - name: Install Guesli signing identity
+        timeout-minutes: 2
         env:
           SIGNING_P12_BASE64: ${{ secrets.GUESLI_SIGNING_P12_BASE64 }}
           SIGNING_P12_PASSWORD: ${{ secrets.GUESLI_SIGNING_P12_PASSWORD }}
@@ -91,7 +92,7 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security import "$CERTIFICATE_PATH" -P "$SIGNING_P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security find-certificate -c "Guesli Dev" -p "$KEYCHAIN_PATH" > "$CERTIFICATE_PEM"
-          security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN_PATH" "$CERTIFICATE_PEM"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$CERTIFICATE_PEM"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           rm -f "$CERTIFICATE_PATH" "$CERTIFICATE_PEM"
