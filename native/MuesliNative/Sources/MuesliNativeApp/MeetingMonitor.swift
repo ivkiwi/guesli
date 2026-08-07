@@ -599,6 +599,9 @@ private actor MeetingDetectionService {
             activityCandidate,
             mutedBundleIDs: context.mutedBundleIDs
         ) ? nil : activityCandidate
+        if context.isRecording, let unmutedActivityCandidate {
+            _ = promptState.markRecordingStarted(unmutedActivityCandidate)
+        }
         emitActivityUpdate(unmutedActivityCandidate)
         let candidate = isGloballySuppressed(now: now) ? nil : unmutedActivityCandidate
         logCandidateIfChanged(candidate)
@@ -702,6 +705,8 @@ private actor MeetingDetectionService {
             log("prompt_suppressed id=\(candidate.id) reason=auto_dismissed")
         case .userDismissedSuppression:
             log("prompt_suppressed id=\(candidate.id) reason=user_dismissed")
+        case .recordingStartedSuppression:
+            log("prompt_suppressed id=\(candidate.id) reason=recording_started")
         case .calendarNotificationVisible:
             log("prompt_suppressed id=\(candidate.id) reason=calendar_notification_visible")
         case .recording:
