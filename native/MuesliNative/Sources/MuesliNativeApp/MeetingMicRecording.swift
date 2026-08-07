@@ -174,6 +174,7 @@ final class RouteAwareMeetingMicRecorder: MeetingMicRecording {
         var lifecycleState: LifecycleState = .idle
         var active: Child?
         var pending: Child?
+        var retiringChildIDs = Set<UUID>()
         var generation: UInt64 = 0
         var shouldRecoverOnResume = false
         var onRawPCMSamplesStorage: (([Int16]) -> Void)?
@@ -245,6 +246,7 @@ final class RouteAwareMeetingMicRecorder: MeetingMicRecording {
                 state.generation &+= 1
                 let pending = state.pending
                 state.pending = nil
+                state.retiringChildIDs.removeAll()
                 return (state.active?.recorder, pending)
             }
             cancelAsync(result.1)
@@ -279,6 +281,7 @@ final class RouteAwareMeetingMicRecorder: MeetingMicRecording {
                 let result = (state.active, state.pending)
                 state.active = nil
                 state.pending = nil
+                state.retiringChildIDs.removeAll()
                 state.shouldRecoverOnResume = false
                 return result
             }
@@ -300,6 +303,7 @@ final class RouteAwareMeetingMicRecorder: MeetingMicRecording {
                 let result = (state.active, state.pending)
                 state.active = nil
                 state.pending = nil
+                state.retiringChildIDs.removeAll()
                 state.shouldRecoverOnResume = false
                 return result
             }
@@ -421,10 +425,14 @@ final class RouteAwareMeetingMicRecorder: MeetingMicRecording {
     }
 
     private func receive(_ samples: [Int16], from childID: UUID) {
-        let role = lock.withLock { state -> (isActive: Bool, isPending: Bool, generation: UInt64) in
-            (state.active?.id == childID, state.pending?.id == childID, state.pending?.generation ?? state.generation)
+        let role = lock.withLock { state -> (shouldForward: Bool, isPending: Bool, generation: UInt64) in
+            (
+                state.active?.id == childID || state.retiringChildIDs.contains(childID),
+                state.pending?.id == childID,
+                state.pending?.generation ?? state.generation
+            )
         }
-        if role.isActive {
+        if role.shouldForward {
             lock.withLock { $0.onRawPCMSamplesStorage }?(samples)
         } else if role.isPending {
             lifecycleQueue.async { [weak self] in
@@ -486,6 +494,7 @@ final class RouteAwareMeetingMicRecorder: MeetingMicRecording {
             let old = state.active
             state.active = candidate
             state.pending = nil
+            if let old { state.retiringChildIDs.insert(old.id) }
             state.lifecycleState = .running
             return (true, old)
         }
@@ -539,6 +548,7 @@ final class RouteAwareMeetingMicRecorder: MeetingMicRecording {
             let url = child.recorder.stop()
             child.recorder.cancel()
             if let url { try? FileManager.default.removeItem(at: url) }
+            self.lock.withLock { _ = $0.retiringChildIDs.remove(child.id) }
         }
     }
 
