@@ -82,6 +82,7 @@ jobs:
           test -n "$SIGNING_P12_BASE64"
           test -n "$SIGNING_P12_PASSWORD"
           CERTIFICATE_PATH="$RUNNER_TEMP/Guesli-Dev.p12"
+          CERTIFICATE_PEM="$RUNNER_TEMP/Guesli-Dev.pem"
           KEYCHAIN_PATH="$RUNNER_TEMP/guesli-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(uuidgen)"
           printf '%s' "$SIGNING_P12_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
@@ -89,9 +90,11 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security import "$CERTIFICATE_PATH" -P "$SIGNING_P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security find-certificate -c "Guesli Dev" -p "$KEYCHAIN_PATH" > "$CERTIFICATE_PEM"
+          security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN_PATH" "$CERTIFICATE_PEM"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
-          rm -f "$CERTIFICATE_PATH"
+          rm -f "$CERTIFICATE_PATH" "$CERTIFICATE_PEM"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -F '358AF852086E36AA4924D01D84B47F462776D496 "Guesli Dev"'
 
       - name: Build app bundle
