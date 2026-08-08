@@ -45,6 +45,10 @@ struct MeetingCandidate: Equatable {
     let sourceBundleID: String?
     let sourcePID: pid_t?
     let suppressionID: String
+    /// Calendar event this candidate is attributed to, when one is active.
+    /// Stable across the browser/app/calendar fallbacks in `resolve`, so it
+    /// survives changes in how the same meeting is being observed.
+    let calendarEventID: String?
 
     init(
         id: String,
@@ -56,7 +60,8 @@ struct MeetingCandidate: Equatable {
         meetingTitle: String?,
         sourceBundleID: String? = nil,
         sourcePID: pid_t? = nil,
-        suppressionID: String? = nil
+        suppressionID: String? = nil,
+        calendarEventID: String? = nil
     ) {
         self.id = id
         self.platform = platform
@@ -68,6 +73,7 @@ struct MeetingCandidate: Equatable {
         self.sourceBundleID = sourceBundleID
         self.sourcePID = sourcePID
         self.suppressionID = suppressionID ?? id
+        self.calendarEventID = calendarEventID
     }
 
     var subtitle: String {
@@ -84,6 +90,7 @@ struct MeetingCandidate: Equatable {
             && lhs.sourceBundleID == rhs.sourceBundleID
             && lhs.sourcePID == rhs.sourcePID
             && lhs.suppressionID == rhs.suppressionID
+            && lhs.calendarEventID == rhs.calendarEventID
     }
 }
 
@@ -344,6 +351,7 @@ final class MeetingCandidateResolver {
                 sourceBundleID: browserMeeting.bundleID,
                 sourcePID: validSourcePID(inputProcess.pid),
                 suppressionID: suppressionID,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -359,6 +367,7 @@ final class MeetingCandidateResolver {
                 evidence: browserEvidence(from: snapshot, context: browserMeeting, inputProcess: nil),
                 sourceBundleID: browserMeeting.bundleID,
                 sourcePID: browserMeeting.pid,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -383,6 +392,7 @@ final class MeetingCandidateResolver {
                     sourceBundleID: browserMeeting.bundleID,
                     sourcePID: inputProcess.flatMap { validSourcePID($0.pid) } ?? browserMeeting.pid,
                     suppressionID: suppressionID,
+                    calendarEventID: snapshot.calendarEvent?.id,
                     now: snapshot.now
                 )
             }
@@ -399,6 +409,7 @@ final class MeetingCandidateResolver {
                     sourceBundleID: audioApp.bundleID,
                     sourcePID: validSourcePID(audioApp.pid),
                     suppressionID: appSessionID,
+                    calendarEventID: snapshot.calendarEvent?.id,
                     now: snapshot.now
                 )
             }
@@ -419,6 +430,7 @@ final class MeetingCandidateResolver {
                     sourceBundleID: browserAudio.bundleID,
                     sourcePID: validSourcePID(browserAudio.process.pid),
                     suppressionID: sessionID,
+                    calendarEventID: snapshot.calendarEvent?.id,
                     now: snapshot.now
                 )
             }
@@ -439,6 +451,7 @@ final class MeetingCandidateResolver {
                 evidence: mediaEvidence(from: snapshot).union([.calendarEvent]),
                 sourceBundleID: app?.bundleID,
                 sourcePID: nil,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -459,6 +472,7 @@ final class MeetingCandidateResolver {
                 sourceBundleID: browserAudio.bundleID,
                 sourcePID: validSourcePID(browserAudio.process.pid),
                 suppressionID: sessionID,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -476,6 +490,7 @@ final class MeetingCandidateResolver {
                 sourceBundleID: audioApp.bundleID,
                 sourcePID: validSourcePID(audioApp.pid),
                 suppressionID: appSessionID,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -490,6 +505,7 @@ final class MeetingCandidateResolver {
                 evidence: mediaEvidence(from: snapshot).union([.dedicatedApp, .foregroundApp]),
                 sourceBundleID: foregroundCameraApp.bundleID,
                 sourcePID: nil,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -702,6 +718,7 @@ final class MeetingCandidateResolver {
         sourceBundleID: String?,
         sourcePID: pid_t?,
         suppressionID: String? = nil,
+        calendarEventID: String?,
         now: Date
     ) -> MeetingCandidate {
         MeetingCandidate(
@@ -714,7 +731,8 @@ final class MeetingCandidateResolver {
             meetingTitle: title,
             sourceBundleID: sourceBundleID,
             sourcePID: sourcePID,
-            suppressionID: suppressionID
+            suppressionID: suppressionID,
+            calendarEventID: calendarEventID
         )
     }
 }

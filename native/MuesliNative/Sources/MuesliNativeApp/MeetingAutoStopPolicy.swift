@@ -87,6 +87,7 @@ struct MeetingAutoStopSource: Equatable {
     let suppressionID: String?
     let normalizedURL: String?
     let sourceBundleID: String?
+    let calendarEventID: String?
     let hasObservedCandidate: Bool
 
     private init(
@@ -94,12 +95,14 @@ struct MeetingAutoStopSource: Equatable {
         suppressionID: String?,
         normalizedURL: String?,
         sourceBundleID: String?,
+        calendarEventID: String?,
         hasObservedCandidate: Bool
     ) {
         self.candidateID = candidateID
         self.suppressionID = suppressionID
         self.normalizedURL = normalizedURL
         self.sourceBundleID = sourceBundleID
+        self.calendarEventID = calendarEventID
         self.hasObservedCandidate = hasObservedCandidate
     }
 
@@ -108,6 +111,7 @@ struct MeetingAutoStopSource: Equatable {
         self.suppressionID = candidate.suppressionID
         self.normalizedURL = candidate.url
         self.sourceBundleID = candidate.sourceBundleID
+        self.calendarEventID = candidate.calendarEventID
         self.hasObservedCandidate = true
     }
 
@@ -119,6 +123,7 @@ struct MeetingAutoStopSource: Equatable {
         self.suppressionID = normalized.id
         self.normalizedURL = normalized.url
         self.sourceBundleID = nil
+        self.calendarEventID = nil
         self.hasObservedCandidate = false
     }
 
@@ -131,6 +136,7 @@ struct MeetingAutoStopSource: Equatable {
             suppressionID: refinedSuppressionID,
             normalizedURL: normalizedURL ?? candidate.url,
             sourceBundleID: sourceBundleID ?? candidate.sourceBundleID,
+            calendarEventID: calendarEventID ?? candidate.calendarEventID,
             hasObservedCandidate: true
         )
     }
@@ -211,6 +217,52 @@ enum MeetingAutoStopPolicy {
             return true
         }
 
+        if matchesCalendarEventIdentity(candidate: candidate, source: source) {
+            return true
+        }
+
+        if matchesDedicatedAppIdentity(candidate: candidate, source: source) {
+            return true
+        }
+
         return false
+    }
+
+    /// Every other identity here describes *how* a meeting is currently being
+    /// observed, and each can change while the same call continues: the room
+    /// URL is only reported while the call's browser tab is frontmost, and both
+    /// the candidate and suppression IDs are audio-session IDs that rotate once
+    /// their idle timeout lapses. A recording armed from a calendar event's
+    /// join URL then stops matching the very meeting it was started for, and
+    /// gets torn down mid-call. The calendar event is the one identity that
+    /// stays fixed, so match on it when both sides agree on the event.
+    private static func matchesCalendarEventIdentity(
+        candidate: MeetingCandidate,
+        source: MeetingAutoStopSource
+    ) -> Bool {
+        guard let sourceCalendarEventID = source.calendarEventID else { return false }
+        return candidate.calendarEventID == sourceCalendarEventID
+    }
+
+    /// A dedicated meeting app has no meeting URL, and `MeetingMediaSessionTracker`
+    /// mints a new session ID once its quiet window lapses. A call that briefly
+    /// stops reporting microphone input — being muted, or a transient input device
+    /// reconfiguration — therefore reappears under an ID that can never match the
+    /// armed source again, so the still-running meeting gets torn down and cannot
+    /// recover. Fall back to the app identity for that case.
+    ///
+    /// Browsers are excluded: a single browser hosts many unrelated sessions, so
+    /// its bundle ID is not a meeting identity.
+    private static func matchesDedicatedAppIdentity(
+        candidate: MeetingCandidate,
+        source: MeetingAutoStopSource
+    ) -> Bool {
+        guard source.normalizedURL == nil,
+              candidate.url == nil,
+              let sourceBundleID = source.sourceBundleID,
+              MeetingCandidateResolver.browserApps[sourceBundleID] == nil else {
+            return false
+        }
+        return candidate.sourceBundleID == sourceBundleID
     }
 }
