@@ -109,7 +109,7 @@ jobs:
           MUESLI_APP_BUNDLE_NAME: Guesli.app
           MUESLI_EXECUTABLE_NAME: Guesli
           MUESLI_SUPPORT_DIR_NAME: Guesli
-          MUESLI_BUNDLE_ID: com.ivkiwi.guesli
+          MUESLI_BUNDLE_ID: com.guesli.app
           MUESLI_SPARKLE_FEED_URL: https://raw.githubusercontent.com/ivkiwi/guesli/sparkle-feed/docs/appcast-guesli.xml
           MUESLI_SPARKLE_EDKEY: x1xV1WAX32xkX4Yl4dxV9HctwCP/dm/K/9YUzWxk7Kc=
           MUESLI_ENTITLEMENTS: ${{ github.workspace }}/scripts/MuesliLocalOnly.entitlements
@@ -132,7 +132,7 @@ jobs:
 
           codesign --verify --deep --strict --verbose=2 "$APP_DIR"
           codesign -dvv "$APP_DIR" 2>&1 | grep -F 'Authority=Guesli Dev'
-          codesign -d -r- "$APP_DIR" 2>&1 | grep -F 'certificate leaf = H"358af852086e36aa4924d01d84b47f462776d496"'
+          codesign -d -r- "$APP_DIR" 2>&1 | grep -F 'designated => identifier "com.guesli.app" and certificate leaf = H"358af852086e36aa4924d01d84b47f462776d496"'
           codesign -d --entitlements :- "$APP_DIR" > "$ENTITLEMENTS_PLIST"
 
           if /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.icloud-services' "$ENTITLEMENTS_PLIST" >/dev/null 2>&1; then
