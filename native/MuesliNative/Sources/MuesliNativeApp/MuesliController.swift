@@ -560,6 +560,7 @@ public final class MuesliController: NSObject {
     private var importTask: Task<Void, Never>?
     private var importSessionID: UUID?
     private var canceledMeetingStartIDs = Set<Int64>()
+    private var meetingStartOrigins: [Int64: MeetingRecordingStartOrigin] = [:]
     private var iCloudSyncTask: Task<Void, Never>?
     private var iCloudSyncGeneration = 0
     private var iCloudSyncDebounceTask: Task<Void, Never>?
@@ -5475,6 +5476,7 @@ public final class MuesliController: NSObject {
             )
             activeMeetingID = meetingID
             activeMeetingAudioWarning = nil
+            meetingStartOrigins[meetingID] = startOrigin
             syncAppState()
             if openDocument {
                 showMeetingDocument(id: meetingID)
@@ -5655,7 +5657,18 @@ public final class MuesliController: NSObject {
         activeMeetingID = meetingID
         activeMeetingAudioWarning = nil
         syncAppState()
-        armMeetingAutoStop(source: recentMeetingAutoStopSource())
+
+        let resumedOrigin = MeetingResumePolicy.resumedStartOrigin(
+            recordedOrigin: meetingStartOrigins[meetingID]
+        )
+        meetingStartOrigins[meetingID] = resumedOrigin
+        armMeetingAutoStop(
+            source: resumedOrigin.signalLossSource(
+                explicitSource: nil,
+                recentSource: recentMeetingAutoStopSource()
+            ),
+            response: resumedOrigin.signalLossResponse
+        )
         isStartingMeetingRecording = true
         cancelDictationAudioSessionForMeetingRecordingIfNeeded()
         syncDictationRecorderWarmup(intent: .idlePrewarm(.meetingStateChanged))

@@ -48,6 +48,20 @@ struct MeetingResumeAndFollowUpTests {
         #expect(MeetingResumePolicy.combinedResumeTranscript(prior: "old", new: "new") == "old\n\n— Resumed —\n\nnew")
     }
 
+    @Test("resume preserves a known start origin and defaults unknown origins to manual")
+    func resumeStartOrigin() {
+        for origin in [
+            MeetingRecordingStartOrigin.manual,
+            .detectedPrompt,
+            .calendarAutoRecord,
+            .scheduledMeetingPrompt,
+            .joinAndRecord,
+        ] {
+            #expect(MeetingResumePolicy.resumedStartOrigin(recordedOrigin: origin) == origin)
+        }
+        #expect(MeetingResumePolicy.resumedStartOrigin(recordedOrigin: nil) == .manual)
+    }
+
     @Test("failed resume restores the exact completed meeting")
     func resumeRollback() throws {
         let store = try makeStore()
