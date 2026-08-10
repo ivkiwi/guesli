@@ -2,15 +2,5 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>Guesli</title>
-        <item>
-            <title>0.7.2.10</title>
-            <pubDate>Fri, 07 Aug 2026 12:20:10 +0000</pubDate>
-            <link>https://github.com/ivkiwi/guesli/releases</link>
-            <sparkle:version>13.1</sparkle:version>
-            <sparkle:shortVersionString>0.7.2.10</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/ivkiwi/guesli/releases/download/beta-0.7.2.10-13-1/Guesli-0.7.2.10-adhoc-unnotarized.dmg" length="84063529" type="application/octet-stream" sparkle:edSignature="5LN9T7B7w8GZVnr0f6aGZfMVfq0ruR3opeTJYP5Wsv31JKH733KsZpX+tW3DgczVrMdTwKMOCHBZcxkrvfBlCg=="/>
-        </item>
     </channel>
 </rss>
