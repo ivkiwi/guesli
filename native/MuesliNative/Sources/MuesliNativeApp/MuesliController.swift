@@ -2831,7 +2831,9 @@ public final class MuesliController: NSObject {
             calendarOccurrence: event.resolvedCalendarOccurrence,
             openDocument: false,
             endDate: event.endDate,
-            autoStopSource: event.meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) },
+            autoStopSource: event.meetingURL.flatMap {
+                MeetingAutoStopSource(meetingURL: $0, calendarEventID: event.id)
+            },
             startOrigin: .calendarAutoRecord,
             onStartResolved: { [weak self] didStart in
                 guard let self else { return }
@@ -6222,7 +6224,9 @@ public final class MuesliController: NSObject {
             title: title,
             calendarOccurrence: calendarOccurrence,
             endDate: endDate,
-            autoStopSource: meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) },
+            autoStopSource: meetingURL.flatMap {
+                MeetingAutoStopSource(meetingURL: $0, calendarEventID: calendarOccurrence?.eventID)
+            },
             presentation: presentation,
             startOrigin: .scheduledMeetingPrompt
         )
