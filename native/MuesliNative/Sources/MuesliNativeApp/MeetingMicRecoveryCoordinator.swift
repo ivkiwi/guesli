@@ -372,7 +372,7 @@ final class MeetingMicRecoveryCoordinator {
     }
 
     private static func isDegraded(_ state: MeetingMicHealthState) -> Bool {
-        state == .micCallbacksMissing || state == .micAllZeroWhileSystemActive
+        state == .micCallbacksMissing
     }
 
     /// Builds the event outside the lock: evaluates the injected context
