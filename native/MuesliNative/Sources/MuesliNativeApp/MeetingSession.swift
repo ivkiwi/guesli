@@ -402,6 +402,9 @@ final class MeetingSession {
         var others = ""
     }
     private let livePartialTextLock = OSAllocatedUnfairLock(initialState: LivePartialTextState())
+    private let micRecoveryCoordinator = MeetingMicRecoveryCoordinator()
+    private let systemAudioWatchdog = MeetingSystemAudioWatchdog()
+    private var systemAudioWatchdogTimer: DispatchSourceTimer?
     private let chunkRotationQueue = DispatchQueue(label: "MuesliNative.MeetingSession.chunkRotation")
     private let pausedDisplayLock = OSAllocatedUnfairLock(initialState: false)
     private let stopIntakeRequested = ManagedAtomic(false)
@@ -498,6 +501,7 @@ final class MeetingSession {
         } else {
             self.systemAudioRecorder = SystemAudioRecorder()
         }
+        configureCaptureRecovery()
     }
 
     @discardableResult
@@ -507,6 +511,31 @@ final class MeetingSession {
             backendLock.withLock { $0 = backend }
             liveChunkingConfiguration = Self.liveChunkingConfiguration(for: backend)
             return true
+        }
+    }
+
+    private func configureCaptureRecovery() {
+        systemAudioWatchdog.captureHeartbeat = { [weak systemAudioRecorder] in
+            systemAudioRecorder?.captureHeartbeat ?? 0
+        }
+        systemAudioWatchdog.isCaptureActive = { [weak systemAudioRecorder] in
+            guard let recorder = systemAudioRecorder else { return false }
+            return recorder.isRecording && !recorder.isPaused && !recorder.isRebuilding
+        }
+        systemAudioWatchdog.isPaused = { [weak systemAudioRecorder] in
+            systemAudioRecorder?.isPaused ?? false
+        }
+        systemAudioWatchdog.lastMicCallbackAt = { [weak self] in
+            self?.micHealthTracker.snapshot().lastRawMicCallbackAt
+        }
+        systemAudioWatchdog.recoveryRequest = { [weak systemAudioRecorder] reason in
+            systemAudioRecorder?.rebuildForHealthRecovery(reason: reason) ?? false
+        }
+        systemAudioWatchdog.onMicBlindnessDegradation = { [weak micRecoveryCoordinator] reason in
+            micRecoveryCoordinator?.noteExternalDegradation(reason: reason)
+        }
+        systemAudioRecorder.onCaptureFailure = { [weak systemAudioWatchdog] error in
+            systemAudioWatchdog?.noteCaptureFailure(reason: "rebuild_exhausted: \(error.localizedDescription)")
         }
     }
 
@@ -860,8 +889,10 @@ final class MeetingSession {
             try setupRetainedRecordingWriterIfNeeded()
             let captureStartGeneration = try await startSystemAudioWithTimeout()
             try startMicrophoneIfCaptureStartIsCurrent(captureStartGeneration)
+            startSystemAudioWatchdog()
         } catch {
             cancelPendingCaptureStart()
+            stopSystemAudioWatchdog()
             vadController?.stop()
             vadController = nil
             systemVadController?.stop()
@@ -1002,6 +1033,10 @@ final class MeetingSession {
             systemChunkRecorder = nil
             return (rawRecorder, systemRecorder)
         }
+        // Same contract as stop(): the queue barrier above drains pending
+        // sample callbacks; only then is episode state final.
+        micRecoveryCoordinator.finishMeeting()
+        stopSystemAudioWatchdog()
         vadController?.stop()
         vadController = nil
         systemVadController?.stop()
@@ -1049,6 +1084,7 @@ final class MeetingSession {
         defer { writeStopCountersOnce() }
 
         noteStopPhaseForTesting("stop_requested")
+        stopSystemAudioWatchdog()
         vadController?.stop()
         vadController = nil
         systemVadController?.stop()
@@ -1077,6 +1113,7 @@ final class MeetingSession {
             return (meetingStart, lastChunkTiming, lastRawMicURL, lastSystemChunkTiming, lastSystemChunkURL)
         }
         stopIntakeRequested.store(true, ordering: .releasing)
+        micRecoveryCoordinator.finishMeeting()
         let retainedRecordingTempURL = retainedRecordingWriter?.stop()
         retainedRecordingWriter = nil
         let retainedRecordingSavedURL = await finalizeRetainedRecordingEarly(
@@ -2486,6 +2523,29 @@ final class MeetingSession {
             state.systemSession = nil
             return sessions
         }
+    }
+
+    private func startSystemAudioWatchdog() {
+        stopSystemAudioWatchdogTimer()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "MuesliNative.MeetingSession.systemAudioWatchdog"))
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler { [weak systemAudioWatchdog] in
+            systemAudioWatchdog?.tick()
+        }
+        systemAudioWatchdogTimer = timer
+        timer.resume()
+    }
+
+    /// Cancel the tick timer (no late rebuilds mid-teardown) and terminalize
+    /// any open tap episode. Safe to call from stop() and discard().
+    private func stopSystemAudioWatchdog() {
+        stopSystemAudioWatchdogTimer()
+        systemAudioWatchdog.finishMeeting()
+    }
+
+    private func stopSystemAudioWatchdogTimer() {
+        systemAudioWatchdogTimer?.cancel()
+        systemAudioWatchdogTimer = nil
     }
 
     private func prepareRealtimeAudioPipeline(vadManager: VadManager?) throws {
