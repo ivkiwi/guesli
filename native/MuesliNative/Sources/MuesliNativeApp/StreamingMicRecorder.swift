@@ -310,6 +310,15 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         emitLatency("app_scoped_engine_start_end")
     }
 
+    private var configChangeRestartItem: DispatchWorkItem?
+    /// Settle debounce for engine config-change restarts. A route transition
+    /// fires a burst of notifications while the daemon negotiates, and
+    /// restarting mid-churn reliably fails tap installation (measured live on
+    /// macOS 26.5.2, aged daemon). The current engine keeps its state during
+    /// the window; we restart once after the notifications stop.
+    /// (var so tests can inject a fast settle)
+    var configChangeSettleDelay: TimeInterval = 1.5
+
     // MARK: - Input Configuration Changes
 
     /// AVAudioEngine stops delivering input buffers when its I/O configuration
@@ -326,12 +335,25 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
             queue: nil
         ) { [weak self] _ in
             callbackQueue.async { [weak self] in
-                self?.handleEngineConfigurationChange(recordingID: recordingID)
+                self?.scheduleConfigurationChangeRestart(recordingID: recordingID)
             }
         }
     }
 
+    private func scheduleConfigurationChangeRestart(recordingID: UUID) {
+        // On configurationChangeQueue. Each notification resets the settle
+        // timer; the restart fires once after the burst quiets.
+        configChangeRestartItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.handleEngineConfigurationChange(recordingID: recordingID)
+        }
+        configChangeRestartItem = item
+        configurationChangeQueue.asyncAfter(deadline: .now() + configChangeSettleDelay, execute: item)
+    }
+
     private func removeConfigurationChangeObserverIfNeeded() {
+        configChangeRestartItem?.cancel()
+        configChangeRestartItem = nil
         guard let observer = configurationChangeObserver else { return }
         NotificationCenter.default.removeObserver(observer)
         configurationChangeObserver = nil
