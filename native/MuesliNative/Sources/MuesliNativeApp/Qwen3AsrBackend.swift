@@ -1,12 +1,13 @@
 import FluidAudio
 import Foundation
+import MuesliCore
 
-/// Native Swift transcription backend using FluidAudio's Qwen3 ASR model
+/// Native Swift transcription backend using the vendored Qwen3 ASR model
 /// running on Apple's Neural Engine (ANE) via CoreML.
 /// Requires macOS 15+ due to CoreML stateful decoder support.
 @available(macOS 15, *)
 actor Qwen3AsrTranscriber {
-    private var manager: Qwen3AsrManager?
+    private var manager: MuesliQwen3AsrManager?
 
     enum TranscriberError: Error, LocalizedError {
         case notLoaded
@@ -24,13 +25,13 @@ actor Qwen3AsrTranscriber {
         if manager != nil { return }
 
         fputs("[qwen3-asr] downloading/loading models...\n", stderr)
-        let modelDir = try await Qwen3AsrModels.download(variant: .int8) { downloadProgress in
+        let modelDir = try await MuesliQwen3AsrModels.download(variant: .int8) { downloadProgress in
             let fraction = downloadProgress.fractionCompleted
             DispatchQueue.main.async {
                 progress?(fraction, "Downloading Qwen3 ASR...")
             }
         }
-        let mgr = Qwen3AsrManager()
+        let mgr = MuesliQwen3AsrManager()
         try await mgr.loadModels(from: modelDir)
         self.manager = mgr
         fputs("[qwen3-asr] models loaded, running warmup inference...\n", stderr)
