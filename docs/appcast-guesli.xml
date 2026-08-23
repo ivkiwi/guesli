@@ -1,8 +1,16 @@
-<?xml version="1.0" standalone="yes"?>
-<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+<?xml version="1.0" ?><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>Guesli</title>
         <item>
+            <title>0.8.3.1</title>
+            <pubDate>Sun, 23 Aug 2026 15:30:28 +0000</pubDate>
+            <link>https://github.com/ivkiwi/guesli/releases</link>
+            <sparkle:version>18.1</sparkle:version>
+            <sparkle:shortVersionString>0.8.3.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/ivkiwi/guesli/releases/download/beta-0.8.3.1-18-1/Guesli-0.8.3.1-selfsigned-unnotarized.dmg" length="113557110" type="application/octet-stream" sparkle:edSignature="few30vgL7fVb/oBDv03jBr5iAIMkCEPuZFi1m44e2g4XDqiXAyhreWJnHuJYc5+EZW7PWn8oWAjsdBGGcngvBg=="/>
+        </item><item>
             <title>0.7.2.12</title>
             <pubDate>Mon, 10 Aug 2026 07:59:37 +0000</pubDate>
             <link>https://github.com/ivkiwi/guesli/releases</link>
