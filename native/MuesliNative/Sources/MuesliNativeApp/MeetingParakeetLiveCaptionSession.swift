@@ -87,6 +87,7 @@ extension MeetingStreamingPartialEngine {
 private actor ParakeetEOUMeetingPartialEngine: MeetingStreamingPartialEngine {
     private let manager = StreamingEouAsrManager(chunkSize: .ms320)
     private let label: String
+    private var partialHandler: (@Sendable (String) -> Void)?
 
     init(label: String) {
         self.label = label
@@ -97,6 +98,7 @@ private actor ParakeetEOUMeetingPartialEngine: MeetingStreamingPartialEngine {
     }
 
     func setPartialHandler(_ handler: @escaping @Sendable (String) -> Void) async {
+        partialHandler = handler
         await manager.setPartialCallback(handler)
     }
 
@@ -122,7 +124,15 @@ private actor ParakeetEOUMeetingPartialEngine: MeetingStreamingPartialEngine {
         _ = try await manager.process(audioBuffer: buffer)
     }
 
+    func finish() async throws {
+        let finalText = try await manager.finish()
+        if !finalText.isEmpty {
+            partialHandler?(finalText)
+        }
+    }
+
     func shutdown() async {
+        partialHandler = nil
         await manager.cleanup()
         fputs("[meeting-partials] \(label) Parakeet EOU session stopped\n", stderr)
     }

@@ -1,10 +1,9 @@
 import AppKit
 import MuesliCore
 
-@main
 @MainActor
-enum MuesliMain {
-    static func main() {
+public enum MuesliAppEntry {
+    public static func run() {
         let application = NSApplication.shared
         let appDelegate = AppDelegate()
         application.delegate = appDelegate

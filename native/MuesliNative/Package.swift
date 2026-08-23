@@ -8,7 +8,8 @@ let package = Package(
     ],
     products: [
         .library(name: "MuesliCore", targets: ["MuesliCore"]),
-        .executable(name: "MuesliNativeApp", targets: ["MuesliNativeApp"]),
+        .library(name: "MuesliNativeAppCore", targets: ["MuesliNativeApp"]),
+        .executable(name: "MuesliNativeApp", targets: ["MuesliNativeAppShell"]),
         .executable(name: "muesli-cli", targets: ["MuesliCLI"]),
     ],
     dependencies: [
@@ -32,7 +33,7 @@ let package = Package(
                 .linkedLibrary("sqlite3"),
             ]
         ),
-        .executableTarget(
+        .target(
             name: "MuesliNativeApp",
             dependencies: [
                 "MuesliCore",
@@ -46,17 +47,23 @@ let package = Package(
                 "LocalVQEBridge",
             ],
             path: "Sources/MuesliNativeApp",
-            swiftSettings: [
-                .unsafeFlags(["-parse-as-library"]),
-            ],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
+            ]
+        ),
+        .executableTarget(
+            name: "MuesliNativeAppShell",
+            dependencies: ["MuesliNativeApp"],
+            path: "Sources/MuesliNativeAppShell",
+            swiftSettings: [
+                .unsafeFlags(["-parse-as-library"]),
             ]
         ),
         .executableTarget(
             name: "MuesliCLI",
             dependencies: [
                 "MuesliCore",
+                "MuesliNativeApp",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ],
