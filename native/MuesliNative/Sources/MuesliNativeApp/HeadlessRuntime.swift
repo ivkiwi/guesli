@@ -1,6 +1,13 @@
+import AVFoundation
 import Foundation
 import FluidAudio
 import os
+
+enum HeadlessAudioLoadingStrategy: Equatable {
+    case directSamples
+    case streamedChunks
+    case backendFile
+}
 
 public enum HeadlessTranscriptionModel: String, CaseIterable, Sendable {
     case gigaAMONNX = "gigaam-onnx"
@@ -16,6 +23,14 @@ public enum HeadlessTranscriptionModel: String, CaseIterable, Sendable {
     case whisperSmallEnglish = "whisper-small-english"
     case whisperMediumEnglish = "whisper-medium-english"
     case whisperLargeTurbo = "whisper-large-turbo"
+
+    var audioLoadingStrategy: HeadlessAudioLoadingStrategy {
+        switch self {
+        case .gigaAMONNX: .directSamples
+        case .parakeetEOU320ms: .streamedChunks
+        default: .backendFile
+        }
+    }
 
     fileprivate var backendOption: BackendOption {
         switch self {
@@ -50,6 +65,10 @@ public struct HeadlessTranscriptionResult: Sendable {
 }
 
 public actor HeadlessTranscriptionRuntime {
+    /// Offline backends ultimately materialize the complete 16 kHz waveform.
+    /// Four hours is about 922 MB as Float32 and keeps accidental day-long files bounded.
+    static let maximumBufferedAudioDurationSeconds: TimeInterval = 4 * 60 * 60
+
     private let coordinator = TranscriptionCoordinator()
 
     public init() {}
@@ -60,17 +79,20 @@ public actor HeadlessTranscriptionRuntime {
         progress: (@Sendable (Double, String?) -> Void)? = nil,
         onPartial: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> HeadlessTranscriptionResult {
-        let samples = try AudioConverter().resampleAudioFile(wavURL)
-        let duration = Double(samples.count) / 16_000
+        let duration = try HeadlessWAVChunkReader.duration(at: wavURL)
         let result: SpeechTranscriptionResult
 
-        if model == .parakeetEOU320ms {
+        switch model.audioLoadingStrategy {
+        case .streamedChunks:
             result = try await coordinator.transcribeParakeetEOU(
-                samples: samples,
+                wavURL: wavURL,
+                duration: duration,
                 progress: progress,
                 onPartial: onPartial
             )
-        } else {
+        case .directSamples:
+            try Self.validateBufferedDuration(duration, model: model)
+            let samples = try AudioConverter().resampleAudioFile(wavURL)
             try await coordinator.preloadRequired(
                 backend: model.backendOption,
                 includeMeetingHelpers: false,
@@ -81,6 +103,17 @@ public actor HeadlessTranscriptionRuntime {
                 samples: samples,
                 backend: model.backendOption
             )
+        case .backendFile:
+            try Self.validateBufferedDuration(duration, model: model)
+            try await coordinator.preloadRequired(
+                backend: model.backendOption,
+                includeMeetingHelpers: false,
+                progress: progress
+            )
+            result = try await coordinator.transcribeMeeting(
+                at: wavURL,
+                backend: model.backendOption
+            )
         }
 
         return HeadlessTranscriptionResult(text: result.text, durationSeconds: duration)
@@ -88,6 +121,80 @@ public actor HeadlessTranscriptionRuntime {
 
     public func shutdown() async {
         await coordinator.shutdown()
+    }
+
+    static func validateBufferedDuration(_ duration: TimeInterval, model: HeadlessTranscriptionModel) throws {
+        guard duration <= maximumBufferedAudioDurationSeconds else {
+            throw NSError(
+                domain: "HeadlessTranscriptionRuntime",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "\(model.rawValue) supports audio up to 4 hours per CLI run."]
+            )
+        }
+    }
+}
+
+enum HeadlessWAVChunkReader {
+    static let sampleRate = 16_000.0
+
+    static func duration(at url: URL) throws -> TimeInterval {
+        let file = try AVAudioFile(forReading: url)
+        let rate = file.processingFormat.sampleRate
+        guard rate > 0 else {
+            throw NSError(
+                domain: "HeadlessWAVChunkReader",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Audio file has an invalid sample rate."]
+            )
+        }
+        return Double(file.length) / rate
+    }
+
+    @discardableResult
+    static func forEachChunk(
+        at url: URL,
+        targetChunkSamples: Int,
+        body: ([Float], TimeInterval) async throws -> Void
+    ) async throws -> TimeInterval {
+        precondition(targetChunkSamples > 0)
+        let file = try AVAudioFile(forReading: url)
+        let sourceRate = file.processingFormat.sampleRate
+        guard sourceRate == sampleRate, file.processingFormat.channelCount == 1 else {
+            throw NSError(
+                domain: "HeadlessWAVChunkReader",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Streaming input must be the prepared 16 kHz mono WAV."]
+            )
+        }
+        let inputFramesPerChunk = AVAudioFrameCount(targetChunkSamples)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: file.processingFormat,
+            frameCapacity: inputFramesPerChunk
+        ) else {
+            throw NSError(
+                domain: "HeadlessWAVChunkReader",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Could not allocate an audio streaming buffer."]
+            )
+        }
+
+        let converter = AudioConverter(sampleRate: sampleRate)
+        var emittedSamples = 0
+        while file.framePosition < file.length {
+            try Task.checkCancellation()
+            buffer.frameLength = 0
+            let remaining = AVAudioFrameCount(min(
+                AVAudioFramePosition(inputFramesPerChunk),
+                file.length - file.framePosition
+            ))
+            try file.read(into: buffer, frameCount: remaining)
+            guard buffer.frameLength > 0 else { break }
+            let samples = try converter.resampleBuffer(buffer)
+            guard !samples.isEmpty else { continue }
+            emittedSamples += samples.count
+            try await body(samples, Double(emittedSamples) / sampleRate)
+        }
+        return Double(emittedSamples) / sampleRate
     }
 }
 
@@ -134,7 +241,8 @@ private final class HeadlessPartialState: @unchecked Sendable {
 
 extension TranscriptionCoordinator {
     func transcribeParakeetEOU(
-        samples: [Float],
+        wavURL: URL,
+        duration: TimeInterval,
         progress: (@Sendable (Double, String?) -> Void)?,
         onPartial: (@Sendable (Double, String) -> Void)?
     ) async throws -> SpeechTranscriptionResult {
@@ -150,17 +258,16 @@ extension TranscriptionCoordinator {
 
         do {
             let chunkSize = MeetingStreamingPartialSession.feedSamples
-            var offset = 0
-            while offset < samples.count {
-                try Task.checkCancellation()
-                let end = min(offset + chunkSize, samples.count)
-                var chunk = Array(samples[offset..<end])
-                if chunk.count < chunkSize {
-                    chunk.append(contentsOf: repeatElement(0, count: chunkSize - chunk.count))
+            try await HeadlessWAVChunkReader.forEachChunk(
+                at: wavURL,
+                targetChunkSamples: chunkSize
+            ) { samples, seconds in
+                var samples = samples
+                if samples.count < chunkSize {
+                    samples.append(contentsOf: repeatElement(0, count: chunkSize - samples.count))
                 }
-                state.setSeconds(Double(end) / 16_000)
-                try await engine.process(samples: chunk)
-                offset = end
+                state.setSeconds(seconds)
+                try await engine.process(samples: samples)
             }
             try await engine.finish()
             await engine.shutdown()
@@ -173,7 +280,7 @@ extension TranscriptionCoordinator {
         progress?(1, "Transcription complete")
         return SpeechTranscriptionResult(
             text: text,
-            segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: Double(samples.count) / 16_000, text: text)]
+            segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: duration, text: text)]
         )
     }
 }

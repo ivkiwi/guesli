@@ -1,7 +1,9 @@
 import Foundation
+import FluidAudio
 import Testing
 import MuesliCore
 @testable import MuesliCLI
+@testable import MuesliNativeApp
 
 @Suite("MuesliCLI", .serialized, .muesliHermeticSupport)
 struct MuesliCLITests {
@@ -116,6 +118,71 @@ struct MuesliCLITests {
             "recording.wav", "--model", "parakeet-eou-320ms", "--emit-partials", "/tmp/partials.jsonl",
         ])
         #expect(command.emitPartials == "/tmp/partials.jsonl")
+    }
+
+    @Test("headless audio loading avoids duplicate full buffers")
+    func headlessAudioLoadingStrategyIsBounded() throws {
+        #expect(HeadlessTranscriptionModel.gigaAMONNX.audioLoadingStrategy == .directSamples)
+        #expect(HeadlessTranscriptionModel.parakeetEOU320ms.audioLoadingStrategy == .streamedChunks)
+        #expect(HeadlessTranscriptionModel.senseVoice.audioLoadingStrategy == .backendFile)
+        #expect(throws: Error.self) {
+            try HeadlessTranscriptionRuntime.validateBufferedDuration(
+                HeadlessTranscriptionRuntime.maximumBufferedAudioDurationSeconds + 1,
+                model: .gigaAMONNX
+            )
+        }
+    }
+
+    @Test("Parakeet EOU WAV reader keeps chunks bounded")
+    func eouWAVReaderStreamsBoundedChunks() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("muesli-cli-stream-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let chunkSize = MeetingStreamingPartialSession.feedSamples
+        let sampleCount = chunkSize * 3 + 123
+        try CLIWavWriter.writeWAV(samples: [Float](repeating: 0.1, count: sampleCount), to: url)
+
+        var chunks: [[Float]] = []
+        let duration = try await HeadlessWAVChunkReader.forEachChunk(
+            at: url,
+            targetChunkSamples: chunkSize
+        ) { samples, _ in
+            chunks.append(samples)
+        }
+
+        let fullDecode = try AudioConverter().resampleAudioFile(url)
+        #expect(chunks.count == 4)
+        #expect(chunks.allSatisfy { $0.count <= chunkSize })
+        #expect(chunks.flatMap { $0 } == fullDecode)
+        #expect(abs(duration - Double(sampleCount) / 16_000) < 0.001)
+    }
+
+    @Test("partial JSONL rerun truncates stale tail")
+    func partialJSONLRerunTruncatesStaleTail() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("muesli-cli-partials-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let first = try PartialsJSONLWriter(url: url)
+        first.record(t: 10, text: String(repeating: "old ", count: 100))
+        first.record(t: 20, text: "old tail")
+        try first.close()
+        let previousData = try Data(contentsOf: url)
+
+        let second = try PartialsJSONLWriter(url: url)
+        second.record(t: 1, text: "new")
+        let dataBeforeCommit = try Data(contentsOf: url)
+        #expect(dataBeforeCommit == previousData)
+        try second.close()
+
+        let data = try Data(contentsOf: url)
+        let lines = data.split(separator: 0x0A)
+        #expect(lines.count == 1)
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(lines[0])) as? [String: Any]
+        )
+        #expect(object["text"] as? String == "new")
+        #expect(object["t"] as? Double == 1)
     }
 
     @Test("--dictionary parses into the request")

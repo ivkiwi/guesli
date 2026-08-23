@@ -292,17 +292,23 @@ struct MuesliAudioTranscriptionPipeline {
 
         fputs("[muesli-cli] loading \(request.model.rawValue) and transcribing...\n", stderr)
         let partialsWriter = try request.emitPartialsURL.map { try PartialsJSONLWriter(url: $0) }
-        defer { partialsWriter?.close() }
-        let transcription = try await transcriber.transcribe(
-            wavURL: prepared.wavURL,
-            model: request.model,
-            onPartial: partialsWriter.map { writer in
-                { @Sendable seconds, text in writer.record(t: seconds, text: text) }
-            },
-            progress: { message in
-                fputs("[muesli-cli] \(message)\n", stderr)
-            }
-        )
+        let transcription: HeadlessTranscription
+        do {
+            transcription = try await transcriber.transcribe(
+                wavURL: prepared.wavURL,
+                model: request.model,
+                onPartial: partialsWriter.map { writer in
+                    { @Sendable seconds, text in writer.record(t: seconds, text: text) }
+                },
+                progress: { message in
+                    fputs("[muesli-cli] \(message)\n", stderr)
+                }
+            )
+            try partialsWriter?.close()
+        } catch {
+            partialsWriter?.discard()
+            throw error
+        }
         var transcript = transcription.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.hasMeaningfulSpeech(transcript) else {
             throw CLIError.invalidInput("No speech was transcribed from the selected audio file.", fix: "Check that the file contains audible speech and try again.")
@@ -628,29 +634,58 @@ actor CoordinatorAudioTranscriber: AudioTranscribing {
 
 final class PartialsJSONLWriter: @unchecked Sendable {
     private let handle: FileHandle
+    private let destinationURL: URL
+    private let stagingURL: URL
     private let lock = NSLock()
+    private var isClosed = false
 
     init(url: URL) throws {
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        FileManager.default.createFile(atPath: url.path, contents: nil)
-        handle = try FileHandle(forWritingTo: url)
+        destinationURL = url
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        stagingURL = directory.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        guard FileManager.default.createFile(atPath: stagingURL.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        handle = try FileHandle(forWritingTo: stagingURL)
+    }
+
+    deinit {
+        guard !isClosed else { return }
+        try? handle.close()
+        try? FileManager.default.removeItem(at: stagingURL)
     }
 
     func record(t: Double, text: String) {
         lock.lock()
         defer { lock.unlock() }
+        guard !isClosed else { return }
         guard let data = try? JSONSerialization.data(withJSONObject: ["t": t, "text": text]) else { return }
         handle.write(data)
         handle.write(Data("\n".utf8))
     }
 
-    func close() {
+    func close() throws {
         lock.lock()
         defer { lock.unlock() }
+        guard !isClosed else { return }
+        try handle.synchronize()
+        try handle.close()
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            _ = try FileManager.default.replaceItemAt(destinationURL, withItemAt: stagingURL)
+        } else {
+            try FileManager.default.moveItem(at: stagingURL, to: destinationURL)
+        }
+        isClosed = true
+    }
+
+    func discard() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isClosed else { return }
         try? handle.close()
+        try? FileManager.default.removeItem(at: stagingURL)
+        isClosed = true
     }
 }
 
