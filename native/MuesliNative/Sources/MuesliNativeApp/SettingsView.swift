@@ -652,7 +652,7 @@ struct SettingsView: View {
                     settingsRow("Cleanup model") {
                         settingsModelMenu(
                             currentModel: appState.config.chatGPTDictationCleanupModel,
-                            presets: SummaryModelPreset.chatGPTModels,
+                            presets: SummaryModelPreset.chatGPTTranscriptCleanupModels,
                             defaultModel: AppConfig.defaultChatGPTDictationCleanupModel
                         ) { val in controller.setChatGPTDictationCleanupModel(val) }
                     }
@@ -887,7 +887,7 @@ struct SettingsView: View {
                     settingsRow("Cleanup model", controlWidth: meetingControlWidth) {
                         settingsModelMenu(
                             currentModel: appState.config.chatGPTMeetingCleanupModel,
-                            presets: SummaryModelPreset.chatGPTModels,
+                            presets: SummaryModelPreset.chatGPTTranscriptCleanupModels,
                             defaultModel: AppConfig.defaultChatGPTMeetingCleanupModel
                         ) { val in controller.updateConfig { $0.chatGPTMeetingCleanupModel = val } }
                     }
@@ -1170,6 +1170,19 @@ struct SettingsView: View {
                     }
                     settingsDescription("At start time avoids early calendar-only prompts before you join.")
                 }
+
+                Divider().background(MuesliTheme.surfaceBorder)
+
+                settingsRow("Default action", controlWidth: meetingControlWidth) {
+                    settingsMenu(
+                        selection: appState.config.meetingJoinDefaultAction.buttonLabel,
+                        options: MeetingJoinDefaultAction.allCases.map(\.buttonLabel)
+                    ) { label in
+                        guard let action = meetingJoinDefaultAction(for: label) else { return }
+                        controller.updateConfig { $0.meetingJoinDefaultAction = action }
+                    }
+                }
+                settingsDescription("Primary button for notifications and Coming Up.")
 
                 Divider().background(MuesliTheme.surfaceBorder)
 
@@ -2895,6 +2908,14 @@ struct SettingsView: View {
             assertionFailure("Unexpected scheduled meeting notification lead time label: \(label)")
         }
         return leadTime
+    }
+
+    private func meetingJoinDefaultAction(for label: String) -> MeetingJoinDefaultAction? {
+        let action = MeetingJoinDefaultAction.allCases.first { $0.buttonLabel == label }
+        if action == nil {
+            assertionFailure("Unexpected meeting join default action label: \(label)")
+        }
+        return action
     }
 }
 

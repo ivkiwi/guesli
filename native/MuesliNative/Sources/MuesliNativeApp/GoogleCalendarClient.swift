@@ -15,6 +15,23 @@ struct MeetingParticipant: Equatable, Sendable {
         }
         return name
     }
+
+    var storageDraft: MeetingParticipantDraft? {
+        let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !displayName.isEmpty else { return nil }
+        let normalizedEmail = email?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "mailto:", with: "", options: [.anchored, .caseInsensitive])
+            .lowercased()
+        let usableEmail = normalizedEmail?.isEmpty == false ? normalizedEmail : nil
+        let identifier = usableEmail.map { "email:\($0)" }
+            ?? "calendar:\(displayName.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current))"
+        return MeetingParticipantDraft(
+            participantIdentifier: identifier,
+            displayName: displayName,
+            emailAddress: usableEmail
+        )
+    }
 }
 
 struct UnifiedCalendarEvent: Identifiable, Equatable {

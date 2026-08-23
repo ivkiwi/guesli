@@ -6,6 +6,21 @@ import Foundation
 @MainActor
 struct GoogleCalendarTests {
 
+    @Test("calendar participant storage normalizes mailto addresses")
+    func participantStorageDraft() throws {
+        let participant = MeetingParticipant(
+            name: " Alice Example ",
+            email: "MAILTO:Alice@Example.COM",
+            isOrganizer: false,
+            isSelf: false
+        )
+
+        let draft = try #require(participant.storageDraft)
+        #expect(draft.participantIdentifier == "email:alice@example.com")
+        #expect(draft.displayName == "Alice Example")
+        #expect(draft.emailAddress == "alice@example.com")
+    }
+
     // MARK: - Credentials parsing
 
     @Test("loads credentials from valid JSON")

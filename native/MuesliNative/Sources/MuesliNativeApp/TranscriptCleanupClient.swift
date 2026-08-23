@@ -379,7 +379,7 @@ enum ExternalTranscriptCleanupClient {
         systemPrompt: String,
         extraHeaders: [String: String]
     ) async throws -> String {
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "messages": [
                 ["role": "system", "content": systemPrompt],
@@ -387,6 +387,9 @@ enum ExternalTranscriptCleanupClient {
             ],
             "temperature": 0,
         ]
+        if let effort = SummaryModelPreset.reasoningEffort(for: model) {
+            body["reasoning_effort"] = effort
+        }
 
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"

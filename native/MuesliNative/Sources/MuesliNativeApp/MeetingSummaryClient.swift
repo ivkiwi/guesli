@@ -709,13 +709,14 @@ enum MeetingSummaryClient {
             manualNotes: manualNotes,
             visualContext: visualContext
         )
+        let model = config.openAIModel.isEmpty ? defaultOpenAIModel : config.openAIModel
         let body: [String: Any] = [
-            "model": config.openAIModel.isEmpty ? defaultOpenAIModel : config.openAIModel,
+            "model": model,
             "input": [
                 ["role": "system", "content": instructions],
                 ["role": "user", "content": userPrompt],
             ],
-            "reasoning": ["effort": "low"],
+            "reasoning": ["effort": SummaryModelPreset.reasoningEffort(for: model) ?? "low"],
             "text": ["verbosity": "low"],
             "max_output_tokens": defaultSummaryMaxOutputTokens,
         ]
@@ -1143,6 +1144,9 @@ enum MeetingSummaryClient {
                 ["role": "user", "content": userPrompt],
             ],
         ]
+        if let effort = SummaryModelPreset.reasoningEffort(for: model) {
+            body["reasoning"] = ["effort": effort]
+        }
         body[isOpenAI ? "max_completion_tokens" : "max_tokens"] = defaultSummaryMaxOutputTokens
 
         var request = URLRequest(url: requestURL)
@@ -1614,6 +1618,9 @@ enum MeetingSummaryClient {
         if let maxTokens {
             // OpenAI newer models require max_completion_tokens; OpenRouter uses max_tokens
             body[isOpenAI ? "max_completion_tokens" : "max_tokens"] = maxTokens
+        }
+        if isOpenAI, let effort = SummaryModelPreset.reasoningEffort(for: model) {
+            body["reasoning_effort"] = effort
         }
 
         var request = URLRequest(url: url)

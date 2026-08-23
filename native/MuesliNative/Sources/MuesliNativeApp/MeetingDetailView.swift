@@ -174,6 +174,7 @@ struct MeetingDetailView: View {
     @ViewBuilder
     private func header(_ meeting: MeetingRecord) -> some View {
         let appliedTemplate = controller.meetingTemplateSnapshot(for: meeting)
+        let participants = controller.meetingParticipants(meetingID: meeting.id)
         VStack(alignment: .leading, spacing: MuesliTheme.spacing16) {
             if let onBack {
                 Button(action: onBack) {
@@ -211,6 +212,23 @@ struct MeetingDetailView: View {
                     }
 
                     folderPill(for: meeting)
+
+                    if !participants.isEmpty {
+                        Label {
+                            Text(participants.map(\.displayName).joined(separator: ", "))
+                                .lineLimit(1)
+                                .help(
+                                    participants.map { participant in
+                                        participant.emailAddress.map { "\(participant.displayName) <\($0)>" }
+                                            ?? participant.displayName
+                                    }.joined(separator: "\n")
+                                )
+                        } icon: {
+                            Image(systemName: "person.2.fill")
+                        }
+                        .font(MuesliTheme.callout())
+                        .foregroundStyle(MuesliTheme.textSecondary)
+                    }
                 }
 
                 Spacer(minLength: MuesliTheme.spacing16)

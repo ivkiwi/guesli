@@ -2783,6 +2783,37 @@ struct DictationStoreTests {
         #expect(results.map(\.id).contains(id))
     }
 
+    @Test("calendar participants persist and are searchable")
+    func calendarParticipantsPersistAndSearch() throws {
+        let store = try makeStore()
+        let meetingID = try store.createLiveMeeting(
+            title: "Architecture Review",
+            calendarEventID: "event-1",
+            startTime: Date()
+        )
+
+        try store.attachCalendarMeetingParticipants(
+            meetingID: meetingID,
+            participants: [
+                MeetingParticipantDraft(
+                    participantIdentifier: "email:alice@example.com",
+                    displayName: "Alice Example",
+                    emailAddress: "alice@example.com"
+                ),
+                MeetingParticipantDraft(
+                    participantIdentifier: "email:bob@example.com",
+                    displayName: "Bob Builder",
+                    emailAddress: "bob@example.com"
+                )
+            ]
+        )
+
+        let participants = try store.listMeetingParticipants(meetingID: meetingID)
+        #expect(participants.map(\.displayName) == ["Alice Example", "Bob Builder"])
+        #expect(try store.searchMeetings(query: "Alice").map(\.id).contains(meetingID))
+        #expect(try store.searchMeetings(query: "bob@example.com").map(\.id).contains(meetingID))
+    }
+
     @Test("search is case-insensitive for ASCII")
     func searchCaseInsensitive() throws {
         let store = try makeStore()

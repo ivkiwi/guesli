@@ -117,6 +117,19 @@ public final class DictationStore {
         );
         CREATE INDEX IF NOT EXISTS idx_meetings_start_time ON meetings(start_time DESC);
 
+        CREATE TABLE IF NOT EXISTS meeting_participants (
+            meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            participant_identifier TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            email_address TEXT,
+            insertion_order INTEGER NOT NULL,
+            source TEXT NOT NULL DEFAULT 'calendar',
+            is_suppressed INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (meeting_id, participant_identifier)
+        );
+        CREATE INDEX IF NOT EXISTS idx_meeting_participants_order
+            ON meeting_participants(meeting_id, insertion_order);
+
         CREATE TABLE IF NOT EXISTS meeting_transcript_checkpoints (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
@@ -598,7 +611,21 @@ public final class DictationStore {
         let sql = """
         SELECT \(Self.meetingColumns)
         FROM meetings
-        WHERE deleted_at IS NULL AND (title LIKE ? ESCAPE '\\' OR raw_transcript LIKE ? ESCAPE '\\' OR formatted_notes LIKE ? ESCAPE '\\' OR manual_notes LIKE ? ESCAPE '\\')
+        WHERE deleted_at IS NULL AND (
+            title LIKE ? ESCAPE '\\'
+            OR raw_transcript LIKE ? ESCAPE '\\'
+            OR formatted_notes LIKE ? ESCAPE '\\'
+            OR manual_notes LIKE ? ESCAPE '\\'
+            OR EXISTS (
+                SELECT 1 FROM meeting_participants
+                WHERE meeting_participants.meeting_id = meetings.id
+                  AND meeting_participants.is_suppressed = 0
+                  AND (
+                    meeting_participants.display_name LIKE ? ESCAPE '\\'
+                    OR meeting_participants.email_address LIKE ? ESCAPE '\\'
+                  )
+            )
+        )
         ORDER BY id DESC
         LIMIT ?
         """
@@ -612,7 +639,9 @@ public final class DictationStore {
         sqlite3_bind_text(statement, 2, pattern.utf8String, -1, nil)
         sqlite3_bind_text(statement, 3, pattern.utf8String, -1, nil)
         sqlite3_bind_text(statement, 4, pattern.utf8String, -1, nil)
-        sqlite3_bind_int(statement, 5, Int32(limit))
+        sqlite3_bind_text(statement, 5, pattern.utf8String, -1, nil)
+        sqlite3_bind_text(statement, 6, pattern.utf8String, -1, nil)
+        sqlite3_bind_int(statement, 7, Int32(limit))
 
         var rows: [MeetingRecord] = []
         while sqlite3_step(statement) == SQLITE_ROW {
@@ -885,6 +914,101 @@ public final class DictationStore {
             totalMeetings: totalMeetings,
             averageWPM: totalDuration > 0 ? Double(totalWords) / (totalDuration / 60.0) : 0
         )
+    }
+
+    public func listMeetingParticipants(meetingID: Int64) throws -> [MeetingParticipantRecord] {
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+
+        let sql = """
+        SELECT participant_identifier, display_name, email_address, insertion_order
+        FROM meeting_participants
+        WHERE meeting_id = ? AND is_suppressed = 0
+        ORDER BY insertion_order, display_name COLLATE NOCASE
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, meetingID)
+
+        var participants: [MeetingParticipantRecord] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let identifier = String(cString: sqlite3_column_text(statement, 0))
+            let displayName = String(cString: sqlite3_column_text(statement, 1))
+            let emailAddress = sqlite3_column_text(statement, 2).map { String(cString: $0) }
+            participants.append(
+                MeetingParticipantRecord(
+                    meetingID: meetingID,
+                    participantIdentifier: identifier,
+                    displayName: displayName,
+                    emailAddress: emailAddress,
+                    insertionOrder: Int(sqlite3_column_int(statement, 3))
+                )
+            )
+        }
+        return participants
+    }
+
+    public func attachCalendarMeetingParticipants(
+        meetingID: Int64,
+        participants: [MeetingParticipantDraft]
+    ) throws {
+        let normalized = participants.compactMap { participant -> MeetingParticipantDraft? in
+            let identifier = participant.participantIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayName = participant.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !identifier.isEmpty, !displayName.isEmpty else { return nil }
+            let emailAddress = participant.emailAddress?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return MeetingParticipantDraft(
+                participantIdentifier: identifier,
+                displayName: displayName,
+                emailAddress: emailAddress?.isEmpty == false ? emailAddress : nil
+            )
+        }
+        guard !normalized.isEmpty else { return }
+
+        let db = try openDatabase()
+        defer { sqlite3_close(db) }
+        guard sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil) == SQLITE_OK else {
+            throw lastError(db)
+        }
+        do {
+            let sql = """
+            INSERT INTO meeting_participants
+                (meeting_id, participant_identifier, display_name, email_address, insertion_order, source, is_suppressed)
+            VALUES (?, ?, ?, ?, ?, 'calendar', 0)
+            ON CONFLICT(meeting_id, participant_identifier) DO UPDATE SET
+                display_name = excluded.display_name,
+                email_address = excluded.email_address,
+                insertion_order = excluded.insertion_order,
+                is_suppressed = 0
+            """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw lastError(db)
+            }
+            defer { sqlite3_finalize(statement) }
+
+            for (index, participant) in normalized.enumerated() {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+                sqlite3_bind_int64(statement, 1, meetingID)
+                sqlite3_bind_text(statement, 2, (participant.participantIdentifier as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(statement, 3, (participant.displayName as NSString).utf8String, -1, nil)
+                bindOptionalText(participant.emailAddress, at: 4, statement: statement)
+                sqlite3_bind_int(statement, 5, Int32(index))
+                guard sqlite3_step(statement) == SQLITE_DONE else {
+                    throw lastError(db)
+                }
+            }
+            guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
+                throw lastError(db)
+            }
+        } catch {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw error
+        }
     }
 
     public func deleteDictation(id: Int64) throws {

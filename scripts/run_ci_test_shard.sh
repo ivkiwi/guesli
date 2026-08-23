@@ -19,6 +19,7 @@ case "${shard}" in
       FloatingIndicatorVisibilityTests
       IndicatorFrameSizeTests
       OpenAILogoShapeTests
+      StandardMenuShortcutTests
       MeetingChunkCollectorTests
       AppConfigTests
       CGPointCodableTests
@@ -63,6 +64,7 @@ case "${shard}" in
       MeetingSummaryClientTests
       MeetingsNavigationTests
       MeetingBrowserLogicTests
+      MeetingNotesInlineMarkdownTests
       TranscriptFormatterTests
       MeetingSummaryBackendTests
       MeetingResummarizationPolicyTests

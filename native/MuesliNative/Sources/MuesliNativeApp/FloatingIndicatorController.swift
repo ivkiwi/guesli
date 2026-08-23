@@ -100,6 +100,7 @@ final class FloatingIndicatorController: NSObject {
     var onToggleMeetingPause: (() -> Void)?
     var onCancelToggleDictation: (() -> Void)?
     var onPositionSaved: ((CGPoint) -> Void)?
+    var onOpenMeetingNotes: (() -> Void)?
     var isToggleDictation = false
     private var stopLayer: CALayer?
     private var transcribingTitle = "Transcribing"
@@ -108,6 +109,18 @@ final class FloatingIndicatorController: NSObject {
     private var isShowingLoading = false
     private var isComputerUseCursorMode = false
     private var computerUseCursorReturnFrame: NSRect?
+    private var isMeetingTranscriptManuallyDismissed = false
+    private lazy var meetingTranscriptPanel = FloatingMeetingTranscriptPanelController(
+        onHoverChanged: { [weak self] hovered in
+            self?.setMeetingTranscriptPanelHovered(hovered)
+        },
+        onOpenNotes: { [weak self] in
+            self?.openMeetingNotesFromTranscript()
+        },
+        onDismiss: { [weak self] in
+            self?.dismissMeetingTranscript()
+        }
+    )
 
     private enum WaveformAnimationMode {
         case level
@@ -210,6 +223,8 @@ final class FloatingIndicatorController: NSObject {
         recordingWaveformMode = .level
         if !recording {
             isMeetingRecordingPaused = false
+            isMeetingTranscriptManuallyDismissed = false
+            meetingTranscriptPanel.hide(reset: true)
         }
         if recording {
             setState(.recording, config: config)
@@ -249,8 +264,17 @@ final class FloatingIndicatorController: NSObject {
     func setMeetingRecordingPaused(_ paused: Bool, config: AppConfig) {
         guard isMeetingRecordingPaused != paused else { return }
         isMeetingRecordingPaused = paused
+        meetingTranscriptPanel.setPaused(paused)
         guard isMeetingRecording, state == .recording else { return }
         setState(.recording, config: config)
+    }
+
+    func updateMeetingTranscript(transcript: String, partialYou: String, partialOthers: String) {
+        meetingTranscriptPanel.update(
+            transcript: transcript,
+            partialYou: partialYou,
+            partialOthers: partialOthers
+        )
     }
 
     func setTranscribingTitle(_ title: String, config: AppConfig) {
@@ -671,7 +695,19 @@ final class FloatingIndicatorController: NSObject {
     }
 
     func setHovered(_ hovered: Bool) {
-        guard state == .idle, !isShowingLoading, !isDragging, isHovered != hovered else { return }
+        guard !isShowingLoading, !isDragging else { return }
+        if state == .recording, isMeetingRecording {
+            hoverExitWorkItem?.cancel()
+            isHovered = hovered
+            if hovered, !isMeetingTranscriptManuallyDismissed, let indicatorFrame = panel?.frame {
+                meetingTranscriptPanel.show(beside: indicatorFrame)
+            } else if !hovered {
+                isMeetingTranscriptManuallyDismissed = false
+                meetingTranscriptPanel.hide()
+            }
+            return
+        }
+        guard state == .idle, isHovered != hovered else { return }
         hoverExitWorkItem?.cancel()
         isHovered = hovered
         let config = configStore.load()
@@ -679,11 +715,13 @@ final class FloatingIndicatorController: NSObject {
     }
 
     func scheduleHoverExit() {
-        guard state == .idle, !isShowingLoading, isHovered else { return }
+        guard (state == .idle || (state == .recording && isMeetingRecording)),
+              !isShowingLoading,
+              isHovered else { return }
         hoverExitWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            guard !self.pointerIsInsidePanel() else { return }
+            guard !self.pointerIsInsidePanel(), !self.meetingTranscriptPanel.containsMouseLocation else { return }
             self.setHovered(false)
         }
         hoverExitWorkItem = workItem
@@ -700,6 +738,7 @@ final class FloatingIndicatorController: NSObject {
         hoverExitWorkItem = nil
         panel?.close()
         panel = nil
+        meetingTranscriptPanel.close()
         contentView = nil
         iconLabel = nil
         textLabel = nil
@@ -707,6 +746,25 @@ final class FloatingIndicatorController: NSObject {
         tintLayer = nil
         micIconView = nil
         wandIconView = nil
+    }
+
+    private func setMeetingTranscriptPanelHovered(_ hovered: Bool) {
+        hoverExitWorkItem?.cancel()
+        if hovered {
+            isHovered = true
+        } else {
+            scheduleHoverExit()
+        }
+    }
+
+    private func dismissMeetingTranscript() {
+        isMeetingTranscriptManuallyDismissed = true
+        meetingTranscriptPanel.hide()
+    }
+
+    private func openMeetingNotesFromTranscript() {
+        meetingTranscriptPanel.hide()
+        onOpenMeetingNotes?()
     }
 
     // MARK: - Stop Layer (toggle dictation)

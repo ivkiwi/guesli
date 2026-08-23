@@ -293,7 +293,9 @@ struct SummaryModelPreset {
 
     static let openAIModels: [SummaryModelPreset] = [
         SummaryModelPreset(id: "gpt-5.4-mini", label: "GPT-5.4 Mini (default)"),
-        SummaryModelPreset(id: "gpt-5.5", label: "GPT-5.5"),
+        SummaryModelPreset(id: "gpt-5.6-sol", label: "GPT-5.6 Sol"),
+        SummaryModelPreset(id: "gpt-5.6-terra", label: "GPT-5.6 Terra"),
+        SummaryModelPreset(id: "gpt-5.6-luna", label: "GPT-5.6 Luna"),
         SummaryModelPreset(id: "gpt-5.4-nano", label: "GPT-5.4 Nano"),
         SummaryModelPreset(id: "gpt-5.4", label: "GPT-5.4"),
         SummaryModelPreset(id: "gpt-5.4-pro", label: "GPT-5.4 Pro"),
@@ -303,15 +305,26 @@ struct SummaryModelPreset {
 
     static let chatGPTModels: [SummaryModelPreset] = [
         SummaryModelPreset(id: "gpt-5.4-mini", label: "GPT-5.4 Mini (default)"),
-        SummaryModelPreset(id: "gpt-5.5", label: "GPT-5.5"),
+        SummaryModelPreset(id: "gpt-5.6-sol", label: "GPT-5.6 Sol"),
+        SummaryModelPreset(id: "gpt-5.6-terra", label: "GPT-5.6 Terra"),
+        SummaryModelPreset(id: "gpt-5.6-luna", label: "GPT-5.6 Luna"),
         SummaryModelPreset(id: "gpt-5.4-nano", label: "GPT-5.4 Nano"),
         SummaryModelPreset(id: "gpt-5.4", label: "GPT-5.4"),
         SummaryModelPreset(id: "gpt-5.2", label: "GPT-5.2"),
         SummaryModelPreset(id: "gpt-4o", label: "GPT-4o"),
     ]
 
+    static let chatGPTTranscriptCleanupModels: [SummaryModelPreset] = [
+        SummaryModelPreset(id: "gpt-5.6-terra", label: "GPT-5.6 Terra (default)"),
+        SummaryModelPreset(id: "gpt-5.4-mini", label: "GPT-5.4 Mini"),
+        SummaryModelPreset(id: "gpt-5.6-sol", label: "GPT-5.6 Sol"),
+        SummaryModelPreset(id: "gpt-5.6-luna", label: "GPT-5.6 Luna"),
+    ]
+
     static let computerUsePlannerModels: [SummaryModelPreset] = [
-        SummaryModelPreset(id: "gpt-5.5", label: "GPT-5.5 (default)"),
+        SummaryModelPreset(id: "gpt-5.6-sol", label: "GPT-5.6 Sol (default)"),
+        SummaryModelPreset(id: "gpt-5.6-terra", label: "GPT-5.6 Terra"),
+        SummaryModelPreset(id: "gpt-5.6-luna", label: "GPT-5.6 Luna"),
         SummaryModelPreset(id: "gpt-5.4", label: "GPT-5.4"),
         SummaryModelPreset(id: "gpt-5.4-mini", label: "GPT-5.4 Mini"),
         SummaryModelPreset(id: "gpt-5.2", label: "GPT-5.2"),
@@ -329,6 +342,21 @@ struct SummaryModelPreset {
         guard !trimmedModel.isEmpty else { return presets }
         guard !presets.contains(where: { $0.id == trimmedModel }) else { return presets }
         return presets + [SummaryModelPreset(id: trimmedModel, label: "Custom: \(trimmedModel)")]
+    }
+
+    static func reasoningEffort(for model: String) -> String? {
+        switch model.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+            return "high"
+        default:
+            return nil
+        }
+    }
+
+    static func migratedFromGPT55(_ model: String) -> String {
+        model.trimmingCharacters(in: .whitespacesAndNewlines) == "gpt-5.5"
+            ? "gpt-5.6-sol"
+            : model
     }
 }
 
@@ -1029,8 +1057,8 @@ enum MeetingProcessingMode: String, Codable, CaseIterable, Sendable {
 }
 
 struct AppConfig: Codable {
-    static let defaultChatGPTDictationCleanupModel = "gpt-5.4-nano"
-    static let defaultChatGPTMeetingCleanupModel = "gpt-5.4-mini"
+    static let defaultChatGPTDictationCleanupModel = "gpt-5.6-terra"
+    static let defaultChatGPTMeetingCleanupModel = "gpt-5.6-terra"
 
     var dictationHotkey: HotkeyConfig = .default
     var computerUseHotkey: HotkeyConfig = .computerUseDefault
@@ -1060,6 +1088,7 @@ struct AppConfig: Codable {
     var upcomingMeetingsDayCount: Int = UpcomingMeetingsWindow.defaultDayCount
     var showScheduledMeetingNotifications: Bool = true
     var scheduledMeetingNotificationLeadTime: ScheduledMeetingNotificationLeadTime = .atStart
+    var meetingJoinDefaultAction: MeetingJoinDefaultAction = .fallback
     var showMeetingDetectionNotification: Bool = true
     var mutedMeetingDetectionAppBundleIDs: [String] = []
     var meetingRecordingSavePolicy: MeetingRecordingSavePolicy = .never
@@ -1172,6 +1201,7 @@ struct AppConfig: Codable {
         case upcomingMeetingsDayCount = "upcoming_meetings_day_count"
         case showScheduledMeetingNotifications = "show_scheduled_meeting_notifications"
         case scheduledMeetingNotificationLeadTime = "scheduled_meeting_notification_lead_time"
+        case meetingJoinDefaultAction = "meeting_join_default_action"
         case showMeetingDetectionNotification = "show_meeting_detection_notification"
         case mutedMeetingDetectionAppBundleIDs = "muted_meeting_detection_app_bundle_ids"
         case meetingRecordingSavePolicy = "meeting_recording_save_policy"
@@ -1270,7 +1300,9 @@ struct AppConfig: Codable {
         meetingRecordingHotkey = (try? c.decode(HotkeyConfig.self, forKey: .meetingRecordingHotkey)) ?? defaults.meetingRecordingHotkey
         enableMeetingRecordingHotkey = (try? c.decode(Bool.self, forKey: .enableMeetingRecordingHotkey)) ?? defaults.enableMeetingRecordingHotkey
         enableComputerUsePlanner = (try? c.decode(Bool.self, forKey: .enableComputerUsePlanner)) ?? defaults.enableComputerUsePlanner
-        computerUsePlannerModel = (try? c.decode(String.self, forKey: .computerUsePlannerModel)) ?? defaults.computerUsePlannerModel
+        computerUsePlannerModel = SummaryModelPreset.migratedFromGPT55(
+            (try? c.decode(String.self, forKey: .computerUsePlannerModel)) ?? defaults.computerUsePlannerModel
+        )
         computerUseTimeoutSeconds = (try? c.decode(Int.self, forKey: .computerUseTimeoutSeconds)) ?? defaults.computerUseTimeoutSeconds
         sttBackend = (try? c.decode(String.self, forKey: .sttBackend)) ?? defaults.sttBackend
         sttModel = (try? c.decode(String.self, forKey: .sttModel)) ?? defaults.sttModel
@@ -1311,6 +1343,9 @@ struct AppConfig: Codable {
         scheduledMeetingNotificationLeadTime =
             (try? c.decode(ScheduledMeetingNotificationLeadTime.self, forKey: .scheduledMeetingNotificationLeadTime))
             ?? defaults.scheduledMeetingNotificationLeadTime
+        meetingJoinDefaultAction =
+            (try? c.decode(MeetingJoinDefaultAction.self, forKey: .meetingJoinDefaultAction))
+            ?? defaults.meetingJoinDefaultAction
         showMeetingDetectionNotification = decodedShowMeetingDetectionNotification ?? defaults.showMeetingDetectionNotification
         mutedMeetingDetectionAppBundleIDs = (try? c.decode([String].self, forKey: .mutedMeetingDetectionAppBundleIDs)) ?? defaults.mutedMeetingDetectionAppBundleIDs
         meetingRecordingSavePolicy = (try? c.decode(MeetingRecordingSavePolicy.self, forKey: .meetingRecordingSavePolicy)) ?? defaults.meetingRecordingSavePolicy
@@ -1342,11 +1377,19 @@ struct AppConfig: Codable {
         indicatorOrigin = try? c.decode(CGPointCodable.self, forKey: .indicatorOrigin)
         openAIAPIKey = (try? c.decode(String.self, forKey: .openAIAPIKey)) ?? defaults.openAIAPIKey
         openRouterAPIKey = (try? c.decode(String.self, forKey: .openRouterAPIKey)) ?? defaults.openRouterAPIKey
-        openAIModel = (try? c.decode(String.self, forKey: .openAIModel)) ?? defaults.openAIModel
+        openAIModel = SummaryModelPreset.migratedFromGPT55(
+            (try? c.decode(String.self, forKey: .openAIModel)) ?? defaults.openAIModel
+        )
         openRouterModel = (try? c.decode(String.self, forKey: .openRouterModel)) ?? defaults.openRouterModel
-        chatGPTModel = (try? c.decode(String.self, forKey: .chatGPTModel)) ?? defaults.chatGPTModel
-        chatGPTDictationCleanupModel = (try? c.decode(String.self, forKey: .chatGPTDictationCleanupModel)) ?? defaults.chatGPTDictationCleanupModel
-        chatGPTMeetingCleanupModel = (try? c.decode(String.self, forKey: .chatGPTMeetingCleanupModel)) ?? defaults.chatGPTMeetingCleanupModel
+        chatGPTModel = SummaryModelPreset.migratedFromGPT55(
+            (try? c.decode(String.self, forKey: .chatGPTModel)) ?? defaults.chatGPTModel
+        )
+        chatGPTDictationCleanupModel = SummaryModelPreset.migratedFromGPT55(
+            (try? c.decode(String.self, forKey: .chatGPTDictationCleanupModel)) ?? defaults.chatGPTDictationCleanupModel
+        )
+        chatGPTMeetingCleanupModel = SummaryModelPreset.migratedFromGPT55(
+            (try? c.decode(String.self, forKey: .chatGPTMeetingCleanupModel)) ?? defaults.chatGPTMeetingCleanupModel
+        )
         meetingSummaryRetryCount = MeetingSummaryRetryPolicy.clampedRetryCount(
             (try? c.decode(Int.self, forKey: .meetingSummaryRetryCount)) ?? defaults.meetingSummaryRetryCount
         )

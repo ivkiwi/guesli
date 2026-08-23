@@ -693,6 +693,10 @@ final class MuesliController: NSObject {
         indicator.onStopMeeting = { [weak self] in self?.stopMeetingRecording() }
         indicator.onDiscardMeeting = { [weak self] in self?.discardMeetingWithConfirmation() }
         indicator.onToggleMeetingPause = { [weak self] in self?.toggleMeetingRecordingPause() }
+        indicator.onOpenMeetingNotes = { [weak self] in
+            guard let self, let meetingID = self.activeMeetingID else { return }
+            self.showMeetingDocument(id: meetingID)
+        }
         indicator.onStopToggleDictation = { [weak self] in
             guard let self else { return }
             if self.hotkeyMonitor.isToggleRecording {
@@ -973,6 +977,10 @@ final class MuesliController: NSObject {
             return row
         }
         return try? dictationStore.meeting(id: id)
+    }
+
+    func meetingParticipants(meetingID: Int64) -> [MeetingParticipantRecord] {
+        (try? dictationStore.listMeetingParticipants(meetingID: meetingID)) ?? []
     }
 
     func dictationStats() -> DictationStats {
@@ -2944,23 +2952,22 @@ final class MuesliController: NSObject {
             return false
         }
         isShowingCalendarNotification = true
-        let autoStopSource = meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) }
 
         let didShow = meetingNotification.show(
             title: "Meeting starting now",
             subtitle: title,
             meetingURL: meetingURL,
             dismissAfter: 30,
+            defaultAction: config.meetingJoinDefaultAction,
             onStartRecording: { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
-                self.startForegroundMeetingRecording(
+                self.recordOnly(
                     title: title,
-                    calendarOccurrence: calendarOccurrence,
+                    meetingURL: meetingURL,
                     endDate: endDate,
-                    autoStopSource: autoStopSource,
-                    presentation: .backgroundPill,
-                    startOrigin: .scheduledMeetingPrompt
+                    calendarOccurrence: calendarOccurrence,
+                    presentation: .backgroundPill
                 )
             },
             onJoinAndRecord: meetingURL != nil ? { [weak self] in
@@ -5392,6 +5399,22 @@ final class MuesliController: NSObject {
         let resolvedParticipantCandidates = participantCandidates.isEmpty
             ? self.participantCandidates(forCalendarEventID: resolvedCalendarEventID)
             : participantCandidates
+        var seenParticipantIdentifiers = Set<String>()
+        let participantDrafts = resolvedParticipantCandidates.compactMap { participant -> MeetingParticipantDraft? in
+            guard let draft = participant.storageDraft,
+                  seenParticipantIdentifiers.insert(draft.participantIdentifier).inserted else { return nil }
+            return draft
+        }
+        if !participantDrafts.isEmpty {
+            do {
+                try dictationStore.attachCalendarMeetingParticipants(
+                    meetingID: meetingID,
+                    participants: participantDrafts
+                )
+            } catch {
+                DiagnosticsLog.write("[calendar] participant persistence failed meeting_id=\(meetingID) error=\(error.localizedDescription)")
+            }
+        }
         isStartingMeetingRecording = true
         // Keep this after backend normalization and live-meeting creation so
         // a failed meeting start does not silently cancel an active dictation.
@@ -5792,6 +5815,11 @@ final class MuesliController: NSObject {
                             fputs("[muesli-native] failed to checkpoint live transcript for meeting \(meetingID): \(error)\n", stderr)
                         }
                         self.appState.liveMeetingTranscript += LiveTranscriptCheckpointAssembler.renderedText(from: entries) + "\n"
+                        self.indicator.updateMeetingTranscript(
+                            transcript: self.appState.liveMeetingTranscript,
+                            partialYou: self.appState.liveMeetingPartialYou,
+                            partialOthers: self.appState.liveMeetingPartialOthers
+                        )
                     }
                 }
                 meetingSession.onLivePartialsChanged = { [weak self] you, others in
@@ -5800,12 +5828,18 @@ final class MuesliController: NSObject {
                               self.appState.liveMeetingTranscriptOwnerID == meetingID else { return }
                         self.appState.liveMeetingPartialYou = you
                         self.appState.liveMeetingPartialOthers = others
+                        self.indicator.updateMeetingTranscript(
+                            transcript: self.appState.liveMeetingTranscript,
+                            partialYou: you,
+                            partialOthers: others
+                        )
                     }
                 }
                 appState.liveMeetingTranscriptOwnerID = meetingID
                 appState.liveMeetingTranscript = ""
                 appState.liveMeetingPartialYou = ""
                 appState.liveMeetingPartialOthers = ""
+                indicator.updateMeetingTranscript(transcript: "", partialYou: "", partialOthers: "")
                 liveTranscriptOverlapByMeetingSpeaker.removeAll()
                 let micHealthWarningLock = NSLock()
                 var lastForwardedMicHealthWarning: String?
@@ -5945,6 +5979,26 @@ final class MuesliController: NSObject {
                 )
             }
         }
+    }
+
+    /// Start recording without opening the meeting URL — for people who join calls in
+    /// a separate browser or client.
+    /// Single entry point for "Record Only" from both notification panel and Coming Up section.
+    func recordOnly(
+        title: String,
+        meetingURL: URL?,
+        endDate: Date?,
+        calendarOccurrence: CalendarOccurrenceReference? = nil,
+        presentation: MeetingStartPresentation = .foregroundNotes
+    ) {
+        startForegroundMeetingRecording(
+            title: title,
+            calendarOccurrence: calendarOccurrence,
+            endDate: endDate,
+            autoStopSource: meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) },
+            presentation: presentation,
+            startOrigin: .scheduledMeetingPrompt
+        )
     }
 
     /// Open meeting URL and suppress detection for the event duration.
@@ -9031,7 +9085,6 @@ final class MuesliController: NSObject {
         let calendarEndDate = calendarEvent?.endDate
         let meetingURL = event.meetingURL ?? calendarEvent?.meetingURL
         let calendarOccurrence = event.calendarOccurrence ?? calendarEvent?.resolvedCalendarOccurrence
-        let autoStopSource = meetingURL.flatMap { MeetingAutoStopSource(meetingURL: $0) }
 
         // Show notification panel for calendar events (if not auto-recording)
         guard config.showScheduledMeetingNotifications,
@@ -9058,17 +9111,17 @@ final class MuesliController: NSObject {
             title: notificationTitle,
             subtitle: "\(title) · \(timeLabel)",
             meetingURL: meetingURL,
+            defaultAction: config.meetingJoinDefaultAction,
             onStartRecording: { [weak self] in
                 guard let self else { return }
                 self.isShowingCalendarNotification = false
                 self.cancelMeetingStartingNowTimer(notificationKey: notificationKey)
-                self.startForegroundMeetingRecording(
+                self.recordOnly(
                     title: title,
-                    calendarOccurrence: calendarOccurrence,
+                    meetingURL: meetingURL,
                     endDate: calendarEndDate,
-                    autoStopSource: autoStopSource,
-                    presentation: .backgroundPill,
-                    startOrigin: .scheduledMeetingPrompt
+                    calendarOccurrence: calendarOccurrence,
+                    presentation: .backgroundPill
                 )
             },
             onJoinAndRecord: meetingURL != nil ? { [weak self] in
