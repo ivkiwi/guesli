@@ -647,6 +647,14 @@ final class MeetingSession {
     var stopIntakeRequestedForTesting: Bool {
         stopIntakeRequested.load(ordering: .acquiring)
     }
+
+    var systemAudioWatchdogIsRunningForTesting: Bool {
+        systemAudioWatchdogTimer != nil
+    }
+
+    func tickSystemAudioWatchdogForTesting() {
+        systemAudioWatchdog.tick()
+    }
 #endif
 
     private func noteStopPhaseForTesting(_ phase: String) {
@@ -993,8 +1001,10 @@ final class MeetingSession {
             try meetingMicRecorder.prepare()
             let captureStartGeneration = try await startSystemAudioWithTimeout()
             try startMicrophoneIfCaptureStartIsCurrent(captureStartGeneration)
+            startSystemAudioWatchdog()
         } catch {
             cancelPendingCaptureStart()
+            stopSystemAudioWatchdog()
             stopIntakeRequested.store(true, ordering: .releasing)
             meetingMicRecorder.onRawPCMSamples = nil
             systemAudioRecorder.onPCMSamples = nil
@@ -2737,6 +2747,7 @@ final class MeetingSession {
 
             let healthSnapshot = self.micHealthTracker.noteRawMicSamples(rawSamples)
             self.onMicHealthChanged?(healthSnapshot)
+            self.micRecoveryCoordinator.process(healthSnapshot)
             self.postModeTrackWriter?.appendMic(rawSamples)
             self.livePartialSessions().mic?.enqueue(rawSamples.map { Float($0) / 32767.0 })
         }
@@ -2753,6 +2764,7 @@ final class MeetingSession {
 
             let healthSnapshot = self.micHealthTracker.noteSystemSamples(samples)
             self.onMicHealthChanged?(healthSnapshot)
+            self.micRecoveryCoordinator.process(healthSnapshot)
             self.postModeTrackWriter?.appendSystem(samples)
             self.livePartialSessions().system?.enqueue(samples.map { Float($0) / 32767.0 })
         }
