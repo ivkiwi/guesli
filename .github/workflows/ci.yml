@@ -48,6 +48,7 @@ jobs:
       - run: ./scripts/test_classify_changed_files.sh
       - run: python3 ./scripts/test_merge_appcast_item.py
       - run: ./scripts/test_localvqe_runtime_validation.sh
+      - run: ./scripts/test_release_workflow_security.sh
 
   # Release build — validate the app product compiles in release mode
   build_release:

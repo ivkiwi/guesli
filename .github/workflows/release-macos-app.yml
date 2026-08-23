@@ -8,13 +8,28 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write
-
 jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require successful CI gate for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/require_successful_ci_gate.sh
+
   build-and-release:
+    needs: authorize
     runs-on: macos-26
     timeout-minutes: 60
+    permissions:
+      contents: write
 
     steps:
       - name: Check out repository
@@ -23,18 +38,17 @@ jobs:
       - name: Compute release metadata
         id: meta
         shell: bash
+        env:
+          MUESLI_RELEASE_VERSION: ${{ inputs.version }}
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             echo "This workflow publishes branch builds only." >&2
             exit 1
           fi
 
-          VERSION="${{ github.event.inputs.version }}"
-          if [[ -z "$VERSION" ]]; then
-            VERSION="0.0.0-beta.${GITHUB_RUN_NUMBER}"
-          fi
+          VERSION="$(./scripts/release_version.sh)"
           BUNDLE_VERSION="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
-          SAFE_VERSION="${VERSION//[^A-Za-z0-9._-]/-}"
+          SAFE_VERSION="$VERSION"
           TAG_NAME="beta-${SAFE_VERSION}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           RELEASE_TITLE="Guesli Beta ${VERSION}"
           PRERELEASE="true"
