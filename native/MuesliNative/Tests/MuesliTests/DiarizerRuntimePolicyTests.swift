@@ -175,6 +175,46 @@ struct ASRHelperPreloadCoordinationTests {
         })
     }
 
+    @Test("non-cooperative timed-out load detaches and allows retry")
+    func nonCooperativeTimedOutLoadAllowsRetry() async {
+        let attempts = TestLockedBox(0)
+        let completions = TestLockedBox(0)
+        let firstAttemptGate = Gate()
+        let coordinator = TranscriptionCoordinator(
+            diarizerModelLoader: { _ in
+                let attempt = attempts.withLock {
+                    $0 += 1
+                    return $0
+                }
+                if attempt == 1 {
+                    await firstAttemptGate.wait()
+                }
+                completions.withLock { $0 += 1 }
+                throw TestError.failed
+            },
+            diarizerLoadOperationTimeout: .milliseconds(20)
+        )
+
+        await coordinator.preloadDiarizer(waitTimeout: .seconds(1))
+        #expect(await waitUntil {
+            let state = await coordinator.helperPreloadStateForTesting()
+            return attempts.withLock { $0 == 1 } && !state.diarizerLoading
+        })
+
+        await coordinator.preloadDiarizer(waitTimeout: .seconds(1))
+        #expect(await waitUntil {
+            let state = await coordinator.helperPreloadStateForTesting()
+            return attempts.withLock { $0 == 2 } && !state.diarizerLoading
+        })
+
+        await firstAttemptGate.release()
+        #expect(await waitUntil {
+            completions.withLock { $0 == 2 }
+        })
+        #expect(!(await coordinator.helperPreloadStateForTesting().diarizerLoading))
+        #expect(attempts.withLock { $0 } == 2)
+    }
+
     private func waitUntil(
         timeout: Duration = .seconds(5),
         condition: @escaping @Sendable () async -> Bool

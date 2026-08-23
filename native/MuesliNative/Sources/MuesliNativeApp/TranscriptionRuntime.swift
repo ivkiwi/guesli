@@ -469,8 +469,12 @@ actor TranscriptionCoordinator {
 
     private func timeoutDiarizerLoad(id: UUID) {
         guard activeDiarizerLoadID == id else { return }
-        didDiarizerLoadTimeOut = true
-        diarizerLoadTask?.cancel()
+        let timedOutTask = diarizerLoadTask
+        activeDiarizerLoadID = nil
+        diarizerLoadTask = nil
+        diarizerLoadTimeoutTask = nil
+        didDiarizerLoadTimeOut = false
+        timedOutTask?.cancel()
         resumeAllDiarizerLoadWaiters(with: .timedOut)
     }
 
