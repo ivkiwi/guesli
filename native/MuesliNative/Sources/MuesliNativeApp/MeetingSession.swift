@@ -247,6 +247,34 @@ struct MeetingSessionResult {
         self.templateSnapshot = templateSnapshot
         self.liveCollectorDrainTimeoutDroppedChunkCount = liveCollectorDrainTimeoutDroppedChunkCount
     }
+
+    func overriding(
+        startTime: Date? = nil,
+        durationSeconds: Double? = nil,
+        rawTranscript: String? = nil,
+        rawOriginalTranscript: String? = nil,
+        formattedNotes: String? = nil
+    ) -> MeetingSessionResult {
+        MeetingSessionResult(
+            title: title,
+            originalTitle: originalTitle,
+            calendarEventID: calendarEventID,
+            startTime: startTime ?? self.startTime,
+            endTime: endTime,
+            durationSeconds: durationSeconds ?? self.durationSeconds,
+            rawTranscript: rawTranscript ?? self.rawTranscript,
+            rawOriginalTranscript: rawOriginalTranscript ?? self.rawOriginalTranscript,
+            formattedNotes: formattedNotes ?? self.formattedNotes,
+            retainedRecordingURL: retainedRecordingURL,
+            retainedRecordingError: retainedRecordingError,
+            retainedRecordingSavedURL: retainedRecordingSavedURL,
+            systemRecordingURL: systemRecordingURL,
+            sourceMicRecordingURL: sourceMicRecordingURL,
+            sourceSystemRecordingURL: sourceSystemRecordingURL,
+            templateSnapshot: templateSnapshot,
+            liveCollectorDrainTimeoutDroppedChunkCount: liveCollectorDrainTimeoutDroppedChunkCount
+        )
+    }
 }
 
 struct RetainedMeetingRecordingFinalizeRequest: Sendable {
@@ -415,6 +443,8 @@ final class MeetingSession {
     var onMicHealthChanged: ((MeetingMicHealthSnapshot) -> Void)?
     var manualNotesProvider: (() async -> String?)?
     var liveTitleProvider: (() async -> String?)?
+    var previousMeetingNotes: String?
+    var templateSnapshotOverride: MeetingTemplateSnapshot?
     var onRetainedRecordingReady: ((RetainedMeetingRecordingFinalizeRequest) async throws -> URL?)?
     var onPostMeetingRecordingReady: ((PostMeetingRecordingFinalizeRequest) async throws -> PersistedPostMeetingRecording?)?
     var onChunkTranscribed: (([SpeechSegment], String) -> Void)?
@@ -1384,7 +1414,7 @@ final class MeetingSession {
             }
         }
 
-        let templateSnapshot = MeetingTemplates.resolveSnapshot(
+        let templateSnapshot = templateSnapshotOverride ?? MeetingTemplates.resolveSnapshot(
             id: config.defaultMeetingTemplateID,
             customTemplates: config.customMeetingTemplates
         )
@@ -1461,7 +1491,10 @@ final class MeetingSession {
             durationSeconds: max(endTime.timeIntervalSince(meetingStart), 0),
             rawTranscript: finalTranscript,
             rawOriginalTranscript: cleanupResult.originalTranscript,
-            formattedNotes: formattedNotes,
+            formattedNotes: MeetingFollowUpPolicy.locallyCombinedNotes(
+                previous: previousMeetingNotes,
+                current: formattedNotes
+            ),
             retainedRecordingURL: retainedRecordingURL,
             retainedRecordingError: retainedRecordingWriterError,
             retainedRecordingSavedURL: retainedRecordingSavedURL,
@@ -1650,7 +1683,7 @@ final class MeetingSession {
             }
         }
 
-        let templateSnapshot = MeetingTemplates.resolveSnapshot(
+        let templateSnapshot = templateSnapshotOverride ?? MeetingTemplates.resolveSnapshot(
             id: config.defaultMeetingTemplateID,
             customTemplates: config.customMeetingTemplates
         )
@@ -1727,7 +1760,10 @@ final class MeetingSession {
             durationSeconds: max(endTime.timeIntervalSince(meetingStart), 0),
             rawTranscript: finalTranscript,
             rawOriginalTranscript: cleanupResult.originalTranscript,
-            formattedNotes: formattedNotes,
+            formattedNotes: MeetingFollowUpPolicy.locallyCombinedNotes(
+                previous: previousMeetingNotes,
+                current: formattedNotes
+            ),
             retainedRecordingURL: retainedRecordingURL,
             retainedRecordingError: retainedRecordingWriterError,
             retainedRecordingSavedURL: retainedRecordingSavedURL,

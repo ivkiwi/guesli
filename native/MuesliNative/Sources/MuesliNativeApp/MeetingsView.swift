@@ -191,6 +191,10 @@ struct MeetingsView: View {
         )
     }
 
+    private var meetingIDsWithFollowUps: Set<Int64> {
+        Set(scopedMeetings.compactMap(\.followUpToID))
+    }
+
     private var currentFolderName: String {
         guard let folderID = appState.selectedFolderID else { return "All Meetings" }
         return appState.folders.first(where: { $0.id == folderID })?.name ?? "All Meetings"
@@ -262,11 +266,13 @@ struct MeetingsView: View {
                 if filteredMeetings.isEmpty {
                     emptyState
                 } else {
+                    let meetingIDsWithFollowUps = self.meetingIDsWithFollowUps
                     LazyVStack(spacing: MuesliTheme.spacing12) {
                         ForEach(filteredMeetings) { meeting in
                             MeetingListItemView(
                                 record: meeting,
                                 isSelected: appState.selectedMeetingID == meeting.id,
+                                hasFollowUps: meetingIDsWithFollowUps.contains(meeting.id),
                                 folders: appState.folders,
                                 onSelect: { controller.showMeetingDocument(id: meeting.id) },
                                 onMove: { folderID in
