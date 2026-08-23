@@ -136,6 +136,88 @@ enum MeetingSummaryRetryPolicy {
     }
 }
 
+private final class SummaryTimeoutController: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<String, Error>?
+    private var operationTask: Task<Void, Never>?
+    private var timeoutTask: Task<Void, Never>?
+    private var pendingResult: Result<String, Error>?
+
+    func start(
+        continuation: CheckedContinuation<String, Error>,
+        seconds: TimeInterval,
+        onCancel: @escaping @Sendable () -> Void,
+        operation: @escaping () async throws -> String
+    ) {
+        lock.lock()
+        if let pendingResult {
+            self.pendingResult = nil
+            lock.unlock()
+            continuation.resume(with: pendingResult)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+
+        let operationTask = Task { [weak self] in
+            do {
+                self?.finish(.success(try await operation()))
+            } catch {
+                self?.finish(.failure(error))
+            }
+        }
+        let timeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            } catch {
+                return
+            }
+            guard self?.finish(.failure(MeetingSummaryError.requestFailed(
+                backend: "Summary",
+                underlying: URLError(.timedOut)
+            ))) == true else { return }
+            operationTask.cancel()
+            onCancel()
+        }
+
+        lock.lock()
+        if self.continuation == nil {
+            lock.unlock()
+            operationTask.cancel()
+            timeoutTask.cancel()
+            return
+        }
+        self.operationTask = operationTask
+        self.timeoutTask = timeoutTask
+        lock.unlock()
+    }
+
+    @discardableResult
+    func finish(_ result: Result<String, Error>) -> Bool {
+        lock.lock()
+        guard let continuation else {
+            if operationTask == nil, timeoutTask == nil, pendingResult == nil {
+                pendingResult = result
+                lock.unlock()
+                return true
+            }
+            lock.unlock()
+            return false
+        }
+        self.continuation = nil
+        let operationTask = self.operationTask
+        let timeoutTask = self.timeoutTask
+        self.operationTask = nil
+        self.timeoutTask = nil
+        lock.unlock()
+
+        operationTask?.cancel()
+        timeoutTask?.cancel()
+        continuation.resume(with: result)
+        return true
+    }
+}
+
 enum MeetingSummaryClient {
     private static let logger = Logger(subsystem: "com.muesli.native", category: "MeetingSummary")
     private static let openAIURL = URL(string: "https://api.openai.com/v1/responses")!
@@ -203,21 +285,28 @@ enum MeetingSummaryClient {
         visualContext: String? = nil
     ) async throws -> String {
         let localBackend = usesLocalSummaryRetryPolicy(config: config)
-        return try await withSummaryTimeout(seconds: summaryTotalTimeout) {
-            try await withSummaryRetries(
-                maxRetries: config.meetingSummaryRetryCount,
-                localBackend: localBackend,
-                attemptTimeout: localBackend ? localSummaryAttemptTimeout : remoteSummaryAttemptTimeout
-            ) {
-                try await summarizeOnce(
-                    transcript: transcript,
-                    meetingTitle: meetingTitle,
-                    config: config,
-                    template: template,
-                    existingNotes: existingNotes,
-                    manualNotesToRetain: manualNotesToRetain,
-                    visualContext: visualContext
-                )
+        let backend = config.meetingSummaryBackend.isEmpty
+            ? MeetingSummaryBackendOption.chatGPT.backend
+            : config.meetingSummaryBackend
+        return try await timedSummaryStage("total backend=\(backend)") {
+            try await withSummaryTimeout(seconds: summaryTotalTimeout) {
+                try await withSummaryRetries(
+                    maxRetries: config.meetingSummaryRetryCount,
+                    localBackend: localBackend,
+                    attemptTimeout: localBackend ? localSummaryAttemptTimeout : remoteSummaryAttemptTimeout
+                ) {
+                    try await timedSummaryStage("backend_request backend=\(backend)") {
+                        try await summarizeOnce(
+                            transcript: transcript,
+                            meetingTitle: meetingTitle,
+                            config: config,
+                            template: template,
+                            existingNotes: existingNotes,
+                            manualNotesToRetain: manualNotesToRetain,
+                            visualContext: visualContext
+                        )
+                    }
+                }
             }
         }
     }
@@ -234,12 +323,18 @@ enum MeetingSummaryClient {
         let retryCount = MeetingSummaryRetryPolicy.clampedRetryCount(maxRetries)
         var attempt = 0
         while true {
+            let startedAt = ContinuousClock.now
             do {
                 if let attemptTimeout {
-                    return try await withSummaryTimeout(seconds: attemptTimeout, operation: operation)
+                    let result = try await withSummaryTimeout(seconds: attemptTimeout, operation: operation)
+                    logSummaryTiming(stage: "attempt", startedAt: startedAt, outcome: "ok", attempt: attempt + 1)
+                    return result
                 }
-                return try await operation()
+                let result = try await operation()
+                logSummaryTiming(stage: "attempt", startedAt: startedAt, outcome: "ok", attempt: attempt + 1)
+                return result
             } catch {
+                logSummaryTiming(stage: "attempt", startedAt: startedAt, outcome: "failed", attempt: attempt + 1)
                 let effectiveRetryCount = MeetingSummaryRetryPolicy.effectiveRetryCount(
                     configuredCount: retryCount,
                     after: error,
@@ -257,24 +352,56 @@ enum MeetingSummaryClient {
 
     static func withSummaryTimeout(
         seconds: TimeInterval,
+        onCancel: @escaping @Sendable () -> Void = {},
         operation: @escaping () async throws -> String
     ) async throws -> String {
         let boundedSeconds = min(max(seconds, 0.001), 86_400)
-        return try await withThrowingTaskGroup(of: String.self) { group in
-            group.addTask { try await operation() }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(boundedSeconds * 1_000_000_000))
-                throw MeetingSummaryError.requestFailed(
-                    backend: "Summary",
-                    underlying: URLError(.timedOut)
+        let controller = SummaryTimeoutController()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                controller.start(
+                    continuation: continuation,
+                    seconds: boundedSeconds,
+                    onCancel: onCancel,
+                    operation: operation
                 )
             }
-            defer { group.cancelAll() }
-            guard let result = try await group.next() else {
-                throw CancellationError()
+        } onCancel: {
+            if controller.finish(.failure(CancellationError())) {
+                onCancel()
             }
-            return result
         }
+    }
+
+    private static func timedSummaryStage<T>(
+        _ stage: String,
+        operation: () async throws -> T
+    ) async throws -> T {
+        let startedAt = ContinuousClock.now
+        do {
+            let result = try await operation()
+            logSummaryTiming(stage: stage, startedAt: startedAt, outcome: "ok")
+            return result
+        } catch {
+            logSummaryTiming(stage: stage, startedAt: startedAt, outcome: "failed")
+            throw error
+        }
+    }
+
+    private static func logSummaryTiming(
+        stage: String,
+        startedAt: ContinuousClock.Instant,
+        outcome: String,
+        attempt: Int? = nil
+    ) {
+        let elapsed = startedAt.duration(to: .now)
+        let components = elapsed.components
+        let milliseconds = Double(components.seconds) * 1_000
+            + Double(components.attoseconds) / 1_000_000_000_000_000
+        let attemptField = attempt.map { " attempt=\($0)" } ?? ""
+        DiagnosticsLog.write(
+            "[summary-latency] stage=\(stage)\(attemptField) outcome=\(outcome) elapsed_ms=\(String(format: "%.1f", milliseconds))"
+        )
     }
 
     private static func summarizeOnce(
