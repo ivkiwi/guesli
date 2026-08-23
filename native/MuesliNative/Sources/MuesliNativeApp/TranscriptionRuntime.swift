@@ -15,10 +15,11 @@ struct SpeechTranscriptionResult: Sendable {
 
 actor TranscriptionCoordinator {
     static let explicitlyRoutedBackendIdentifiers: Set<String> = [
-        "whisper", "nemotron35", "gigaam_v3", "qwen", "cohere", "sensevoice",
+        "whisper", "nemotron35", "gigaam_v3", "parakeet-unified", "qwen", "cohere", "sensevoice",
     ]
 
     private let fluidTranscriber = FluidAudioTranscriber()
+    private let parakeetUnifiedTranscriber = ParakeetUnifiedTranscriber()
     private let whisperTranscriber = WhisperKitTranscriber()
     private var _qwen3Transcriber: Any?
     private var _qwen3PostProcessor: Any?
@@ -68,6 +69,10 @@ actor TranscriptionCoordinator {
         if #available(macOS 15, *), let transcriber = _nemotron35Transcriber as? Nemotron35StreamingTranscriber {
             await transcriber.shutdown()
         }
+    }
+
+    func unloadParakeetUnifiedTranscriber() async {
+        await parakeetUnifiedTranscriber.shutdown()
     }
 
     @available(macOS 15, *)
@@ -224,6 +229,8 @@ actor TranscriptionCoordinator {
         case "fluidaudio":
             let version: AsrModelVersion = backend.model.contains("v2") ? .v2 : .v3
             try await fluidTranscriber.loadModels(version: version, progress: progress)
+        case "parakeet-unified":
+            try await parakeetUnifiedTranscriber.loadModels(progress: progress)
         case "whisper":
             try await whisperTranscriber.loadModel(modelName: backend.model, progress: progress)
             // Warmup ANE/GPU so first dictation doesn't pay CoreML compilation cost
@@ -395,6 +402,7 @@ actor TranscriptionCoordinator {
 
     func shutdown() async {
         await fluidTranscriber.shutdown()
+        await parakeetUnifiedTranscriber.shutdown()
         await whisperTranscriber.shutdown()
         await onnxGigaAMTranscriber.shutdown()
         await senseVoiceTranscriber.shutdown()
@@ -548,6 +556,8 @@ actor TranscriptionCoordinator {
             return try await transcribeWithNemotron35(url: url, samples: samples)
         case "gigaam_v3":
             return try await transcribeWithONNXGigaAM(url: url, samples: samples)
+        case "parakeet-unified":
+            return try await transcribeWithParakeetUnified(url: url, samples: samples)
         case "qwen":
             return try await transcribeWithQwen3(url: url, samples: samples)
         case "cohere":
@@ -572,6 +582,26 @@ actor TranscriptionCoordinator {
         return SpeechTranscriptionResult(
             text: text,
             segments: segments.isEmpty && !text.isEmpty ? [SpeechSegment(start: 0, end: result.duration, text: text)] : segments
+        )
+    }
+
+    // MARK: - Parakeet Unified (FastConformer-RNNT offline batch)
+
+    private func transcribeWithParakeetUnified(
+        url: URL,
+        samples: [Float]? = nil
+    ) async throws -> SpeechTranscriptionResult {
+        fputs("[muesli-native] transcribing with Parakeet Unified: \(url.lastPathComponent)\n", stderr)
+        let result = if let samples {
+            try await parakeetUnifiedTranscriber.transcribe(samples: samples)
+        } else {
+            try await parakeetUnifiedTranscriber.transcribe(wavURL: url)
+        }
+        fputs("[muesli-native] Parakeet Unified result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
+        let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return SpeechTranscriptionResult(
+            text: text,
+            segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: 0, text: text)]
         )
     }
 

@@ -13,7 +13,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.1"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.6"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", exact: "1.0.0"),
         // Ghost Pepper uses this LLM.swift fork for local Qwen cleanup. Before production, replace it with upstream
         // eastriverlee/LLM.swift once explicit Qwen/ChatML template behavior is validated against our GGUF models.
@@ -27,6 +27,7 @@ let package = Package(
             name: "MuesliCore",
             dependencies: [],
             path: "Sources/MuesliCore",
+            exclude: ["Qwen3ASR/LICENSE-Apache-2.0"],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
             ]

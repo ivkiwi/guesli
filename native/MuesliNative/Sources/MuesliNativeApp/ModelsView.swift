@@ -56,7 +56,7 @@ struct ModelsView: View {
                 familyCard(
                     title: "Parakeet Family",
                     subtitle: "NVIDIA speech models for fast everyday dictation.",
-                    defaultBadge: "Default: v3",
+                    defaultBadge: "Newest: Unified",
                     logo: "nvidia-logo",
                     selection: $selectedParakeetModel,
                     options: BackendOption.parakeetFamily
@@ -1217,6 +1217,9 @@ struct ModelsView: View {
             try ONNXGigaAMModelStore.deleteModelFiles(fileManager: fm)
         case "sensevoice":
             SenseVoiceTranscriber.deleteModelFiles(fileManager: fm)
+        case "parakeet-unified":
+            await controller.transcriptionCoordinator.unloadParakeetUnifiedTranscriber()
+            try ParakeetUnifiedTranscriber.deleteModelFiles(fileManager: fm)
         case "fluidaudio":
             // FluidAudio models are in ~/Library/Application Support/FluidAudio/Models/
             let supportDir = fm.homeDirectoryForCurrentUser
@@ -1230,9 +1233,7 @@ struct ModelsView: View {
                 }
             }
         case "qwen":
-            let path = fm.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support/FluidAudio/Models/qwen3-asr-0.6b-coreml")
-            try removeItemIfPresent(at: path, fileManager: fm)
+            try Qwen3AsrModelStore.deleteModelFiles(fileManager: fm)
         default:
             break
         }
@@ -1286,8 +1287,11 @@ struct ModelsView: View {
             let path = fm.homeDirectoryForCurrentUser
                 .appendingPathComponent(".cache/muesli/models/nemotron35-multilingual-2240ms/encoder.mlmodelc/coremldata.bin")
             return fm.fileExists(atPath: path.path)
-        case "fluidaudio":
+        case "fluidaudio", "parakeet-unified":
             // Check FluidAudio's cache
+            if option.backend == "parakeet-unified" {
+                return ParakeetUnifiedTranscriber.isModelDownloaded(fileManager: fm)
+            }
             let supportDir = fm.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library/Application Support/FluidAudio/Models")
             if option.model.contains("parakeet") {
@@ -1298,10 +1302,7 @@ struct ModelsView: View {
             }
             return false
         case "qwen":
-            let supportDir = fm.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support/FluidAudio/Models/qwen3-asr-0.6b-coreml")
-            return fm.fileExists(atPath: supportDir.appendingPathComponent("int8/vocab.json").path)
-                || fm.fileExists(atPath: supportDir.appendingPathComponent("f32/vocab.json").path)
+            return Qwen3AsrModelStore.isModelDownloaded(fileManager: fm)
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
         case "gigaam_v3":

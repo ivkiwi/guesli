@@ -19,6 +19,10 @@ struct MeetingParakeetLiveCaptionSessionTests {
             let url = directory.appendingPathComponent(artifact)
             if artifact.hasSuffix(".mlmodelc") {
                 try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                try Data([0x01]).write(to: url.appendingPathComponent("coremldata.bin"))
+                let weights = url.appendingPathComponent("weights", isDirectory: true)
+                try FileManager.default.createDirectory(at: weights, withIntermediateDirectories: true)
+                try Data([0x01]).write(to: weights.appendingPathComponent("weight.bin"))
             } else {
                 try Data().write(to: url)
             }

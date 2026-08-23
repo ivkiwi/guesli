@@ -1,8 +1,32 @@
 import Testing
 import Foundation
 @testable import MuesliCore
+@testable import MuesliNativeApp
 
 struct Qwen3VendorTests {
+
+    @Test("Qwen cache detection accepts current layout and requires every artifact")
+    func cacheDetectionUsesCompleteCurrentLayout() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("qwen3-cache-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let model = root.appendingPathComponent("qwen3-asr-0.6b/int8", isDirectory: true)
+        try fm.createDirectory(at: model, withIntermediateDirectories: true)
+        for name in [
+            "qwen3_asr_audio_encoder_v2.mlmodelc",
+            "qwen3_asr_decoder_stateful.mlmodelc",
+            "qwen3_asr_embeddings.bin",
+            "vocab.json",
+        ] {
+            try fm.createDirectory(at: model.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+
+        #expect(Qwen3AsrModelStore.isModelDownloaded(in: root, fileManager: fm))
+        try fm.removeItem(at: model.appendingPathComponent("vocab.json"))
+        #expect(!Qwen3AsrModelStore.isModelDownloaded(in: root, fileManager: fm))
+    }
 
     @available(macOS 15, *)
     @Test("installArtifacts copies every artifact and replaces stale files")
