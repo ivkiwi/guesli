@@ -25,7 +25,7 @@ jobs:
         shell: bash
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "This workflow only publishes beta builds. Official tagged releases must use scripts/release.sh." >&2
+            echo "This workflow publishes branch builds only." >&2
             exit 1
           fi
 
@@ -74,6 +74,16 @@ jobs:
             echo "Meet speaker bridge tests are not present on this ref; skipping focused test step."
           fi
 
+      - name: Build and validate LocalVQE runtime
+        env:
+          LOCALVQE_REPO: ${{ runner.temp }}/LocalVQE
+          LOCALVQE_BUILD_DIR: ${{ runner.temp }}/localvqe-build
+          MUESLI_LOCALVQE_LIB_DIR: ${{ runner.temp }}/localvqe/lib
+        run: |
+          ./scripts/build_localvqe.sh
+          source ./scripts/localvqe_runtime.sh
+          muesli_localvqe_runtime_is_complete "$MUESLI_LOCALVQE_LIB_DIR"
+
       - name: Install Guesli signing identity
         timeout-minutes: 2
         env:
@@ -116,6 +126,8 @@ jobs:
           MUESLI_SKIP_SIGN: "1"
           MUESLI_SIGN_IDENTITY: Guesli Dev
           MUESLI_SWIFTPM_SCRATCH_PATH: ${{ runner.temp }}/muesli-spm
+          MUESLI_LOCALVQE_LIB_DIR: ${{ runner.temp }}/localvqe/lib
+          MUESLI_REQUIRE_LOCALVQE: "1"
         run: ./scripts/build_native_app.sh release
 
       - name: Verify packaged app
@@ -129,6 +141,13 @@ jobs:
           test -d "$APP_DIR"
           test -x "$APP_BIN"
           test -x "$APP_DIR/Contents/MacOS/muesli-cli"
+          test -x "$APP_DIR/Contents/MacOS/onnx-gigaam-helper"
+          test -s "$APP_DIR/Contents/Resources/NOTICE"
+          test -s "$APP_DIR/Contents/Resources/Qwen3ASR-LICENSE-Apache-2.0"
+          find "$APP_DIR/Contents/MacOS" -maxdepth 1 -name 'libonnxruntime*.dylib' \( -type f -o -type l \) | grep -q .
+          otool -L "$APP_DIR/Contents/MacOS/onnx-gigaam-helper" | grep -Fq 'libonnxruntime'
+          source ./scripts/localvqe_runtime.sh
+          muesli_localvqe_runtime_is_complete "$APP_DIR/Contents/MacOS"
 
           codesign --verify --deep --strict --verbose=2 "$APP_DIR"
           codesign -dvv "$APP_DIR" 2>&1 | grep -F 'Authority=Guesli Dev'
@@ -191,7 +210,7 @@ jobs:
             ${{ steps.meta.outputs.extension_zip }}
           compression-level: 0
 
-      - name: Publish GitHub release assets
+      - name: Create draft GitHub release and upload assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -208,6 +227,7 @@ jobs:
           if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
             GH_ARGS=(
               "$TAG_NAME"
+              --draft
               --title "$RELEASE_TITLE"
               --notes-file "$NOTES_FILE"
               --target "$GITHUB_SHA"
@@ -223,11 +243,26 @@ jobs:
           fi
           gh release upload "$TAG_NAME" "${ASSETS[@]}" --clobber
 
-      - name: Publish Sparkle appcast
+      - name: Verify hosted DMG
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          DMG_PATH: ${{ steps.meta.outputs.dmg_path }}
+        run: |
+          HOSTED_DIR="$RUNNER_TEMP/hosted-release"
+          mkdir -p "$HOSTED_DIR"
+          gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$(basename "$DMG_PATH")" --dir "$HOSTED_DIR" --clobber
+          test "$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')" = \
+            "$(shasum -a 256 "$HOSTED_DIR/$(basename "$DMG_PATH")" | awk '{print $1}')"
+
+      - name: Generate and validate append-only Sparkle appcast
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           TAG_NAME: ${{ steps.meta.outputs.tag_name }}
           DMG_PATH: ${{ steps.meta.outputs.dmg_path }}
+          BUNDLE_VERSION: ${{ steps.meta.outputs.bundle_version }}
+          SHORT_VERSION: ${{ steps.meta.outputs.version }}
         run: |
           test -n "$SPARKLE_PRIVATE_KEY"
           UPDATES_DIR="$RUNNER_TEMP/guesli-sparkle"
@@ -238,18 +273,36 @@ jobs:
             --ed-key-file - \
             --download-url-prefix "https://github.com/ivkiwi/guesli/releases/download/${TAG_NAME}/" \
             --link "https://github.com/ivkiwi/guesli/releases" \
-            -o "$UPDATES_DIR/appcast-guesli.xml" \
+            -o "$UPDATES_DIR/generated-appcast.xml" \
             "$UPDATES_DIR"
-          APPCAST="$RUNNER_TEMP/appcast-guesli.xml"
-          cp "$UPDATES_DIR/appcast-guesli.xml" "$APPCAST"
-          git fetch origin sparkle-feed || true
-          if git rev-parse --verify origin/sparkle-feed >/dev/null 2>&1; then
-            git checkout -B sparkle-feed origin/sparkle-feed
-          else
-            git checkout -B sparkle-feed
-          fi
+          git fetch origin sparkle-feed
+          git show origin/sparkle-feed:docs/appcast-guesli.xml > "$RUNNER_TEMP/existing-appcast.xml"
+          ASSET_URL="https://github.com/ivkiwi/guesli/releases/download/${TAG_NAME}/$(basename "$DMG_PATH")"
+          python3 ./scripts/merge_appcast_item.py \
+            --existing "$RUNNER_TEMP/existing-appcast.xml" \
+            --generated "$UPDATES_DIR/generated-appcast.xml" \
+            --version "$BUNDLE_VERSION" \
+            --download-url "$ASSET_URL" \
+            --output "$RUNNER_TEMP/appcast-guesli.xml"
+          ./scripts/verify_update_flow.sh \
+            --skip-dmg \
+            --appcast "$RUNNER_TEMP/appcast-guesli.xml" \
+            --version "$BUNDLE_VERSION" \
+            --short-version "$SHORT_VERSION" \
+            --app-name Guesli \
+            --asset-url "$ASSET_URL"
+
+      - name: Publish verified GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+        run: gh release edit "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+
+      - name: Publish Sparkle appcast
+        run: |
+          git checkout -B sparkle-feed origin/sparkle-feed
           mkdir -p docs
-          cp "$APPCAST" docs/appcast-guesli.xml
+          cp "$RUNNER_TEMP/appcast-guesli.xml" docs/appcast-guesli.xml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/appcast-guesli.xml

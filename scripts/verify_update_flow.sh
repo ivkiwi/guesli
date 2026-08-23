@@ -2,16 +2,20 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APPCAST="$ROOT/docs/appcast.xml"
+APPCAST="$ROOT/docs/appcast-guesli.xml"
 VERSION=""
 SHORT_VERSION=""
 ARTIFACT_VERSION=""
 DMG_PATH=""
 APP_NAME="Guesli"
-EXPECTED_FEED_URL="https://muesli-hq.github.io/muesli/appcast.xml"
+EXPECTED_FEED_URL="https://raw.githubusercontent.com/ivkiwi/guesli/sparkle-feed/docs/appcast-guesli.xml"
+EXPECTED_ASSET_URL=""
+ASSET_URL_PREFIX="https://github.com/ivkiwi/guesli/releases/download/"
+EXPECTED_BUNDLE_ID="com.guesli.app"
 SKIP_DMG=0
 REQUIRE_NOTARIZED=0
 REQUIRE_RELEASE_NOTES=0
+REQUIRE_RUNTIMES=0
 
 usage() {
   cat >&2 <<'USAGE'
@@ -24,10 +28,14 @@ Options:
   --version <version>       Require the latest appcast item to match this version.
   --short-version <version> Require the latest short/display version. Defaults to --version.
   --artifact-version <ver>  Version string used in the DMG filename. Defaults to --version.
-  --appcast <path>          Appcast XML path. Defaults to docs/appcast.xml.
+  --appcast <path>          Appcast XML path. Defaults to docs/appcast-guesli.xml.
   --dmg <path>              DMG path. Defaults to dist-release/Guesli-<version>.dmg.
   --app-name <name>         App bundle/update artifact name. Defaults to Guesli.
   --feed-url <url>          Expected SUFeedURL. Defaults to the production appcast.
+  --asset-url <url>         Require the latest enclosure to use this exact URL.
+  --asset-url-prefix <url>  Allowed GitHub release URL prefix.
+  --bundle-id <id>          Expected app bundle ID. Defaults to com.guesli.app.
+  --require-runtimes        Require LocalVQE, ONNX GigaAM, and bundled notices.
   --skip-dmg                Only validate appcast metadata. Suitable for CI.
   --require-release-notes   Require item-level release notes in the appcast.
   --require-notarized       Also require Gatekeeper/stapler checks for DMG and app.
@@ -65,6 +73,22 @@ while [[ $# -gt 0 ]]; do
       EXPECTED_FEED_URL="${2:?missing value for --feed-url}"
       shift 2
       ;;
+    --asset-url)
+      EXPECTED_ASSET_URL="${2:?missing value for --asset-url}"
+      shift 2
+      ;;
+    --asset-url-prefix)
+      ASSET_URL_PREFIX="${2:?missing value for --asset-url-prefix}"
+      shift 2
+      ;;
+    --bundle-id)
+      EXPECTED_BUNDLE_ID="${2:?missing value for --bundle-id}"
+      shift 2
+      ;;
+    --require-runtimes)
+      REQUIRE_RUNTIMES=1
+      shift
+      ;;
     --skip-dmg)
       SKIP_DMG=1
       shift
@@ -97,7 +121,7 @@ if [[ ! -f "$APPCAST" ]]; then
   exit 1
 fi
 
-if ! APPCAST_METADATA="$(python3 - "$APPCAST" "$VERSION" "$SHORT_VERSION" "$ARTIFACT_VERSION" "$APP_NAME" "$REQUIRE_RELEASE_NOTES" <<'PY'
+if ! APPCAST_METADATA="$(python3 - "$APPCAST" "$VERSION" "$SHORT_VERSION" "$APP_NAME" "$REQUIRE_RELEASE_NOTES" "$EXPECTED_ASSET_URL" "$ASSET_URL_PREFIX" <<'PY'
 import base64
 import re
 import shlex
@@ -107,9 +131,10 @@ import xml.etree.ElementTree as ET
 appcast_path = sys.argv[1]
 expected_version = sys.argv[2]
 expected_short_version = sys.argv[3]
-artifact_version = sys.argv[4]
-app_name = sys.argv[5]
-require_release_notes = sys.argv[6] == "1"
+app_name = sys.argv[4]
+require_release_notes = sys.argv[5] == "1"
+expected_url = sys.argv[6]
+url_prefix = sys.argv[7]
 sparkle_ns = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 
 try:
@@ -149,10 +174,13 @@ signature = enclosure.attrib.get(f"{{{sparkle_ns}}}edSignature", "")
 if not signature:
     raise SystemExit("ERROR: latest appcast enclosure is missing sparkle:edSignature")
 
-expected_artifact_version = artifact_version or version
-expected_url = f"https://github.com/Muesli-HQ/muesli/releases/download/v{expected_artifact_version}/{app_name}-{expected_artifact_version}.dmg"
-if url != expected_url:
+if expected_url and url != expected_url:
     raise SystemExit(f"ERROR: latest appcast URL is {url!r}, expected {expected_url!r}")
+if not url.startswith(url_prefix):
+    raise SystemExit(f"ERROR: latest appcast URL is outside {url_prefix!r}: {url!r}")
+asset_name = url.rsplit("/", 1)[-1]
+if not asset_name.startswith(f"{app_name}-") or not asset_name.endswith(".dmg"):
+    raise SystemExit(f"ERROR: latest appcast asset is not a {app_name} DMG: {asset_name!r}")
 
 try:
     length_int = int(length)
@@ -179,6 +207,14 @@ if delta_enclosures:
         "ERROR: appcast contains delta enclosures, but release deltas are not hosted: "
         + ", ".join(delta_enclosures)
     )
+
+for item in items:
+    item_enclosure = item.find("enclosure")
+    if item_enclosure is None:
+        raise SystemExit("ERROR: appcast history item is missing enclosure")
+    item_url = item_enclosure.attrib.get("url", "")
+    if not item_url.startswith(url_prefix):
+        raise SystemExit(f"ERROR: appcast history contains a foreign URL: {item_url!r}")
 
 if not re.fullmatch(r"[0-9][0-9A-Za-z.\-]*", version):
     raise SystemExit(f"ERROR: unexpected version format: {version!r}")
@@ -277,11 +313,17 @@ fi
 
 BUNDLE_SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")"
 BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")"
+BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO_PLIST")"
 FEED_URL="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$INFO_PLIST")"
 PUBLIC_ED_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO_PLIST")"
 
 if [[ "$BUNDLE_SHORT_VERSION" != "$APPCAST_SHORT_VERSION" || "$BUNDLE_VERSION" != "$APPCAST_VERSION" ]]; then
   echo "ERROR: app bundle version ${BUNDLE_SHORT_VERSION}/${BUNDLE_VERSION} does not match appcast ${APPCAST_SHORT_VERSION}/${APPCAST_VERSION}" >&2
+  exit 1
+fi
+
+if [[ "$BUNDLE_ID" != "$EXPECTED_BUNDLE_ID" ]]; then
+  echo "ERROR: app bundle ID is $BUNDLE_ID, expected $EXPECTED_BUNDLE_ID" >&2
   exit 1
 fi
 
@@ -299,6 +341,9 @@ echo "Bundle metadata OK."
 
 SPARKLE_FRAMEWORK="$APP_PATH/Contents/MacOS/Sparkle.framework"
 if [[ ! -d "$SPARKLE_FRAMEWORK" ]]; then
+  SPARKLE_FRAMEWORK="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+fi
+if [[ ! -d "$SPARKLE_FRAMEWORK" ]]; then
   echo "ERROR: app bundle is missing Sparkle.framework" >&2
   exit 1
 fi
@@ -309,6 +354,27 @@ if [[ -z "$SPARKLE_UPDATER_PATH" || ! -d "$SPARKLE_UPDATER_PATH" ]]; then
   exit 1
 fi
 echo "Sparkle installer helper OK."
+
+if [[ "$REQUIRE_RUNTIMES" == "1" ]]; then
+  source "$ROOT/scripts/localvqe_runtime.sh"
+  MACOS_DIR="$APP_PATH/Contents/MacOS"
+  [[ -x "$MACOS_DIR/onnx-gigaam-helper" ]] || { echo "ERROR: ONNX GigaAM helper is missing" >&2; exit 1; }
+  find "$MACOS_DIR" -maxdepth 1 -name 'libonnxruntime*.dylib' -type f | grep -q . || {
+    echo "ERROR: ONNX Runtime dylib is missing" >&2
+    exit 1
+  }
+  otool -L "$MACOS_DIR/onnx-gigaam-helper" | grep -Fq 'libonnxruntime' || {
+    echo "ERROR: ONNX GigaAM helper is not linked to ONNX Runtime" >&2
+    exit 1
+  }
+  muesli_localvqe_runtime_is_complete "$MACOS_DIR" || exit 1
+  [[ -s "$APP_PATH/Contents/Resources/NOTICE" ]] || { echo "ERROR: bundled NOTICE is missing" >&2; exit 1; }
+  [[ -s "$APP_PATH/Contents/Resources/Qwen3ASR-LICENSE-Apache-2.0" ]] || {
+    echo "ERROR: bundled Qwen3 Apache license is missing" >&2
+    exit 1
+  }
+  echo "Bundled ASR/AEC runtimes and notices OK."
+fi
 
 SWIFT_VERIFY_FILE="$(mktemp -t muesli-ed25519-verify.XXXXXX.swift)"
 cat > "$SWIFT_VERIFY_FILE" <<'SWIFT'
