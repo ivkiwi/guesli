@@ -13,6 +13,7 @@ EXPECTED_ASSET_URL=""
 ASSET_URL_PREFIX="https://github.com/ivkiwi/guesli/releases/download/"
 EXPECTED_BUNDLE_ID="com.guesli.app"
 SKIP_DMG=0
+SELF_SIGNED_ARTIFACT=0
 REQUIRE_NOTARIZED=0
 REQUIRE_RELEASE_NOTES=0
 REQUIRE_RUNTIMES=0
@@ -37,6 +38,8 @@ Options:
   --bundle-id <id>          Expected app bundle ID. Defaults to com.guesli.app.
   --require-runtimes        Require LocalVQE, ONNX GigaAM, and bundled notices.
   --skip-dmg                Only validate appcast metadata. Suitable for CI.
+  --self-signed-artifact    Verify DMG, app metadata, EdDSA, and app signature;
+                            skip hardened-runtime, DMG-signature, and notarization checks.
   --require-release-notes   Require item-level release notes in the appcast.
   --require-notarized       Also require Gatekeeper/stapler checks for DMG and app.
   -h, --help                Show this help.
@@ -93,6 +96,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_DMG=1
       shift
       ;;
+    --self-signed-artifact)
+      SELF_SIGNED_ARTIFACT=1
+      shift
+      ;;
     --require-notarized)
       REQUIRE_NOTARIZED=1
       shift
@@ -112,6 +119,15 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$SKIP_DMG" == "1" && "$SELF_SIGNED_ARTIFACT" == "1" ]]; then
+  echo "ERROR: --skip-dmg and --self-signed-artifact cannot be combined." >&2
+  exit 2
+fi
+if [[ "$SELF_SIGNED_ARTIFACT" == "1" && "$REQUIRE_NOTARIZED" == "1" ]]; then
+  echo "ERROR: --self-signed-artifact and --require-notarized cannot be combined." >&2
+  exit 2
+fi
 
 SHORT_VERSION="${SHORT_VERSION:-$VERSION}"
 ARTIFACT_VERSION="${ARTIFACT_VERSION:-$VERSION}"
@@ -420,6 +436,11 @@ if ! APP_CODESIGN_RESULT="$(codesign --verify --deep --strict --verbose=2 "$APP_
   exit 1
 fi
 echo "App code signature OK."
+
+if [[ "$SELF_SIGNED_ARTIFACT" == "1" ]]; then
+  echo "Self-signed artifact verification passed for v${APPCAST_VERSION}."
+  exit 0
+fi
 
 if ! APP_SIGNATURE_DETAILS="$(codesign -dvvv "$APP_PATH" 2>&1)"; then
   echo "$APP_SIGNATURE_DETAILS" >&2

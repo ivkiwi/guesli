@@ -285,12 +285,45 @@ jobs:
             --download-url "$ASSET_URL" \
             --output "$RUNNER_TEMP/appcast-guesli.xml"
           ./scripts/verify_update_flow.sh \
-            --skip-dmg \
             --appcast "$RUNNER_TEMP/appcast-guesli.xml" \
+            --dmg "$RUNNER_TEMP/hosted-release/$(basename "$DMG_PATH")" \
             --version "$BUNDLE_VERSION" \
             --short-version "$SHORT_VERSION" \
             --app-name Guesli \
-            --asset-url "$ASSET_URL"
+            --asset-url "$ASSET_URL" \
+            --require-runtimes \
+            --self-signed-artifact
+
+          FORGED_APPCAST="$RUNNER_TEMP/forged-appcast-guesli.xml"
+          cp "$RUNNER_TEMP/appcast-guesli.xml" "$FORGED_APPCAST"
+          python3 - "$FORGED_APPCAST" <<'PY'
+          import base64
+          import sys
+          import xml.etree.ElementTree as ET
+
+          path = sys.argv[1]
+          tree = ET.parse(path)
+          enclosure = tree.getroot().find("channel/item/enclosure")
+          if enclosure is None:
+              raise SystemExit("latest appcast enclosure missing")
+          enclosure.set(
+              "{http://www.andymatuschak.org/xml-namespaces/sparkle}edSignature",
+              base64.b64encode(bytes(64)).decode(),
+          )
+          tree.write(path, encoding="utf-8", xml_declaration=True)
+          PY
+          if ./scripts/verify_update_flow.sh \
+            --appcast "$FORGED_APPCAST" \
+            --dmg "$RUNNER_TEMP/hosted-release/$(basename "$DMG_PATH")" \
+            --version "$BUNDLE_VERSION" \
+            --short-version "$SHORT_VERSION" \
+            --app-name Guesli \
+            --asset-url "$ASSET_URL" \
+            --require-runtimes \
+            --self-signed-artifact; then
+            echo "ERROR: forged Sparkle signature was accepted." >&2
+            exit 1
+          fi
 
       - name: Publish verified GitHub release
         env:
