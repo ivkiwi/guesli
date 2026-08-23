@@ -3,6 +3,23 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
+@Suite("Dictation backend readiness")
+struct DictationBackendReadinessTests {
+    @Test("preparing and failed states block dictation")
+    func blockedStates() {
+        #expect(!DictationBackendReadiness.preparing.allowsDictation)
+        #expect(DictationBackendReadiness.preparing.blockingMessage(backendLabel: "GigaAM") == "Warming up GigaAM...")
+        #expect(!DictationBackendReadiness.failed.allowsDictation)
+        #expect(DictationBackendReadiness.failed.blockingMessage(backendLabel: "GigaAM") == "GigaAM unavailable")
+    }
+
+    @Test("ready state allows dictation")
+    func readyState() {
+        #expect(DictationBackendReadiness.ready.allowsDictation)
+        #expect(DictationBackendReadiness.ready.blockingMessage(backendLabel: "GigaAM") == nil)
+    }
+}
+
 // MARK: - ChatGPT File-based Token Storage
 
 @Suite("ChatGPT Token Storage", .muesliHermeticSupport)

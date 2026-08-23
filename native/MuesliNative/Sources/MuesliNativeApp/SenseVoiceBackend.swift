@@ -1,6 +1,7 @@
 import AVFoundation
 import FluidAudio
 import Foundation
+import MuesliCore
 
 enum SenseVoiceFileChunking {
     static let sampleRate = SenseVoiceConfig.sampleRate
@@ -48,6 +49,7 @@ actor SenseVoiceTranscriber {
     private var manager: SenseVoiceManager?
     private var isLoading = false
     private var hasCompletedWarmup = false
+    private var loadGeneration: UInt64 = 0
     private static let precision: SenseVoiceEncoderPrecision = .int8
 
     enum TranscriberError: Error, LocalizedError {
@@ -62,7 +64,10 @@ actor SenseVoiceTranscriber {
     }
 
     /// Downloads models if needed and initializes the SenseVoice manager.
-    func loadModels(progress: ((Double, String?) -> Void)? = nil) async throws {
+    func loadModels(
+        progress: ((Double, String?) -> Void)? = nil,
+        progressSnapshot: ModelDownloadProgressHandler? = nil
+    ) async throws {
         // Actor isolation makes this check-and-set race-free. Waiters retry after
         // a failed load so a transient download error does not poison the actor.
         while isLoading {
@@ -70,17 +75,30 @@ actor SenseVoiceTranscriber {
             if manager != nil { return }
         }
         if manager != nil { return }
+        let generation = loadGeneration
 
         isLoading = true
         defer { isLoading = false }
 
         fputs("[sensevoice] downloading/loading models...\n", stderr)
-        let modelDirectory = try await Self.downloadRequiredModels(progress: progress)
-        progress?(0.95, "Loading SenseVoice...")
-        let models = try SenseVoiceModels.load(from: modelDirectory, precision: Self.precision)
-        self.manager = SenseVoiceManager(models: models)
+        let plan = ManagedASRModelPlans.senseVoice()
+        let loadedManager = try await ManagedASRModelDownloader.loadValidated(
+            plan,
+            progress: progress,
+            progressSnapshot: progressSnapshot
+        ) { modelDirectory in
+            let preparing = ModelDownloadProgress.preparing(modelID: plan.modelID, message: "Loading SenseVoice into Core ML...")
+            progressSnapshot?(preparing)
+            progress?(0.95, preparing.message)
+            let models = try SenseVoiceModels.load(from: modelDirectory, precision: Self.precision)
+            return SenseVoiceManager(models: models)
+        }
+        let preparing = ModelDownloadProgress.preparing(modelID: plan.modelID, message: "Loading SenseVoice into Core ML...")
+        guard generation == loadGeneration else { throw CancellationError() }
+        self.manager = loadedManager
         await warmupIfNeeded(progress: progress)
         progress?(1.0, nil)
+        progressSnapshot?(preparing.replacing(phase: .ready, message: "Model ready"))
         fputs("[sensevoice] models ready\n", stderr)
     }
 
@@ -138,36 +156,28 @@ actor SenseVoiceTranscriber {
     func shutdown() {
         manager = nil
         hasCompletedWarmup = false
+        loadGeneration &+= 1
     }
 
     static let cacheRelativePath = "Library/Application Support/FluidAudio/Models/sensevoice-small-coreml"
     static let downloadedModelSizeLabel = "~240 MB"
 
     static func cacheDirectory(fileManager: FileManager = .default) -> URL {
-        fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(cacheRelativePath)
+        ManagedASRModelPlans.senseVoice(
+            modelsRoot: ManagedASRModelPlans.fluidAudioModelsRoot(fileManager: fileManager)
+        ).cacheDirectory
     }
 
-    static func isModelDownloaded() -> Bool {
-        requiredModelsExist(at: cacheDirectory())
+    static func isModelDownloaded(fileManager: FileManager = .default) -> Bool {
+        ManagedASRModelPlans.senseVoice(
+            modelsRoot: ManagedASRModelPlans.fluidAudioModelsRoot(fileManager: fileManager)
+        ).isAvailableLocally(fileManager: fileManager)
     }
 
     static func deleteModelFiles(fileManager: FileManager = .default) {
-        try? fileManager.removeItem(at: cacheDirectory(fileManager: fileManager))
-    }
-
-    private static func downloadRequiredModels(progress: ((Double, String?) -> Void)?) async throws -> URL {
-        try await SenseVoiceModels.download(precision: precision) { downloadProgress in
-            DispatchQueue.main.async {
-                progress?(downloadProgress.fractionCompleted, "Downloading SenseVoice INT8...")
-            }
-        }
-    }
-
-    private static func requiredModelsExist(at directory: URL, fileManager: FileManager = .default) -> Bool {
-        let vocabularyURL = directory.appendingPathComponent(ModelNames.SenseVoice.vocabularyFile)
-        return SenseVoiceModels.modelsExist(at: directory, precision: precision)
-            && fileManager.fileExists(atPath: vocabularyURL.path)
+        try? ManagedASRModelPlans.senseVoice(
+            modelsRoot: ManagedASRModelPlans.fluidAudioModelsRoot(fileManager: fileManager)
+        ).delete(fileManager: fileManager)
     }
 
     private nonisolated static func audioDuration(url: URL) throws -> TimeInterval {

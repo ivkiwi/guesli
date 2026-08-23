@@ -1,3 +1,4 @@
+import FluidAudio
 import SwiftUI
 import MuesliCore
 
@@ -8,6 +9,9 @@ struct ModelsView: View {
     @State private var nemotron35UpdateAvailable = false
     @State private var downloadingModels: Set<String> = []
     @State private var downloadProgress: [String: Double] = [:]
+    @State private var downloadSnapshots: [String: ModelDownloadProgress] = [:]
+    @State private var downloadMessages: [String: String] = [:]
+    @State private var downloadGenerations: [String: UUID] = [:]
     @State private var downloadedModels: Set<String> = []
     @State private var downloadTasks: [String: Task<Void, Never>] = [:]
     @State private var modelToDelete: BackendOption?
@@ -208,7 +212,7 @@ struct ModelsView: View {
             HStack(spacing: MuesliTheme.spacing8) {
                 if isDownloadingLiveCaptionModel {
                     Button("Cancel") {
-                        liveCaptionDownloadTask?.cancel()
+                        cancelLiveCaptionDownload()
                     }
                 } else if isLiveCaptionModelDownloaded {
                     Button(isActive ? "Disable" : "Enable") {
@@ -265,13 +269,30 @@ struct ModelsView: View {
         }
     }
 
+    private func cancelLiveCaptionDownload() {
+        liveCaptionDownloadTask?.cancel()
+        Task {
+            let plan = ManagedASRModelPlans.parakeetRealtimeEOU320()
+            await ManagedASRModelDownloader.cancelAndWait(modelID: plan.modelID)
+        }
+    }
+
     private func deleteLiveCaptionModel() {
-        do {
-            try MeetingParakeetLiveCaptionModelStore.delete()
-            isLiveCaptionModelDownloaded = false
-            controller.updateConfig { $0.enableLiveStreamingPartials = false }
-        } catch {
-            DiagnosticsLog.write("[muesli-native] live-caption model delete failed: \(error.localizedDescription)")
+        liveCaptionDownloadTask?.cancel()
+        Task {
+            let plan = ManagedASRModelPlans.parakeetRealtimeEOU320()
+            let deletionToken = await ManagedASRModelDownloader.beginDeletion(modelID: plan.modelID)
+            do {
+                try MeetingParakeetLiveCaptionModelStore.delete()
+                await ManagedASRModelDownloader.endDeletion(deletionToken)
+                await MainActor.run {
+                    isLiveCaptionModelDownloaded = false
+                    controller.updateConfig { $0.enableLiveStreamingPartials = false }
+                }
+            } catch {
+                await ManagedASRModelDownloader.endDeletion(deletionToken)
+                DiagnosticsLog.write("[muesli-native] live-caption model delete failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -341,6 +362,15 @@ struct ModelsView: View {
             get: { appState.config.resolvedNemotron35Language },
             set: { language in
                 Task { await controller.setNemotron35Language(language) }
+            }
+        )
+    }
+
+    private var qwen3AsrLanguageSelection: Binding<Qwen3AsrLanguage> {
+        Binding(
+            get: { appState.config.resolvedQwen3AsrLanguage },
+            set: { language in
+                Task { await controller.setQwen3AsrLanguage(language) }
             }
         )
     }
@@ -650,10 +680,14 @@ struct ModelsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: progress)
                         .tint(MuesliTheme.accent)
-                    Text("\(Int(progress * 100))% downloading...")
+                    Text(downloadStatusText(for: selectedOption, progress: progress))
                         .font(.system(size: 11))
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
+            } else if let message = downloadMessages[selectedOption.model] {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(MuesliTheme.textTertiary)
             }
 
             actionButtons(for: selectedOption, isActive: isActive, isDownloaded: isDownloaded, isDownloading: isDownloading)
@@ -875,15 +909,37 @@ struct ModelsView: View {
                 }
             }
 
+            if option.backend == BackendOption.qwen3Asr.backend {
+                HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
+                    Text("Language")
+                        .font(MuesliTheme.caption())
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                        .frame(width: 64, alignment: .leading)
+
+                    Picker("", selection: qwen3AsrLanguageSelection) {
+                        ForEach(Qwen3AsrLanguage.allCases, id: \.self) { language in
+                            Text(language.label).tag(language)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 220, alignment: .leading)
+                }
+            }
+
             // Progress bar when downloading
             if isDownloading {
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: progress)
                         .tint(MuesliTheme.accent)
-                    Text("\(Int(progress * 100))% downloading...")
+                    Text(downloadStatusText(for: option, progress: progress))
                         .font(.system(size: 11))
                         .foregroundStyle(MuesliTheme.textTertiary)
                 }
+            } else if let message = downloadMessages[option.model] {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(MuesliTheme.textTertiary)
             }
 
             actionButtons(for: option, isActive: isActive, isDownloaded: isDownloaded, isDownloading: isDownloading)
@@ -1090,6 +1146,10 @@ struct ModelsView: View {
     // MARK: - Actions
 
     private func startDownload(_ option: BackendOption) {
+        let generation = UUID()
+        downloadGenerations[option.model] = generation
+        downloadMessages.removeValue(forKey: option.model)
+        downloadSnapshots.removeValue(forKey: option.model)
         withAnimation { _ = downloadingModels.insert(option.model) }
         downloadProgress[option.model] = 0.05  // Show initial progress immediately
 
@@ -1101,7 +1161,17 @@ struct ModelsView: View {
                     includeMeetingHelpers: controller.config.resolvedOnboardingUseCase.includesMeetings
                 ) { progress, _ in
                     DispatchQueue.main.async {
+                        guard downloadGenerations[option.model] == generation else { return }
                         downloadProgress[option.model] = max(progress, 0.05)
+                    }
+                } progressSnapshot: { snapshot in
+                    DispatchQueue.main.async {
+                        guard downloadGenerations[option.model] == generation else { return }
+                        downloadSnapshots[option.model] = snapshot
+                        if let fraction = snapshot.fractionCompleted {
+                            downloadProgress[option.model] = max(fraction, 0.05)
+                        }
+                        downloadMessages[option.model] = snapshot.message
                     }
                 }
                 guard isModelDownloaded(option, fm: FileManager.default) else {
@@ -1127,20 +1197,28 @@ struct ModelsView: View {
                     try? await Task.sleep(nanoseconds: UInt64((1.5 - elapsed) * 1_000_000_000))
                 }
                 await MainActor.run {
+                    guard downloadGenerations[option.model] == generation else { return }
                     withAnimation {
                         downloadingModels.remove(option.model)
                         downloadedModels.insert(option.model)
                         downloadProgress.removeValue(forKey: option.model)
                         downloadTasks.removeValue(forKey: option.model)
+                        downloadSnapshots.removeValue(forKey: option.model)
+                        downloadMessages.removeValue(forKey: option.model)
                     }
                 }
             } catch {
                 await MainActor.run {
+                    guard downloadGenerations[option.model] == generation else { return }
                     withAnimation {
                         downloadingModels.remove(option.model)
                         downloadProgress.removeValue(forKey: option.model)
                         downloadTasks.removeValue(forKey: option.model)
                     }
+                    let cancelled = error is CancellationError || (error as? URLError)?.code == .cancelled
+                    downloadMessages[option.model] = cancelled
+                        ? "Paused — resume is available"
+                        : "Download failed — retry"
                 }
                 if !(error is CancellationError) {
                     DiagnosticsLog.write("[muesli-native] model download failed for \(option.backend)/\(option.model): \(error.localizedDescription)")
@@ -1151,11 +1229,21 @@ struct ModelsView: View {
     }
 
     private func cancelDownload(_ option: BackendOption) {
+        let generation = downloadGenerations[option.model]
         downloadTasks[option.model]?.cancel()
-        withAnimation {
-            downloadingModels.remove(option.model)
-            downloadProgress.removeValue(forKey: option.model)
-            downloadTasks.removeValue(forKey: option.model)
+        Task {
+            if let plan = managedPlan(for: option) {
+                await ManagedASRModelDownloader.cancelAndWait(modelID: plan.modelID)
+            }
+            await MainActor.run {
+                guard downloadGenerations[option.model] == generation else { return }
+                withAnimation {
+                    downloadingModels.remove(option.model)
+                    downloadProgress.removeValue(forKey: option.model)
+                    downloadTasks.removeValue(forKey: option.model)
+                }
+                downloadMessages[option.model] = "Paused — resume is available"
+            }
         }
     }
 
@@ -1181,13 +1269,15 @@ struct ModelsView: View {
         let fallback = downloadedModels
             .compactMap { model in BackendOption.all.first(where: { $0.model == model && $0 != option }) }
             .first ?? .parakeetMultilingual
-        let fallbackIsDownloaded = downloadedModels.contains(fallback.model)
-
         if appState.selectedBackend == option {
             controller.selectBackend(fallback)
         }
         if appState.selectedMeetingTranscriptionBackend == option {
-            controller.selectMeetingTranscriptionBackend(fallback, requireDownloaded: fallbackIsDownloaded)
+            if let meetingFallback = BackendOption.all.first(where: {
+                $0 != option && $0.supportsMeetingTranscription && downloadedModels.contains($0.model)
+            }) {
+                controller.selectMeetingTranscriptionBackend(meetingFallback)
+            }
         }
         // Remove cached model files
         Task {
@@ -1204,9 +1294,23 @@ struct ModelsView: View {
 
     private func deleteModelFiles(_ option: BackendOption) async throws {
         let fm = FileManager.default
+        downloadTasks[option.model]?.cancel()
+        if let plan = managedPlan(for: option) {
+            let deletionToken = await ManagedASRModelDownloader.beginDeletion(modelID: plan.modelID)
+            do {
+                await unloadModel(option)
+                try plan.delete(fileManager: fm)
+                if option.backend == "qwen" {
+                    try Qwen3AsrModelStore.deleteModelFiles(fileManager: fm)
+                }
+                await ManagedASRModelDownloader.endDeletion(deletionToken)
+                return
+            } catch {
+                await ManagedASRModelDownloader.endDeletion(deletionToken)
+                throw error
+            }
+        }
         switch option.backend {
-        case "whisper":
-            WhisperKitTranscriber.deleteModel(option.model)
         case "nemotron35":
             let path = fm.homeDirectoryForCurrentUser
                 .appendingPathComponent(".cache/muesli/models/nemotron35-multilingual-2240ms")
@@ -1215,28 +1319,47 @@ struct ModelsView: View {
             try removeItemIfPresent(at: CohereTranscribeModelStore.cacheDirectory(), fileManager: fm)
         case "gigaam_v3":
             try ONNXGigaAMModelStore.deleteModelFiles(fileManager: fm)
-        case "sensevoice":
-            SenseVoiceTranscriber.deleteModelFiles(fileManager: fm)
-        case "parakeet-unified":
-            await controller.transcriptionCoordinator.unloadParakeetUnifiedTranscriber()
-            try ParakeetUnifiedTranscriber.deleteModelFiles(fileManager: fm)
-        case "fluidaudio":
-            // FluidAudio models are in ~/Library/Application Support/FluidAudio/Models/
-            let supportDir = fm.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support/FluidAudio/Models")
-            if option.model.contains("parakeet") {
-                let version = option.model.contains("v2") ? "v2" : "v3"
-                if let contents = try? fm.contentsOfDirectory(at: supportDir, includingPropertiesForKeys: nil) {
-                    for dir in contents where dir.lastPathComponent.contains("parakeet") && dir.lastPathComponent.contains(version) {
-                        try removeItemIfPresent(at: dir, fileManager: fm)
-                    }
-                }
-            }
-        case "qwen":
-            try Qwen3AsrModelStore.deleteModelFiles(fileManager: fm)
         default:
             break
         }
+    }
+
+    private func managedPlan(for option: BackendOption) -> ManagedASRModelPlan? {
+        switch option.backend {
+        case "whisper": return ManagedASRModelPlans.whisperKit(modelName: option.model)
+        case "fluidaudio": return option.model.contains("v2") ? ManagedASRModelPlans.parakeetV2() : ManagedASRModelPlans.parakeetV3()
+        case "parakeet-unified": return ManagedASRModelPlans.parakeetUnified()
+        case "qwen": return ManagedASRModelPlans.qwen3ASRInt8()
+        case "sensevoice": return ManagedASRModelPlans.senseVoice()
+        default: return nil
+        }
+    }
+
+    private func unloadModel(_ option: BackendOption) async {
+        switch option.backend {
+        case "whisper": await controller.transcriptionCoordinator.unloadWhisperTranscriber()
+        case "fluidaudio":
+            let version: AsrModelVersion = option.model.contains("v2") ? .v2 : .v3
+            await controller.transcriptionCoordinator.unloadFluidAudioTranscriber(version: version)
+        case "parakeet-unified": await controller.transcriptionCoordinator.unloadParakeetUnifiedTranscriber()
+        case "qwen": await controller.transcriptionCoordinator.unloadQwen3Transcriber()
+        case "sensevoice": await controller.transcriptionCoordinator.unloadSenseVoiceTranscriber()
+        default: break
+        }
+    }
+
+    private func downloadStatusText(for option: BackendOption, progress: Double) -> String {
+        if let snapshot = downloadSnapshots[option.model] {
+            if let message = snapshot.message, !message.isEmpty { return message }
+            switch snapshot.phase {
+            case .preparing: return "Preparing model..."
+            case .ready: return "Model ready"
+            case .paused: return "Paused — resume is available"
+            case .failed: return "Download failed — retry"
+            case .downloading: break
+            }
+        }
+        return downloadMessages[option.model] ?? "\(Int(progress * 100))% downloading..."
     }
 
     private func removeItemIfPresent(at url: URL, fileManager: FileManager) throws {

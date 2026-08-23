@@ -22,6 +22,22 @@ private enum DictationOutputMode {
     }
 }
 
+enum DictationBackendReadiness: Equatable {
+    case preparing
+    case ready
+    case failed
+
+    var allowsDictation: Bool { self == .ready }
+
+    func blockingMessage(backendLabel: String) -> String? {
+        switch self {
+        case .preparing: return "Warming up \(backendLabel)..."
+        case .ready: return nil
+        case .failed: return "\(backendLabel) unavailable"
+        }
+    }
+}
+
 enum DictionaryCorrectionPromptsToggleResult {
     case updated
     case needsAccessibilityPermission
@@ -486,6 +502,7 @@ final class MuesliController: NSObject {
     private let pendingMeetSpeakerObservationFutureTolerance: TimeInterval = 5 * 60
     private var staleLiveMeetingRecoveryFailures = Set<Int64>()
     private var dictationState: DictationState = .idle
+    private var dictationBackendReadiness: DictationBackendReadiness = .preparing
     private var dictationStartedAt: Date?
     private var dictationLatencyTraceID: UUID?
     private var dictationLatencyTraceStartedAt: Date?
@@ -590,7 +607,10 @@ final class MuesliController: NSObject {
             config: loadedConfig,
             dictationBackend: self.selectedBackend,
             downloadedOptions: BackendOption.downloaded
-        ) ?? configuredMeetingBackend ?? self.selectedBackend
+        ) ?? Self.fallbackMeetingTranscriptionBackend(
+            configured: configuredMeetingBackend,
+            dictationBackend: self.selectedBackend
+        )
         self.selectedMeetingSummaryBackend = MeetingSummaryBackendOption.all.first(where: {
             $0.backend == loadedConfig.meetingSummaryBackend
         }) ?? .chatGPT
@@ -842,9 +862,14 @@ final class MuesliController: NSObject {
                     await self.transcriptionCoordinator.setNemotron35PromptId(
                         self.config.resolvedNemotron35Language.promptId
                     )
+                    await self.transcriptionCoordinator.setQwen3AsrLanguage(
+                        self.config.resolvedQwen3AsrLanguage
+                    )
                 }
+                let dictationBackend = self.selectedBackend
+                guard await self.prepareDictationBackend(dictationBackend) else { return }
                 await self.transcriptionCoordinator.preload(
-                    backend: self.selectedBackend,
+                    backend: dictationBackend,
                     enablePostProcessor: self.shouldPreloadLocalPostProcessor,
                     includeMeetingHelpers: includesMeetings
                 )
@@ -1317,21 +1342,25 @@ final class MuesliController: NSObject {
     nonisolated static func availableMeetingTranscriptionBackend(
         config: AppConfig,
         dictationBackend: BackendOption,
-        downloadedOptions: [BackendOption] = BackendOption.downloaded
+        downloadedOptions: [BackendOption] = BackendOption.downloadedMeetingTranscription
     ) -> BackendOption? {
-        if let configured = BackendOption.resolve(
-            backend: config.meetingTranscriptionBackend,
-            model: config.meetingTranscriptionModel
-        ) {
-            return downloadedOptions.contains(configured) ? configured : nil
-        }
-
+        let eligibleOptions = downloadedOptions.filter(\.supportsMeetingTranscription)
+        let fallback = dictationBackend.supportsMeetingTranscription ? dictationBackend : nil
         return BackendOption.resolveDownloaded(
             backend: config.meetingTranscriptionBackend,
             model: config.meetingTranscriptionModel,
-            fallback: dictationBackend,
-            downloadedOptions: downloadedOptions
+            fallback: fallback,
+            downloadedOptions: eligibleOptions
         )
+    }
+
+    nonisolated private static func fallbackMeetingTranscriptionBackend(
+        configured: BackendOption?,
+        dictationBackend: BackendOption
+    ) -> BackendOption {
+        if let configured, configured.supportsMeetingTranscription { return configured }
+        if dictationBackend.supportsMeetingTranscription { return dictationBackend }
+        return BackendOption.all.first(where: \.supportsMeetingTranscription) ?? .gigaAMV3Russian
     }
 
     @discardableResult
@@ -1347,10 +1376,13 @@ final class MuesliController: NSObject {
             dictationBackend: dictationBackend,
             downloadedOptions: downloadedOptions
         ) else {
-            selectedMeetingTranscriptionBackend = BackendOption.resolve(
-                backend: config.meetingTranscriptionBackend,
-                model: config.meetingTranscriptionModel
-            ) ?? dictationBackend
+            selectedMeetingTranscriptionBackend = Self.fallbackMeetingTranscriptionBackend(
+                configured: BackendOption.resolve(
+                    backend: config.meetingTranscriptionBackend,
+                    model: config.meetingTranscriptionModel
+                ),
+                dictationBackend: dictationBackend
+            )
             appState.selectedMeetingTranscriptionBackend = selectedMeetingTranscriptionBackend
             appState.config = config
             return nil
@@ -1976,11 +2008,13 @@ final class MuesliController: NSObject {
             $0.sttBackend = option.backend
             $0.sttModel = option.model
         }
+        dictationBackendReadiness = .preparing
         Task { [weak self] in
             guard let self else { return }
             // Push the selected Nemotron 3.5 language before preload so the loaded
             // transcriber is conditioned on the right prompt_id.
             await self.transcriptionCoordinator.setNemotron35PromptId(self.config.resolvedNemotron35Language.promptId)
+            await self.transcriptionCoordinator.setQwen3AsrLanguage(self.config.resolvedQwen3AsrLanguage)
             let needsWarmup = option.backend == "whisper"
             if needsWarmup {
                 await MainActor.run {
@@ -1999,11 +2033,14 @@ final class MuesliController: NSObject {
                     )
                 }
             }
-            await self.transcriptionCoordinator.preload(
-                backend: option,
-                enablePostProcessor: self.shouldPreloadLocalPostProcessor,
-                includeMeetingHelpers: self.config.resolvedOnboardingUseCase.includesMeetings
-            )
+            let prepared = await self.prepareDictationBackend(option)
+            if prepared {
+                await self.transcriptionCoordinator.preload(
+                    backend: option,
+                    enablePostProcessor: self.shouldPreloadLocalPostProcessor,
+                    includeMeetingHelpers: self.config.resolvedOnboardingUseCase.includesMeetings
+                )
+            }
             await MainActor.run {
                 if needsWarmup {
                     self.indicator.hideLoading()
@@ -2014,13 +2051,45 @@ final class MuesliController: NSObject {
         }
     }
 
+    private func prepareDictationBackend(_ backend: BackendOption) async -> Bool {
+        do {
+            try await transcriptionCoordinator.preloadRequired(
+                backend: backend,
+                enablePostProcessor: false,
+                includeMeetingHelpers: false
+            )
+            guard selectedBackend == backend else { return false }
+            dictationBackendReadiness = .ready
+            indicator.hideLoading()
+            return true
+        } catch {
+            fputs("[muesli-native] dictation backend preparation failed for \(backend.backend)/\(backend.model): \(error)\n", stderr)
+            guard selectedBackend == backend else { return false }
+            dictationBackendReadiness = .failed
+            return false
+        }
+    }
+
     /// Update the Nemotron 3.5 dictation language and push the prompt_id to the runtime.
     func setNemotron35Language(_ language: Nemotron35Language) async {
         updateConfig { $0.nemotron35Language = language.rawValue }
         await transcriptionCoordinator.setNemotron35PromptId(language.promptId)
     }
 
+    func setQwen3AsrLanguage(_ language: Qwen3AsrLanguage) async {
+        updateConfig { $0.qwen3AsrLanguage = language.rawValue }
+        await transcriptionCoordinator.setQwen3AsrLanguage(language)
+    }
+
     func selectMeetingTranscriptionBackend(_ option: BackendOption, requireDownloaded: Bool = true) {
+        guard option.supportsMeetingTranscription else {
+            presentErrorAlert(
+                title: "Meeting model unavailable",
+                message: "\(option.label) is a live dictation model and cannot transcribe recordings."
+            )
+            normalizeMeetingTranscriptionSelectionForAvailability()
+            return
+        }
         guard !requireDownloaded || option.isDownloaded else {
             presentErrorAlert(
                 title: "Meeting model unavailable",
@@ -8171,7 +8240,24 @@ final class MuesliController: NSObject {
         selectedBackend.isStreamingDictationBackend
     }
 
+    private func ensureDictationBackendReady() -> Bool {
+        guard !isDictationTestMode else { return true }
+        guard !dictationBackendReadiness.allowsDictation else { return true }
+        guard let message = dictationBackendReadiness.blockingMessage(backendLabel: selectedBackend.label) else {
+            return true
+        }
+        statusBarController?.setStatus(message)
+        statusBarController?.refresh()
+        switch dictationBackendReadiness {
+        case .preparing: indicator.showLoading(message)
+        case .failed: indicator.showWarning(message, icon: "!")
+        case .ready: break
+        }
+        return false
+    }
+
     private func handlePrepare() {
+        guard ensureDictationBackendReady() else { return }
         if isMeetingRecording() { return }
         if blockDictationForMeetingActivityIfNeeded() { return }
         fputs("[muesli-native] prepare\n", stderr)
@@ -8191,6 +8277,7 @@ final class MuesliController: NSObject {
     }
 
     private func handleArm() {
+        guard ensureDictationBackendReady() else { return }
         if isMeetingRecording() { return }
         if blockDictationForMeetingActivityIfNeeded() { return }
         if dictationLatencyTraceID == nil {
@@ -8458,6 +8545,7 @@ final class MuesliController: NSObject {
     }
 
     private func handleStart() {
+        guard ensureDictationBackendReady() else { return }
         if isMeetingRecording() { return }
         if blockDictationForMeetingActivityIfNeeded() { return }
 
@@ -8632,6 +8720,7 @@ final class MuesliController: NSObject {
     }
 
     private func handleToggleStart(outputMode: DictationOutputMode? = nil) {
+        guard ensureDictationBackendReady() else { return }
         if isMeetingRecording() { return }
         if blockDictationForMeetingActivityIfNeeded() { return }
         fputs("[muesli-native] toggle dictation start\n", stderr)

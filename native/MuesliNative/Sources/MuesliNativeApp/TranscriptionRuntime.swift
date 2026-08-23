@@ -58,6 +58,7 @@ actor TranscriptionCoordinator {
     private let requiredBackendLoader: RequiredBackendLoader?
     private let diarizerLoadOperationTimeout: Duration
     private var activeBackend: String?
+    private var qwen3AsrLanguage: Qwen3AsrLanguage = .auto
 
     private var _nemotron35Transcriber: Any?
     /// Selected Nemotron 3.5 language prompt id (101 = auto). Stored so it survives
@@ -102,6 +103,28 @@ actor TranscriptionCoordinator {
 
     func unloadParakeetUnifiedTranscriber() async {
         await parakeetUnifiedTranscriber.shutdown()
+    }
+
+    func unloadFluidAudioTranscriber(version: AsrModelVersion) async {
+        await fluidTranscriber.shutdown(ifLoadedVersion: version)
+    }
+
+    func unloadWhisperTranscriber() async {
+        await whisperTranscriber.shutdown()
+    }
+
+    func unloadSenseVoiceTranscriber() async {
+        await senseVoiceTranscriber.shutdown()
+    }
+
+    func unloadQwen3Transcriber() async {
+        if #available(macOS 15, *), let transcriber = _qwen3Transcriber as? Qwen3AsrTranscriber {
+            await transcriber.shutdown()
+        }
+    }
+
+    func setQwen3AsrLanguage(_ language: Qwen3AsrLanguage) {
+        qwen3AsrLanguage = language
     }
 
     @available(macOS 15, *)
@@ -219,7 +242,8 @@ actor TranscriptionCoordinator {
         enablePostProcessor: Bool = false,
         includeMeetingHelpers: Bool = true,
         meetingHelperTrigger: DiarizerPreloadTrigger = .unspecified,
-        progress: ((Double, String?) -> Void)? = nil
+        progress: ((Double, String?) -> Void)? = nil,
+        progressSnapshot: ModelDownloadProgressHandler? = nil
     ) async {
         do {
             try await preloadRequired(
@@ -227,7 +251,8 @@ actor TranscriptionCoordinator {
                 enablePostProcessor: enablePostProcessor,
                 includeMeetingHelpers: includeMeetingHelpers,
                 meetingHelperTrigger: meetingHelperTrigger,
-                progress: progress
+                progress: progress,
+                progressSnapshot: progressSnapshot
             )
         } catch {
             fputs("[muesli-native] preload failed for \(backend.backend)/\(backend.model): \(error)\n", stderr)
@@ -239,7 +264,8 @@ actor TranscriptionCoordinator {
         enablePostProcessor: Bool = false,
         includeMeetingHelpers: Bool = true,
         meetingHelperTrigger: DiarizerPreloadTrigger = .unspecified,
-        progress: ((Double, String?) -> Void)? = nil
+        progress: ((Double, String?) -> Void)? = nil,
+        progressSnapshot: ModelDownloadProgressHandler? = nil
     ) async throws {
         activeBackend = backend.backend
         let startedAt = ContinuousClock.now
@@ -250,11 +276,11 @@ actor TranscriptionCoordinator {
             switch backend.backend {
         case "fluidaudio":
             let version: AsrModelVersion = backend.model.contains("v2") ? .v2 : .v3
-            try await fluidTranscriber.loadModels(version: version, progress: progress)
+            try await fluidTranscriber.loadModels(version: version, progress: progress, progressSnapshot: progressSnapshot)
         case "parakeet-unified":
-            try await parakeetUnifiedTranscriber.loadModels(progress: progress)
+            try await parakeetUnifiedTranscriber.loadModels(progress: progress, progressSnapshot: progressSnapshot)
         case "whisper":
-            try await whisperTranscriber.loadModel(modelName: backend.model, progress: progress)
+            try await whisperTranscriber.loadModel(modelName: backend.model, progress: progress, progressSnapshot: progressSnapshot)
             // Warmup ANE/GPU so first dictation doesn't pay CoreML compilation cost
             fputs("[muesli-native] WhisperKit warmup: running silent audio for CoreML compilation...\n", stderr)
             progress?(0.9, "Warming up model...")
@@ -279,7 +305,7 @@ actor TranscriptionCoordinator {
             try await onnxGigaAMTranscriber.loadModels(progress: progress)
         case "qwen":
             if #available(macOS 15, *) {
-                try await qwen3Transcriber.loadModels(progress: progress)
+                try await qwen3Transcriber.loadModels(progress: progress, progressSnapshot: progressSnapshot)
             } else {
                 throw NSError(domain: "MuesliTranscriptionRuntime", code: 2, userInfo: [
                     NSLocalizedDescriptionKey: "Qwen3 ASR requires macOS 15 or later.",
@@ -294,7 +320,7 @@ actor TranscriptionCoordinator {
                 ])
             }
         case "sensevoice":
-            try await senseVoiceTranscriber.loadModels(progress: progress)
+            try await senseVoiceTranscriber.loadModels(progress: progress, progressSnapshot: progressSnapshot)
         default:
             throw NSError(domain: "MuesliTranscriptionRuntime", code: 5, userInfo: [
                 NSLocalizedDescriptionKey: "Unknown transcription backend: \(backend.backend)",
@@ -890,9 +916,9 @@ actor TranscriptionCoordinator {
             fputs("[muesli-native] transcribing with Qwen3 ASR: \(url.lastPathComponent)\n", stderr)
             let result: (text: String, processingTime: Double)
             if let samples {
-                result = try await qwen3Transcriber.transcribe(audioSamples: samples)
+                result = try await qwen3Transcriber.transcribe(audioSamples: samples, language: qwen3AsrLanguage.pinnedCode)
             } else {
-                result = try await qwen3Transcriber.transcribe(wavURL: url)
+                result = try await qwen3Transcriber.transcribe(wavURL: url, language: qwen3AsrLanguage.pinnedCode)
             }
             fputs("[muesli-native] Qwen3 ASR result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)

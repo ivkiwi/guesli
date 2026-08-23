@@ -200,6 +200,8 @@ public struct ManagedASRModelPlan: Sendable {
 /// Canonical cache layouts and artifact sets shared by the app and CLI.
 public enum ManagedASRModelPlans {
     private static let fluidAudioRootRelativePath = "Library/Application Support/FluidAudio/Models"
+    private static let whisperKitRootRelativePath = "Library/Application Support/Guesli/Models/WhisperKit"
+    private static let legacyWhisperKitRootRelativePath = "Documents/huggingface/models/argmaxinc/whisperkit-coreml"
 
     public static func fluidAudioModelsRoot(fileManager: FileManager = .default) -> URL {
         fileManager.homeDirectoryForCurrentUser
@@ -323,7 +325,7 @@ public enum ManagedASRModelPlans {
     ) -> ManagedASRModelPlan {
         let fullName = modelName.hasPrefix("openai_whisper-") ? modelName : "openai_whisper-\(modelName)"
         let root = downloadRoot ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents/huggingface/models/argmaxinc/whisperkit-coreml", isDirectory: true)
+            .appendingPathComponent(whisperKitRootRelativePath, isDirectory: true)
         let directory = root.appendingPathComponent(fullName, isDirectory: true)
         let requiredModels = [
             "MelSpectrogram.mlmodelc", "AudioEncoder.mlmodelc", "TextDecoder.mlmodelc",
@@ -339,6 +341,87 @@ public enum ManagedASRModelPlans {
             )],
             requiredArtifactAlternatives: completenessRequirements(for: requiredFiles)
         )
+    }
+
+    /// The old WhisperKit default lived in Documents. Treat it as an import
+    /// source only: managed downloads and deletion always target Application Support.
+    public static func legacyWhisperKit(
+        modelName: String,
+        legacyRoot: URL? = nil,
+        fileManager: FileManager = .default
+    ) -> ManagedASRModelPlan {
+        let root = legacyRoot ?? fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(legacyWhisperKitRootRelativePath, isDirectory: true)
+        return whisperKit(modelName: modelName, downloadRoot: root)
+    }
+
+    public static func isWhisperKitAvailable(
+        modelName: String,
+        downloadRoot: URL? = nil,
+        legacyRoot: URL? = nil,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        let canonical = whisperKit(modelName: modelName, downloadRoot: downloadRoot)
+        if canonical.isAvailableLocally(fileManager: fileManager) { return true }
+        guard !fileManager.fileExists(atPath: whisperLegacyImportMarker(
+            modelName: modelName,
+            downloadRoot: downloadRoot,
+            fileManager: fileManager
+        ).path) else { return false }
+        return legacyWhisperKit(modelName: modelName, legacyRoot: legacyRoot, fileManager: fileManager)
+            .isAvailableLocally(fileManager: fileManager)
+    }
+
+    /// Atomically copies a complete legacy Documents cache into the canonical
+    /// managed location. The legacy source is never changed or deleted.
+    @discardableResult
+    public static func migrateLegacyWhisperKitIfNeeded(
+        modelName: String,
+        downloadRoot: URL? = nil,
+        legacyRoot: URL? = nil,
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        let canonical = whisperKit(modelName: modelName, downloadRoot: downloadRoot)
+        let marker = whisperLegacyImportMarker(
+            modelName: modelName,
+            downloadRoot: downloadRoot,
+            fileManager: fileManager
+        )
+        if canonical.isAvailableLocally(fileManager: fileManager) {
+            if !fileManager.fileExists(atPath: marker.path) {
+                try fileManager.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data().write(to: marker, options: .atomic)
+            }
+            return canonical.cacheDirectory
+        }
+        guard !fileManager.fileExists(atPath: marker.path) else { return canonical.cacheDirectory }
+
+        let legacy = legacyWhisperKit(modelName: modelName, legacyRoot: legacyRoot, fileManager: fileManager)
+        guard legacy.isAvailableLocally(fileManager: fileManager) else { return canonical.cacheDirectory }
+        guard !fileManager.fileExists(atPath: canonical.cacheDirectory.path) else { return canonical.cacheDirectory }
+
+        let parent = canonical.cacheDirectory.deletingLastPathComponent()
+        let staging = parent.appendingPathComponent(".\(canonical.cacheDirectory.lastPathComponent).legacy-import-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+        do {
+            try fileManager.copyItem(at: legacy.cacheDirectory, to: staging)
+            try fileManager.moveItem(at: staging, to: canonical.cacheDirectory)
+            try Data().write(to: marker, options: .atomic)
+        } catch {
+            try? fileManager.removeItem(at: staging)
+            throw error
+        }
+        return canonical.cacheDirectory
+    }
+
+    private static func whisperLegacyImportMarker(
+        modelName: String,
+        downloadRoot: URL?,
+        fileManager: FileManager
+    ) -> URL {
+        let plan = whisperKit(modelName: modelName, downloadRoot: downloadRoot)
+        return plan.cacheDirectory.deletingLastPathComponent()
+            .appendingPathComponent(".\(plan.cacheDirectory.lastPathComponent).legacy-imported")
     }
 
     private static func fluidAudioPlan(

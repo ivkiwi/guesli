@@ -149,6 +149,10 @@ struct BackendOption: Equatable {
         all.filter { $0.isDownloaded }
     }
 
+    static var downloadedMeetingTranscription: [BackendOption] {
+        downloaded.filter(\.supportsMeetingTranscription)
+    }
+
     static func resolve(backend: String, model: String) -> BackendOption? {
         let legacyGigaAMModels: Set<String> = [
             "huggingfinger0/gigaam-v3-coreml",
@@ -163,6 +167,10 @@ struct BackendOption: Equatable {
 
     var isStreamingDictationBackend: Bool {
         backend == "nemotron35"
+    }
+
+    var supportsMeetingTranscription: Bool {
+        !isStreamingDictationBackend
     }
 
     static func resolveDownloaded(
@@ -186,19 +194,14 @@ struct BackendOption: Equatable {
         let fm = FileManager.default
         switch backend {
         case "parakeet-unified":
-            return ParakeetUnifiedTranscriber.isModelDownloaded()
+            return ManagedASRModelPlans.parakeetUnified().isAvailableLocally(fileManager: fm)
         case "whisper":
             return WhisperKitTranscriber.isModelDownloaded(model)
         case "fluidaudio":
-            let supportDir = fm.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support/FluidAudio/Models")
-            if model.contains("parakeet") {
-                let version = model.contains("v2") ? "v2" : "v3"
-                if let contents = try? fm.contentsOfDirectory(at: supportDir, includingPropertiesForKeys: nil) {
-                    return contents.contains { $0.lastPathComponent.contains("parakeet") && $0.lastPathComponent.contains(version) }
-                }
-            }
-            return false
+            let plan = model.contains("v2")
+                ? ManagedASRModelPlans.parakeetV2()
+                : ManagedASRModelPlans.parakeetV3()
+            return plan.isAvailableLocally(fileManager: fm)
         case "qwen":
             return Qwen3AsrModelStore.isModelDownloaded(fileManager: fm)
         case "nemotron35":
@@ -210,7 +213,7 @@ struct BackendOption: Equatable {
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
         case "sensevoice":
-            return SenseVoiceTranscriber.isModelDownloaded()
+            return SenseVoiceTranscriber.isModelDownloaded(fileManager: fm)
         default:
             return false
         }
@@ -280,6 +283,54 @@ enum Nemotron35Language: String, CaseIterable, Codable, Sendable {
             return defaultLanguage
         }
         return language
+    }
+
+    static func resolvedCode(_ rawValue: String?) -> String {
+        resolved(rawValue).rawValue
+    }
+}
+
+/// Qwen3 uses nil for automatic language detection and an ISO code when pinned.
+enum Qwen3AsrLanguage: Hashable, Sendable {
+    case auto
+    case pinned(MuesliQwen3AsrConfig.Language)
+
+    static let defaultLanguage: Self = .auto
+    static var allCases: [Self] {
+        [.auto] + MuesliQwen3AsrConfig.Language.allCases.map(Self.pinned)
+    }
+
+    var label: String {
+        switch self {
+        case .auto: return "Auto-detect"
+        case .pinned(let language): return language.englishName
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .auto: return "auto"
+        case .pinned(let language): return language.rawValue
+        }
+    }
+
+    var pinnedCode: String? {
+        switch self {
+        case .auto: return nil
+        case .pinned(let language): return language.rawValue
+        }
+    }
+
+    static func resolved(_ rawValue: String?) -> Self {
+        let normalized = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let normalized, !normalized.isEmpty, normalized != "auto" else { return .auto }
+        if let language = MuesliQwen3AsrConfig.Language(rawValue: normalized) {
+            return .pinned(language)
+        }
+        if let language = MuesliQwen3AsrConfig.Language(from: normalized) {
+            return .pinned(language)
+        }
+        return .auto
     }
 
     static func resolvedCode(_ rawValue: String?) -> String {
@@ -1076,6 +1127,7 @@ struct AppConfig: Codable {
     var cohereLanguageMeetings: String = CohereTranscribeLanguage.defaultLanguage.rawValue
     private var legacyCohereLanguage: String? = nil
     var nemotron35Language: String = Nemotron35Language.defaultLanguage.rawValue
+    var qwen3AsrLanguage: String = Qwen3AsrLanguage.defaultLanguage.rawValue
     var meetingTranscriptionBackend: String = BackendOption.gigaAMV3Russian.backend
     var meetingTranscriptionModel: String = BackendOption.gigaAMV3Russian.model
     var preferredMeetingBrowserBundleID: String = ""
@@ -1189,6 +1241,7 @@ struct AppConfig: Codable {
         case cohereLanguageDictation = "cohere_language_dictation"
         case cohereLanguageMeetings = "cohere_language_meetings"
         case nemotron35Language = "nemotron35_language"
+        case qwen3AsrLanguage = "qwen3_asr_language"
         case meetingTranscriptionBackend = "meeting_transcription_backend"
         case meetingTranscriptionModel = "meeting_transcription_model"
         case preferredMeetingBrowserBundleID = "preferred_meeting_browser_bundle_id"
@@ -1317,6 +1370,7 @@ struct AppConfig: Codable {
         cohereLanguageDictation = CohereTranscribeLanguage.resolvedCode(cohereLanguageDictationRaw)
         cohereLanguageMeetings = CohereTranscribeLanguage.resolvedCode(cohereLanguageMeetingsRaw)
         nemotron35Language = Nemotron35Language.resolvedCode(try? c.decode(String.self, forKey: .nemotron35Language))
+        qwen3AsrLanguage = Qwen3AsrLanguage.resolvedCode(try? c.decode(String.self, forKey: .qwen3AsrLanguage))
         meetingTranscriptionBackend = (try? c.decode(String.self, forKey: .meetingTranscriptionBackend)) ?? sttBackend
         meetingTranscriptionModel = (try? c.decode(String.self, forKey: .meetingTranscriptionModel)) ?? sttModel
         preferredMeetingBrowserBundleID = (try? c.decode(String.self, forKey: .preferredMeetingBrowserBundleID)) ?? defaults.preferredMeetingBrowserBundleID
@@ -1489,6 +1543,10 @@ struct AppConfig: Codable {
 
     var resolvedNemotron35Language: Nemotron35Language {
         Nemotron35Language.resolved(nemotron35Language)
+    }
+
+    var resolvedQwen3AsrLanguage: Qwen3AsrLanguage {
+        Qwen3AsrLanguage.resolved(qwen3AsrLanguage)
     }
 
     var resolvedOnboardingUseCase: OnboardingUseCase {

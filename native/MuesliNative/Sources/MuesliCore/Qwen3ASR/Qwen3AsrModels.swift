@@ -139,57 +139,24 @@ public struct MuesliQwen3AsrModels: Sendable {
             )
         }
 
-        if !force && modelsExist(at: targetDir) {
+        let plan = ManagedASRModelPlans.qwen3ASRInt8(cacheDirectory: targetDir)
+        if !force && plan.isAvailableLocally() {
             logger.info("Qwen3-ASR \(variant.rawValue) models already present at: \(targetDir.path)")
             return targetDir
         }
 
         if force {
-            try? FileManager.default.removeItem(at: targetDir)
+            try plan.delete(fileManager: .default)
         }
 
         logger.info("Downloading Qwen3-ASR \(variant.rawValue) models via managed downloader...")
-        let plan = ManagedASRModelPlans.qwen3ASRInt8()
-        if force {
-            // The managed downloader short-circuits on its canonical cache, so a
-            // forced re-download must purge that cache (and the requested
-            // destination) before starting, or stale artifacts survive.
-            try? plan.delete(fileManager: .default)
-            try? FileManager.default.removeItem(at: targetDir)
-        }
         _ = try await ManagedASRModelDownloader.downloadIfNeeded(
             plan,
             progress: { fraction, _ in progressHandler?(fraction) }
         )
 
-        // The managed plan installs into its canonical cache directory. Honor a
-        // caller-provided destination by copying the artifacts there, so
-        // `downloadAndLoad(to:)` always loads from a directory that has them.
-        if let directory,
-           directory.standardizedFileURL != plan.cacheDirectory.standardizedFileURL {
-            try installArtifacts(from: plan.cacheDirectory, to: directory)
-        }
-
         logger.info("Successfully downloaded Qwen3-ASR \(variant.rawValue) models")
         return targetDir
-    }
-
-    /// Copy the artifacts in `source` into `destination`, replacing any existing
-    /// files with the same names. Creates `destination` if needed.
-    static func installArtifacts(from source: URL, to destination: URL) throws {
-        let fileManager = FileManager.default
-        let contents = try fileManager.contentsOfDirectory(
-            at: source,
-            includingPropertiesForKeys: nil
-        )
-        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
-        for item in contents {
-            let target = destination.appendingPathComponent(item.lastPathComponent)
-            if fileManager.fileExists(atPath: target.path) {
-                try fileManager.removeItem(at: target)
-            }
-            try fileManager.copyItem(at: item, to: target)
-        }
     }
 
     /// Check if all required model files exist locally.
