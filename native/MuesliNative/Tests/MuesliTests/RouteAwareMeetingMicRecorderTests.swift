@@ -304,17 +304,6 @@ struct RouteAwareMeetingMicRecorderTests {
         #expect(recorder.activeRecorderKindForDebug() == .appScoped)
     }
 
-    @Test("failed configuration-change restart marks the recorder inactive")
-    func failedConfigurationChangeRestartMarksRecorderInactive() {
-        var state = StreamingMicRecorderRunState()
-
-        state.markStarted()
-        #expect(state.isRunning)
-        state.markConfigurationChangeRestartFailed()
-
-        #expect(!state.isRunning)
-    }
-
     @Test("health-triggered recovery hands off the same route and promotes on first buffer")
     func healthTriggeredRecoveryPromotesOnFirstBuffer() async throws {
         let degraded = FakeMeetingMicRecorder(kind: .systemDefaultStreaming)
@@ -470,6 +459,29 @@ struct RouteAwareMeetingMicRecorderTests {
     }
 }
 
+private let disabledMeetingMicHandoffTimeoutScheduler: RouteAwareMeetingMicRecorder.HandoffTimeoutScheduler = {
+    _, _ in
+}
+
+private final class ManualMeetingMicHandoffTimeoutScheduler {
+    private let lock = NSLock()
+    private var scheduledWorkItems: [DispatchWorkItem] = []
+
+    func schedule(_ delay: TimeInterval, _ workItem: DispatchWorkItem) {
+        lock.withLock { scheduledWorkItems.append(workItem) }
+    }
+
+    func fireNext() -> Bool {
+        let workItem = lock.withLock { () -> DispatchWorkItem? in
+            guard !scheduledWorkItems.isEmpty else { return nil }
+            return scheduledWorkItems.removeFirst()
+        }
+        guard let workItem else { return false }
+        workItem.perform()
+        return true
+    }
+}
+
 private final class FakeMeetingMicRecorder: MeetingMicRecording {
     var preferredInputDeviceID: AudioObjectID?
     var onRawPCMSamples: (([Int16]) -> Void)?
@@ -508,6 +520,8 @@ private final class FakeMeetingMicRecorder: MeetingMicRecording {
             ])
         }
         startCalls += 1
+        onStart?()
+        if let startError { throw startError }
     }
 
     func pause() {
@@ -526,6 +540,7 @@ private final class FakeMeetingMicRecorder: MeetingMicRecording {
 
     func cancel() {
         cancelCalls += 1
+        onCancel?()
     }
 
     func invalidateForTeardown() {

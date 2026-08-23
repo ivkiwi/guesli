@@ -565,45 +565,6 @@ final class MeetingSession {
         speakerObservationLock.withLock { MeetSpeakerObservationStats.make(from: $0) }
     }
 
-    /// True when the capture device is muted or zero-gain at the source (user
-    /// intent), which presents the same all-zero signature as a broken route.
-    /// Read once per degradation confirmation, never per sample.
-    private func isCaptureInputMuted() -> Bool {
-        var deviceID = meetingMicRecorder.preferredInputDeviceID ?? kAudioObjectUnknown
-        if deviceID == kAudioObjectUnknown {
-            var address = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultInputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var size = UInt32(MemoryLayout<AudioObjectID>.size)
-            guard AudioObjectGetPropertyData(
-                AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
-            ) == noErr, deviceID != kAudioObjectUnknown else { return false }
-        }
-        var volumeAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeScalar,
-            mScope: kAudioObjectPropertyScopeInput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var volume: Float32 = 1
-        var volumeSize = UInt32(MemoryLayout<Float32>.size)
-        if AudioObjectGetPropertyData(deviceID, &volumeAddress, 0, nil, &volumeSize, &volume) == noErr {
-            return volume <= 0.0001
-        }
-        var muteAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioObjectPropertyScopeInput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var muted: UInt32 = 0
-        var muteSize = UInt32(MemoryLayout<UInt32>.size)
-        if AudioObjectGetPropertyData(deviceID, &muteAddress, 0, nil, &muteSize, &muted) == noErr {
-            return muted != 0
-        }
-        return false
-    }
-
     private func currentBackend() -> BackendOption {
         backendLock.withLock { $0 }
     }
@@ -2217,7 +2178,18 @@ final class MeetingSession {
             .filter { !$0.isSelf }
             .map(\.name)
         guard !participantNames.isEmpty else { return name }
-        return participantNames.contains { speakerName(name, matches: $0) } ? name : nil
+        let normalizedCandidate = normalizedSpeakerName(name)
+        if let exact = participantNames.first(where: { speakerName(name, matches: $0) }) {
+            return exact
+        }
+        let prefixMatches = participantNames.filter { participant in
+            let normalizedParticipant = normalizedSpeakerName(participant)
+            let shorter = min(normalizedCandidate.count, normalizedParticipant.count)
+            return shorter >= 5
+                && (normalizedCandidate.hasPrefix(normalizedParticipant)
+                    || normalizedParticipant.hasPrefix(normalizedCandidate))
+        }
+        return prefixMatches.count == 1 ? prefixMatches[0] : nil
     }
 
     private static func speakerName(_ lhs: String, matches rhs: String) -> Bool {

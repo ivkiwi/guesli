@@ -285,6 +285,54 @@ struct MeetSpeakerBridgeTests {
         #expect(map["spk_0"] == "Bob Reviewer")
     }
 
+    @Test("speaker map accepts one normalized participant prefix")
+    func speakerMapAcceptsUniqueParticipantPrefix() {
+        let start = Date(timeIntervalSince1970: 1000)
+        let observation = MeetSpeakerObservation(
+            meetingURL: nil,
+            speakerName: "Kirill Pro",
+            activeSpeakers: ["Kirill Pro"],
+            participants: [
+                MeetingParticipant(name: "Kirill Prokhorov", email: nil, isOrganizer: false, isSelf: false),
+                MeetingParticipant(name: "Alice Owner", email: nil, isOrganizer: false, isSelf: false),
+            ],
+            observedAt: start.addingTimeInterval(1),
+            source: "test"
+        )
+
+        let map = MeetingSession.speakerNameMap(
+            diarizationSegments: [makeDiarSeg(speakerId: "spk_0", start: 0, end: 3)],
+            observations: [observation],
+            meetingStart: start
+        )
+
+        #expect(map["spk_0"] == "Kirill Prokhorov")
+    }
+
+    @Test("speaker map rejects ambiguous participant prefixes")
+    func speakerMapRejectsAmbiguousParticipantPrefix() {
+        let start = Date(timeIntervalSince1970: 1000)
+        let observation = MeetSpeakerObservation(
+            meetingURL: nil,
+            speakerName: "Anton Kuli",
+            activeSpeakers: ["Anton Kuli"],
+            participants: [
+                MeetingParticipant(name: "Anton Kulin", email: nil, isOrganizer: false, isSelf: false),
+                MeetingParticipant(name: "Anton Kulikov", email: nil, isOrganizer: false, isSelf: false),
+            ],
+            observedAt: start.addingTimeInterval(1),
+            source: "test"
+        )
+
+        let map = MeetingSession.speakerNameMap(
+            diarizationSegments: [makeDiarSeg(speakerId: "spk_0", start: 0, end: 3)],
+            observations: [observation],
+            meetingStart: start
+        )
+
+        #expect(map["spk_0"] == nil)
+    }
+
     @Test("speaker map ignores unmatched backup events when scoring a real match")
     func speakerMapIgnoresUnmatchedBackupEvents() {
         let start = Date(timeIntervalSince1970: 1000)

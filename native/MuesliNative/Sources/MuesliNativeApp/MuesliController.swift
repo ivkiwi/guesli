@@ -6205,7 +6205,6 @@ final class MuesliController: NSObject {
             disarmMeetingAutoStop()
             indicator.setMeetingRecording(false, config: config)
             if let meetingID = activeMeetingID {
-                micEpisodeTelemetryGate.authorize(meetingID)
                 activeMeetingID = nil
                 if activeMeetingAudioWarning?.meetingID == meetingID {
                     activeMeetingAudioWarning = nil
@@ -6221,9 +6220,6 @@ final class MuesliController: NSObject {
         self.activeMeetingSession = nil
         indicator.setMeetingRecording(false, config: config)
         if let meetingID = activeMeetingID {
-            // Preserve identity for episode terminal telemetry emitted by the
-            // discarding session (it hops to the main actor asynchronously).
-            micEpisodeTelemetryGate.authorize(meetingID)
             activeMeetingID = nil
             if activeMeetingAudioWarning?.meetingID == meetingID {
                 activeMeetingAudioWarning = nil
@@ -6514,9 +6510,6 @@ final class MuesliController: NSObject {
 
         // Unblock new recordings immediately — transcription runs in the background
         activeMeetingSession = nil
-        if let activeMeetingID {
-            micEpisodeTelemetryGate.authorize(activeMeetingID)
-        }
         activeMeetingID = nil
         if let liveMeetingID, activeMeetingAudioWarning?.meetingID == liveMeetingID {
             activeMeetingAudioWarning = nil

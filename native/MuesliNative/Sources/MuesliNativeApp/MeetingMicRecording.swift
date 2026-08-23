@@ -70,6 +70,10 @@ protocol MeetingMicRecording: AnyObject {
 }
 
 extension MeetingMicRecording {
+    var onHandoffOutcome: ((MeetingMicHandoffOutcome) -> Void)? {
+        get { nil }
+        set {}
+    }
     func invalidateForTeardown() {}
     func requestSameRouteRecovery(reason: String) -> MeetingMicRecoveryRequestResult { .unavailable }
 }

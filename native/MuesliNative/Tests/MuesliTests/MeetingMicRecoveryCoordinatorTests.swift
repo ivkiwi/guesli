@@ -112,20 +112,20 @@ struct MeetingMicRecoveryCoordinatorTests {
         #expect(!harness.coordinator.hasActiveEpisode)
     }
 
-    @Test("a healthy blip does not close the episode or reset the retry budget")
+    @Test("an all-zero mic blip does not reset or spend the recovery budget")
     func healthyBlipKeepsEpisodeOpen() {
         let harness = Harness(cooldown: 0.5, maxAttempts: 2)
         harness.systemActive(seconds: 3)           // episode starts at t=3, attempt 1
         harness.micSignal()                        // healthy blip (not sustained)
         harness.micSilence()                       // mic goes all-zero again
-        harness.systemActive(seconds: 4)           // re-degrades (zero-mic) at ~t=6: flap, attempt 2
+        harness.systemActive(seconds: 4)           // all-zero is software mute, not a recovery trigger
 
         #expect(harness.events.map(\.kind) == [.degraded])
-        #expect(harness.recoveryRequests.count == 2)
+        #expect(harness.recoveryRequests.count == 1)
         #expect(harness.coordinator.hasActiveEpisode)
 
-        harness.systemActive(seconds: 2)           // still degraded; budget exhausted
-        #expect(harness.recoveryRequests.count == 2)
+        harness.systemActive(seconds: 2)
+        #expect(harness.recoveryRequests.count == 1)
     }
 
     @Test("a second episode after sustained recovery is a new episode")
@@ -214,6 +214,18 @@ struct MeetingMicRecoveryCoordinatorTests {
         }
         #expect(harness.events.isEmpty)
         #expect(harness.recoveryRequests.isEmpty)
+    }
+
+    @Test("software-muted zero callbacks do not trigger route recovery")
+    func softwareMutedMicDoesNotTriggerRecovery() {
+        let harness = Harness()
+        harness.micSilence()
+        harness.systemActive(seconds: 4)
+
+        #expect(harness.tracker.snapshot().state == .micAllZeroWhileSystemActive)
+        #expect(harness.events.isEmpty)
+        #expect(harness.recoveryRequests.isEmpty)
+        #expect(!harness.coordinator.hasActiveEpisode)
     }
 
     @Test("muted input at confirmation suppresses the episode and signals once")

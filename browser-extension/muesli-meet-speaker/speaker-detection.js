@@ -34,9 +34,11 @@
   }
 
   function preferExplicitSpeakers(explicitSpeakers, captionSpeakers) {
-    return Array.isArray(explicitSpeakers) && explicitSpeakers.length > 0
-      ? explicitSpeakers
-      : (Array.isArray(captionSpeakers) ? captionSpeakers : []);
+    const explicit = Array.isArray(explicitSpeakers) ? explicitSpeakers : [];
+    const captions = Array.isArray(captionSpeakers) ? captionSpeakers : [];
+    if (explicit.length === 1) return explicit;
+    if (captions.length === 1) return captions;
+    return [];
   }
 
   const api = { participantNameMatches, captionSpeakerFromLines, preferExplicitSpeakers };
