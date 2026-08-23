@@ -391,7 +391,8 @@ private final class DictationLatencyLogWriter: @unchecked Sendable {
 }
 
 @MainActor
-final class MuesliController: NSObject {
+public final class MuesliController: NSObject {
+    public static weak var current: MuesliController?
     private static let maxDismissedDictionarySuggestionKeys = 200
     private static let maxDictionarySuggestions = 50
     private static let maxDictionarySuggestionPromptQueue = 10
@@ -646,6 +647,7 @@ final class MuesliController: NSObject {
 
     func start() {
         hasStarted = true
+        MuesliController.current = self
         do {
             try dictationStore.migrateIfNeeded()
         } catch {
@@ -8923,10 +8925,11 @@ final class MuesliController: NSObject {
         syncDictationRecorderWarmup(intent: .postDictation(.cancel))
     }
 
-    private func handleToggleStart(outputMode: DictationOutputMode? = nil) {
-        guard ensureDictationBackendReady() else { return }
-        if isMeetingRecording() { return }
-        if blockDictationForMeetingActivityIfNeeded() { return }
+    @discardableResult
+    private func handleToggleStart(outputMode: DictationOutputMode? = nil) -> Bool {
+        guard ensureDictationBackendReady() else { return false }
+        if isMeetingRecording() { return false }
+        if blockDictationForMeetingActivityIfNeeded() { return false }
         fputs("[muesli-native] toggle dictation start\n", stderr)
         if dictationLatencyTraceID == nil {
             beginDictationLatencyTrace(reason: "toggle")
@@ -8959,7 +8962,7 @@ final class MuesliController: NSObject {
                 startNemotronStreamingAsync(
                     sessionID: sessionID
                 )
-                return
+                return true
             }
         }
 
@@ -8968,12 +8971,53 @@ final class MuesliController: NSObject {
             duckingEnabled: config.muteSystemAudioDuringDictation,
             mediaPauseEnabled: config.pauseMediaDuringDictation
         )
+        return true
     }
 
     private func handleToggleStop() {
         fputs("[muesli-native] toggle dictation stop\n", stderr)
         indicator.isToggleDictation = false
         handleStop()
+    }
+
+    @discardableResult
+    public func startDictationForShortcuts() -> Bool {
+        guard config.hasCompletedOnboarding,
+              ensureBasicDictationPermissionsBeforeDashboard(),
+              !isDictationActivityInProgress,
+              !dictationAudioSessionManager.hasActiveSession,
+              !isMeetingRecording(),
+              !isStartingMeetingRecording else { return false }
+        return handleToggleStart()
+    }
+
+    @discardableResult
+    public func stopDictationForShortcuts() -> Bool {
+        guard dictationStartedAt != nil
+                || dictationAudioSessionManager.hasActiveSession
+                || isNemotron35Streaming else { return false }
+        handleToggleStop()
+        return true
+    }
+
+    @discardableResult
+    public func startMeetingRecordingForShortcuts(title: String = "Meeting") -> Bool {
+        guard config.hasCompletedOnboarding else { return false }
+        return startForegroundMeetingRecording(
+            title: title,
+            presentation: .backgroundPill
+        )
+    }
+
+    @discardableResult
+    public func stopMeetingRecordingForShortcuts() -> Bool {
+        if isStartingMeetingRecording, activeMeetingSession == nil {
+            cancelMeetingPreparation()
+            return true
+        }
+        guard isMeetingRecording() else { return false }
+        stopMeetingRecording()
+        return true
     }
 
     func toggleVoiceNoteRecording() {
