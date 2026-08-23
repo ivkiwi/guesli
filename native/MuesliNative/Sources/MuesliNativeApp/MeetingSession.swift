@@ -663,34 +663,29 @@ final class MeetingSession {
 #endif
     }
 
-    private func withStopPhaseTimeout<Value: Sendable>(
+    func withStopPhaseTimeout<Value: Sendable>(
         _ phase: String,
         timeout seconds: TimeInterval,
         operation: @escaping () async throws -> Value
     ) async throws -> Value {
         noteStopPhaseForTesting(phase)
         let boundedSeconds = min(max(seconds, 0.001), 86_400)
-        let nanoseconds = UInt64(boundedSeconds * 1_000_000_000)
-
-        return try await withThrowingTaskGroup(of: Value.self) { group in
-            group.addTask {
-                try await operation()
+        let controller = WallClockTimeoutController<Value>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                controller.start(
+                    continuation: continuation,
+                    seconds: boundedSeconds,
+                    timeoutError: MeetingStopPhaseError.timedOut(
+                        phase: phase,
+                        seconds: boundedSeconds
+                    ),
+                    onCancel: {},
+                    operation: operation
+                )
             }
-            group.addTask {
-                try await Task.sleep(nanoseconds: nanoseconds)
-                throw MeetingStopPhaseError.timedOut(phase: phase, seconds: boundedSeconds)
-            }
-
-            do {
-                guard let result = try await group.next() else {
-                    throw CancellationError()
-                }
-                group.cancelAll()
-                return result
-            } catch {
-                group.cancelAll()
-                throw error
-            }
+        } onCancel: {
+            controller.finish(.failure(CancellationError()))
         }
     }
 

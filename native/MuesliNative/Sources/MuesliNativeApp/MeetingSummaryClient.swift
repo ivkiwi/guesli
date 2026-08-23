@@ -136,18 +136,19 @@ enum MeetingSummaryRetryPolicy {
     }
 }
 
-private final class SummaryTimeoutController: @unchecked Sendable {
+final class WallClockTimeoutController<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<String, Error>?
+    private var continuation: CheckedContinuation<Value, Error>?
     private var operationTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
-    private var pendingResult: Result<String, Error>?
+    private var pendingResult: Result<Value, Error>?
 
     func start(
-        continuation: CheckedContinuation<String, Error>,
+        continuation: CheckedContinuation<Value, Error>,
         seconds: TimeInterval,
+        timeoutError: Error,
         onCancel: @escaping @Sendable () -> Void,
-        operation: @escaping () async throws -> String
+        operation: @escaping () async throws -> Value
     ) {
         lock.lock()
         if let pendingResult {
@@ -172,10 +173,7 @@ private final class SummaryTimeoutController: @unchecked Sendable {
             } catch {
                 return
             }
-            guard self?.finish(.failure(MeetingSummaryError.requestFailed(
-                backend: "Summary",
-                underlying: URLError(.timedOut)
-            ))) == true else { return }
+            guard self?.finish(.failure(timeoutError)) == true else { return }
             operationTask.cancel()
             onCancel()
         }
@@ -193,7 +191,7 @@ private final class SummaryTimeoutController: @unchecked Sendable {
     }
 
     @discardableResult
-    func finish(_ result: Result<String, Error>) -> Bool {
+    func finish(_ result: Result<Value, Error>) -> Bool {
         lock.lock()
         guard let continuation else {
             if operationTask == nil, timeoutTask == nil, pendingResult == nil {
@@ -356,12 +354,16 @@ enum MeetingSummaryClient {
         operation: @escaping () async throws -> String
     ) async throws -> String {
         let boundedSeconds = min(max(seconds, 0.001), 86_400)
-        let controller = SummaryTimeoutController()
+        let controller = WallClockTimeoutController<String>()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 controller.start(
                     continuation: continuation,
                     seconds: boundedSeconds,
+                    timeoutError: MeetingSummaryError.requestFailed(
+                        backend: "Summary",
+                        underlying: URLError(.timedOut)
+                    ),
                     onCancel: onCancel,
                     operation: operation
                 )
