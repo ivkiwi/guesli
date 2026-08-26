@@ -106,6 +106,7 @@ struct SettingsView: View {
     @State private var downloadedBackendOptions: [BackendOption] = []
     @State private var downloadedPostProcOptions: [PostProcessorOption] = []
     @State private var dictationInputDevices: [AudioInputDeviceInfo] = []
+    @State private var audioInputDeviceRefreshTask: Task<Void, Never>?
     @State private var permissionPollTimer: Timer?
     @State private var isCleanupPromptManagerPresented = false
     @State private var micGranted = false
@@ -251,6 +252,8 @@ struct SettingsView: View {
         .onDisappear {
             SoundController.stopMaraudersMapClip()
             isPreviewingClip = false
+            audioInputDeviceRefreshTask?.cancel()
+            audioInputDeviceRefreshTask = nil
             stopPermissionPolling()
         }
         .onChange(of: appState.selectedTab) { _, tab in
@@ -328,7 +331,13 @@ struct SettingsView: View {
     }
 
     private func refreshDictationInputDevices() {
-        dictationInputDevices = controller.availableDictationInputDevices()
+        dictationInputDevices = controller.cachedDictationInputDevices()
+        audioInputDeviceRefreshTask?.cancel()
+        audioInputDeviceRefreshTask = Task { @MainActor in
+            let devices = await controller.refreshDictationInputDevices()
+            guard !Task.isCancelled else { return }
+            dictationInputDevices = devices
+        }
     }
 
     private func backendOptions(including selection: BackendOption) -> [BackendOption] {
