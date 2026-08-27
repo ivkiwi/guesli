@@ -338,6 +338,33 @@ enum Qwen3AsrLanguage: Hashable, Sendable {
     }
 }
 
+/// Optional script filter for multilingual Parakeet v3 decoding.
+enum ParakeetLanguage: String, CaseIterable, Codable, Sendable {
+    case auto, english = "en", spanish = "es", french = "fr", german = "de"
+    case italian = "it", portuguese = "pt", romanian = "ro", dutch = "nl"
+    case danish = "da", swedish = "sv", finnish = "fi", hungarian = "hu"
+    case estonian = "et", latvian = "lv", lithuanian = "lt", maltese = "mt"
+    case polish = "pl", czech = "cs", slovak = "sk", slovenian = "sl"
+    case croatian = "hr", bosnian = "bs", russian = "ru", ukrainian = "uk"
+    case belarusian = "be", bulgarian = "bg", serbian = "sr", greek = "el"
+
+    static let defaultLanguage: Self = .auto
+
+    var label: String {
+        Locale(identifier: "en").localizedString(forLanguageCode: rawValue) ?? rawValue.uppercased()
+    }
+
+    var isoCode: String? { self == .auto ? nil : rawValue }
+
+    static func resolved(_ rawValue: String?) -> Self {
+        guard let value = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              let language = Self(rawValue: value) else { return .auto }
+        return language
+    }
+
+    static func resolvedCode(_ rawValue: String?) -> String { resolved(rawValue).rawValue }
+}
+
 struct SummaryModelPreset {
     let id: String
     let label: String
@@ -1084,6 +1111,7 @@ struct AppConfig: Codable {
     private var legacyCohereLanguage: String? = nil
     var nemotron35Language: String = Nemotron35Language.defaultLanguage.rawValue
     var qwen3AsrLanguage: String = Qwen3AsrLanguage.defaultLanguage.rawValue
+    var parakeetLanguage: String = ParakeetLanguage.defaultLanguage.rawValue
     var meetingTranscriptionBackend: String = BackendOption.gigaAMV3Russian.backend
     var meetingTranscriptionModel: String = BackendOption.gigaAMV3Russian.model
     var preferredMeetingBrowserBundleID: String = ""
@@ -1198,6 +1226,7 @@ struct AppConfig: Codable {
         case cohereLanguageMeetings = "cohere_language_meetings"
         case nemotron35Language = "nemotron35_language"
         case qwen3AsrLanguage = "qwen3_asr_language"
+        case parakeetLanguage = "parakeet_language"
         case meetingTranscriptionBackend = "meeting_transcription_backend"
         case meetingTranscriptionModel = "meeting_transcription_model"
         case preferredMeetingBrowserBundleID = "preferred_meeting_browser_bundle_id"
@@ -1327,6 +1356,7 @@ struct AppConfig: Codable {
         cohereLanguageMeetings = CohereTranscribeLanguage.resolvedCode(cohereLanguageMeetingsRaw)
         nemotron35Language = Nemotron35Language.resolvedCode(try? c.decode(String.self, forKey: .nemotron35Language))
         qwen3AsrLanguage = Qwen3AsrLanguage.resolvedCode(try? c.decode(String.self, forKey: .qwen3AsrLanguage))
+        parakeetLanguage = ParakeetLanguage.resolvedCode(try? c.decode(String.self, forKey: .parakeetLanguage))
         meetingTranscriptionBackend = (try? c.decode(String.self, forKey: .meetingTranscriptionBackend)) ?? sttBackend
         meetingTranscriptionModel = (try? c.decode(String.self, forKey: .meetingTranscriptionModel)) ?? sttModel
         preferredMeetingBrowserBundleID = (try? c.decode(String.self, forKey: .preferredMeetingBrowserBundleID)) ?? defaults.preferredMeetingBrowserBundleID
@@ -1503,6 +1533,10 @@ struct AppConfig: Codable {
 
     var resolvedQwen3AsrLanguage: Qwen3AsrLanguage {
         Qwen3AsrLanguage.resolved(qwen3AsrLanguage)
+    }
+
+    var resolvedParakeetLanguage: ParakeetLanguage {
+        ParakeetLanguage.resolved(parakeetLanguage)
     }
 
     var resolvedOnboardingUseCase: OnboardingUseCase {

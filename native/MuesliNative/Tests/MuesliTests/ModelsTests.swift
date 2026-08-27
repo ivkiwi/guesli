@@ -175,6 +175,22 @@ struct BackendOptionTests {
     }
 }
 
+struct ParakeetLanguageTests {
+    @Test("Parakeet language resolves safely and survives config persistence")
+    func resolutionAndPersistence() throws {
+        #expect(ParakeetLanguage.resolved(nil) == .auto)
+        #expect(ParakeetLanguage.resolved("RU") == .russian)
+        #expect(ParakeetLanguage.resolved("bogus") == .auto)
+        #expect(ParakeetLanguage.auto.isoCode == nil)
+        #expect(ParakeetLanguage.russian.isoCode == "ru")
+
+        var config = AppConfig()
+        config.parakeetLanguage = ParakeetLanguage.german.rawValue
+        let decoded = try JSONDecoder().decode(AppConfig.self, from: JSONEncoder().encode(config))
+        #expect(decoded.resolvedParakeetLanguage == .german)
+    }
+}
+
 @Suite("PostProcessorOption", .muesliHermeticSupport)
 struct PostProcessorOptionTests {
 

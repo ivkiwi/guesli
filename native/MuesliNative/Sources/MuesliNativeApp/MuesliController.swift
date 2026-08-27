@@ -869,6 +869,9 @@ public final class MuesliController: NSObject {
                         self.config.resolvedQwen3AsrLanguage
                     )
                 }
+                await self.transcriptionCoordinator.setParakeetLanguage(
+                    self.config.resolvedParakeetLanguage
+                )
                 let dictationBackend = self.selectedBackend
                 guard await self.prepareDictationBackend(dictationBackend) else { return }
                 await self.transcriptionCoordinator.preload(
@@ -2018,6 +2021,7 @@ public final class MuesliController: NSObject {
             // transcriber is conditioned on the right prompt_id.
             await self.transcriptionCoordinator.setNemotron35PromptId(self.config.resolvedNemotron35Language.promptId)
             await self.transcriptionCoordinator.setQwen3AsrLanguage(self.config.resolvedQwen3AsrLanguage)
+            await self.transcriptionCoordinator.setParakeetLanguage(self.config.resolvedParakeetLanguage)
             let needsWarmup = option.backend == "whisper"
             if needsWarmup {
                 await MainActor.run {
@@ -2082,6 +2086,11 @@ public final class MuesliController: NSObject {
     func setQwen3AsrLanguage(_ language: Qwen3AsrLanguage) async {
         updateConfig { $0.qwen3AsrLanguage = language.rawValue }
         await transcriptionCoordinator.setQwen3AsrLanguage(language)
+    }
+
+    func setParakeetLanguage(_ language: ParakeetLanguage) async {
+        updateConfig { $0.parakeetLanguage = language.rawValue }
+        await transcriptionCoordinator.setParakeetLanguage(language)
     }
 
     func selectMeetingTranscriptionBackend(_ option: BackendOption, requireDownloaded: Bool = true) {

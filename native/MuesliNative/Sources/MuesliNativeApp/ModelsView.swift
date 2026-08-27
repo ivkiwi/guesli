@@ -375,6 +375,15 @@ struct ModelsView: View {
         )
     }
 
+    private var parakeetLanguageSelection: Binding<ParakeetLanguage> {
+        Binding(
+            get: { appState.config.resolvedParakeetLanguage },
+            set: { language in
+                Task { await controller.setParakeetLanguage(language) }
+            }
+        )
+    }
+
     private var postProcessorSection: some View {
         VStack(alignment: .leading, spacing: MuesliTheme.spacing12) {
             VStack(alignment: .leading, spacing: MuesliTheme.spacing4) {
@@ -925,6 +934,28 @@ struct ModelsView: View {
                     .pickerStyle(.menu)
                     .frame(maxWidth: 220, alignment: .leading)
                 }
+            }
+
+            if option.backend == BackendOption.parakeetMultilingual.backend {
+                HStack(alignment: .center, spacing: MuesliTheme.spacing12) {
+                    Text("Language")
+                        .font(MuesliTheme.caption())
+                        .foregroundStyle(MuesliTheme.textTertiary)
+                        .frame(width: 64, alignment: .leading)
+
+                    Picker("", selection: parakeetLanguageSelection) {
+                        ForEach(ParakeetLanguage.allCases, id: \.self) { language in
+                            Text(language.label).tag(language)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 220, alignment: .leading)
+                }
+
+                Text("Optional script filter for Parakeet v3; Auto-detect leaves decoding unfiltered.")
+                    .font(MuesliTheme.caption())
+                    .foregroundStyle(MuesliTheme.textTertiary)
             }
 
             // Progress bar when downloading

@@ -59,6 +59,7 @@ actor TranscriptionCoordinator {
     private let diarizerLoadOperationTimeout: Duration
     private var activeBackend: String?
     private var qwen3AsrLanguage: Qwen3AsrLanguage = .auto
+    private var parakeetLanguage: ParakeetLanguage = .auto
 
     private var _nemotron35Transcriber: Any?
     /// Selected Nemotron 3.5 language prompt id (101 = auto). Stored so it survives
@@ -125,6 +126,10 @@ actor TranscriptionCoordinator {
 
     func setQwen3AsrLanguage(_ language: Qwen3AsrLanguage) {
         qwen3AsrLanguage = language
+    }
+
+    func setParakeetLanguage(_ language: ParakeetLanguage) {
+        parakeetLanguage = language
     }
 
     @available(macOS 15, *)
@@ -826,15 +831,18 @@ actor TranscriptionCoordinator {
         case "sensevoice":
             return try await transcribeWithSenseVoice(url: url, samples: samples)
         default:
-            return try await transcribeWithFluidAudio(url: url)
+            return try await transcribeWithFluidAudio(url: url, language: parakeetLanguage)
         }
     }
 
     // MARK: - FluidAudio (Parakeet on ANE)
 
-    private func transcribeWithFluidAudio(url: URL) async throws -> SpeechTranscriptionResult {
+    private func transcribeWithFluidAudio(
+        url: URL,
+        language: ParakeetLanguage
+    ) async throws -> SpeechTranscriptionResult {
         fputs("[muesli-native] transcribing with FluidAudio: \(url.lastPathComponent)\n", stderr)
-        let result = try await fluidTranscriber.transcribe(wavURL: url)
+        let result = try await fluidTranscriber.transcribe(wavURL: url, language: language.isoCode)
         fputs("[muesli-native] FluidAudio result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
         let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let segments = (result.tokenTimings ?? []).map { timing in
