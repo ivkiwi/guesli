@@ -3,14 +3,6 @@ import QuartzCore
 import Foundation
 import MuesliCore
 
-enum FloatingIndicatorPointerIntent {
-    static let dragThreshold: CGFloat = 4
-
-    static func isDrag(from start: NSPoint, to current: NSPoint) -> Bool {
-        hypot(current.x - start.x, current.y - start.y) >= dragThreshold
-    }
-}
-
 /// Geometry for the two controls drawn on the recording pill, shared by the
 /// layout code and by click hit-testing so the visible affordance and the
 /// clickable region cannot drift apart.
@@ -87,22 +79,6 @@ enum FloatingIndicatorControlLayout {
             width: frame.width + (dx * 2),
             height: size.height
         )
-    }
-}
-
-final class InteractiveFloatingPanel: NSPanel {
-    var leftMouseDownHandler: ((NSPoint) -> Bool)?
-
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-
-    override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown {
-            if leftMouseDownHandler?(event.locationInWindow) == true {
-                return
-            }
-        }
-        super.sendEvent(event)
     }
 }
 

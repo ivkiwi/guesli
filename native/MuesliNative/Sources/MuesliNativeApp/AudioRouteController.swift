@@ -227,6 +227,7 @@ final class DictationAudioRouteController: DictationAudioRouting {
             installDefaultInputListener()
         }
         refreshRouteCache()
+        refreshAvailableInputDevices { _ in }
     }
 
     deinit {

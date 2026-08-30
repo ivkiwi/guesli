@@ -259,6 +259,7 @@ private final class FakeCoreAudioDeviceInspector: CoreAudioDeviceInspecting {
     var outputIsAmbiguousBluetoothValue: Bool
     var builtInInputDeviceIDValue: AudioObjectID?
     var inputDevices: [AudioInputDeviceInfo]
+    private(set) var inspectionCallCount = 0
 
     init(
         defaultOutputDeviceID: AudioObjectID?,
@@ -289,7 +290,8 @@ private final class FakeCoreAudioDeviceInspector: CoreAudioDeviceInspecting {
     }
 
     func availableInputDevices() -> [AudioInputDeviceInfo] {
-        inputDevices.filter { !$0.uid.hasPrefix("CADefaultDeviceAggregate") }
+        inspectionCallCount += 1
+        return inputDevices.filter { !$0.uid.hasPrefix("CADefaultDeviceAggregate") }
     }
 
     func inputDeviceID(matchingUID uid: String) -> AudioObjectID? {

@@ -246,7 +246,7 @@ struct MeetingPromptStateMachineTests {
         let urlOnlyCandidate = candidate(
             "googleMeet:meet.google.com/abc-defg-hij",
             suppressionID: "googleMeet:meet.google.com/abc-defg-hij",
-            evidence: [.browserURL, .foregroundApp]
+            evidence: [.browserURL, .foregroundApp, .micActive]
         )
 
         let didConsumeSession = machine.markRecordingStarted(urlOnlyCandidate)
