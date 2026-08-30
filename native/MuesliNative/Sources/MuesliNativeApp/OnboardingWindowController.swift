@@ -30,7 +30,6 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     func yieldFocusToSystemSettings() {
         guard let window else { return }
         window.level = .normal
-        window.orderBack(nil)
     }
 
     func prepareForNativePermissionPrompt() {
