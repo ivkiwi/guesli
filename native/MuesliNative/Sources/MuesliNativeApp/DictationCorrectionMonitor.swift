@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import MuesliCore
 import os
 
 struct DictationCorrectionTargetApp: Sendable {
@@ -1285,7 +1286,7 @@ final class DictationCorrectionMonitor {
            let y = Int(exactly: position.y.rounded(.towardZero)),
            let width = Int(exactly: size.width.rounded(.towardZero)),
            let height = Int(exactly: size.height.rounded(.towardZero)) {
-            return "\(processID)|\(role)|\(x)|\(y)|\(width)|\(height)"
+           return "\(processID)|\(role)|\(x)|\(y)|\(width)|\(height)"
         }
         return "\(processID)|\(role)|\(fallbackHash)"
     }

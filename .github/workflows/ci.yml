@@ -15,44 +15,40 @@ jobs:
   # Detect which files changed — no third-party actions
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      native_or_packaging: ${{ steps.check.outputs.native_or_packaging }}
+      native_or_packaging: ${{ steps.classify.outputs.native_or_packaging }}
+      browser_extension: ${{ steps.classify.outputs.browser_extension }}
+      release_update: ${{ steps.classify.outputs.release_update }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
-      - name: Check for native or packaging changes
-        id: check
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify changed files
+        id: classify
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            FILES=$(git diff --name-only HEAD^1 HEAD -- \
-              'native/' \
-              'browser-extension/' \
-              'assets/' \
-              'docs/appcast.xml' \
-              'scripts/build_native_app.sh' \
-              'scripts/verify_update_flow.sh' \
-              'scripts/test_packaged_cli.sh' \
-              '.github/workflows/ci.yml')
+            FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            FILES=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")
           else
-            FILES=$(git diff --name-only HEAD~1 HEAD -- \
-              'native/' \
-              'browser-extension/' \
-              'assets/' \
-              'docs/appcast.xml' \
-              'scripts/build_native_app.sh' \
-              'scripts/verify_update_flow.sh' \
-              'scripts/test_packaged_cli.sh' \
-              '.github/workflows/ci.yml')
+            FILES=$(git diff --name-only HEAD^ HEAD 2>/dev/null || true)
           fi
-          if [ -n "$FILES" ]; then
-            echo "native_or_packaging=true" >> "$GITHUB_OUTPUT"
-            echo "Native or packaging files changed:"
-            echo "$FILES"
-          else
-            echo "native_or_packaging=false" >> "$GITHUB_OUTPUT"
-            echo "No native or packaging files changed — skipping build"
-          fi
+          printf '%s\n' "$FILES"
+          printf '%s\n' "$FILES" | ./scripts/classify_changed_files.sh | tee -a "$GITHUB_OUTPUT"
+
+  classifier-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: ./scripts/test_classify_changed_files.sh
+      - run: python3 ./scripts/test_merge_appcast_item.py
+      - run: ./scripts/test_localvqe_runtime_validation.sh
+      - run: ./scripts/test_release_workflow_security.sh
 
   # Release build — validate the app product compiles in release mode
   build_release:
@@ -124,18 +120,28 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verify Sparkle update metadata
-        run: ./scripts/verify_update_flow.sh --skip-dmg --app-name Muesli
+        run: |
+          curl -fsSL --retry 3 \
+            https://raw.githubusercontent.com/ivkiwi/guesli/sparkle-feed/docs/appcast-guesli.xml \
+            -o "$RUNNER_TEMP/appcast-guesli.xml"
+          ./scripts/verify_update_flow.sh \
+            --skip-dmg \
+            --appcast "$RUNNER_TEMP/appcast-guesli.xml" \
+            --app-name Guesli \
+            --feed-url https://raw.githubusercontent.com/ivkiwi/guesli/sparkle-feed/docs/appcast-guesli.xml \
+            --asset-url-prefix https://github.com/ivkiwi/guesli/releases/download/
 
   # Gate job — always runs, always reports a status
   # This is the only required check in branch protection
   ci-gate:
     if: always()
-    needs: [changes, build_release, browser-extension, test_shards, cli-smoke, update-flow]
+    needs: [changes, classifier-tests, build_release, browser-extension, test_shards, cli-smoke, update-flow]
     runs-on: ubuntu-latest
     steps:
       - name: Check result
         run: |
-          if [[ "${{ needs.build_release.result }}" =~ ^(success|skipped)$ ]] && \
+          if [[ "${{ needs.classifier-tests.result }}" == "success" ]] && \
+             [[ "${{ needs.build_release.result }}" =~ ^(success|skipped)$ ]] && \
              [[ "${{ needs.browser-extension.result }}" =~ ^(success|skipped)$ ]] && \
              [[ "${{ needs.test_shards.result }}" =~ ^(success|skipped)$ ]] && \
              [[ "${{ needs.cli-smoke.result }}" =~ ^(success|skipped)$ ]] && \

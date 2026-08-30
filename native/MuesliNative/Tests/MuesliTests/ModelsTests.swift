@@ -24,7 +24,7 @@ struct BackendOptionTests {
 
     @Test("backend field is one of the known backends")
     func knownBackends() {
-        let known: Set<String> = ["fluidaudio", "whisper", "qwen", "nemotron35", "gigaam_v3", "cohere", "sensevoice"]
+        let known: Set<String> = ["fluidaudio", "parakeet-unified", "whisper", "qwen", "nemotron35", "gigaam_v3", "cohere", "sensevoice"]
         for option in BackendOption.all {
             #expect(known.contains(option.backend), "Unknown backend: \(option.backend)")
         }
@@ -32,6 +32,7 @@ struct BackendOptionTests {
 
     @Test("Parakeet models use fluidaudio backend")
     func parakeetBackend() {
+        #expect(BackendOption.parakeetUnified.backend == "parakeet-unified")
         #expect(BackendOption.parakeetMultilingual.backend == "fluidaudio")
         #expect(BackendOption.parakeetEnglish.backend == "fluidaudio")
     }
@@ -81,6 +82,7 @@ struct BackendOptionTests {
 
     @Test("all contains all defined options")
     func allContainsAll() {
+        #expect(BackendOption.all.contains(.parakeetUnified))
         #expect(BackendOption.all.contains(.parakeetMultilingual))
         #expect(BackendOption.all.contains(.parakeetEnglish))
         #expect(BackendOption.all.contains(.whisperSmall))
@@ -170,6 +172,23 @@ struct BackendOptionTests {
         )
 
         #expect(resolved == .whisperSmall)
+    }
+}
+
+struct ParakeetLanguageTests {
+    @Test("Parakeet language resolves safely and survives config persistence")
+    func resolutionAndPersistence() throws {
+        #expect(ParakeetLanguage.resolved(nil) == .auto)
+        #expect(ParakeetLanguage.resolved("RU") == .russian)
+        #expect(ParakeetLanguage.resolved("bogus") == .auto)
+        #expect(ParakeetLanguage.auto.isoCode == nil)
+        #expect(ParakeetLanguage.auto.label == "Auto-detect")
+        #expect(ParakeetLanguage.russian.isoCode == "ru")
+
+        var config = AppConfig()
+        config.parakeetLanguage = ParakeetLanguage.german.rawValue
+        let decoded = try JSONDecoder().decode(AppConfig.self, from: JSONEncoder().encode(config))
+        #expect(decoded.resolvedParakeetLanguage == .german)
     }
 }
 
@@ -329,17 +348,19 @@ struct SummaryModelPresetTests {
     @Test("OpenAI presets have valid model IDs")
     func openAIModels() {
         #expect(!SummaryModelPreset.openAIModels.isEmpty)
-        #expect(SummaryModelPreset.openAIModels.contains { $0.id == "gpt-5.5" })
+        #expect(SummaryModelPreset.openAIModels.contains { $0.id == "gpt-5.6-sol" })
         for preset in SummaryModelPreset.openAIModels {
             #expect(!preset.id.isEmpty)
             #expect(!preset.label.isEmpty)
         }
     }
 
-    @Test("ChatGPT summary presets include GPT-5.5")
+    @Test("ChatGPT summary presets include GPT-5.6 tiers")
     func chatGPTModels() {
         #expect(!SummaryModelPreset.chatGPTModels.isEmpty)
-        #expect(SummaryModelPreset.chatGPTModels.contains { $0.id == "gpt-5.5" })
+        #expect(SummaryModelPreset.chatGPTModels.contains { $0.id == "gpt-5.6-sol" })
+        #expect(SummaryModelPreset.chatGPTModels.contains { $0.id == "gpt-5.6-terra" })
+        #expect(SummaryModelPreset.chatGPTModels.contains { $0.id == "gpt-5.6-luna" })
         for preset in SummaryModelPreset.chatGPTModels {
             #expect(!preset.id.isEmpty)
             #expect(!preset.label.isEmpty)
@@ -355,14 +376,20 @@ struct SummaryModelPresetTests {
         }
     }
 
-    @Test("Computer use planner presets include GPT-5.5 default")
+    @Test("Computer use planner presets include GPT-5.6 Sol default")
     func computerUsePlannerModels() {
-        #expect(SummaryModelPreset.computerUsePlannerModels.first?.id == "gpt-5.5")
+        #expect(SummaryModelPreset.computerUsePlannerModels.first?.id == "gpt-5.6-sol")
         #expect(SummaryModelPreset.computerUsePlannerModels.contains { $0.id == "gpt-5.4-mini" })
         for preset in SummaryModelPreset.computerUsePlannerModels {
             #expect(!preset.id.isEmpty)
             #expect(!preset.label.isEmpty)
         }
+    }
+
+    @Test("GPT-5.5 config migrates to GPT-5.6 Sol")
+    func migratesGPT55() {
+        #expect(SummaryModelPreset.migratedFromGPT55("gpt-5.5") == "gpt-5.6-sol")
+        #expect(SummaryModelPreset.migratedFromGPT55("gpt-5.4-mini") == "gpt-5.4-mini")
     }
 
     @Test("model menu includes custom configured model")

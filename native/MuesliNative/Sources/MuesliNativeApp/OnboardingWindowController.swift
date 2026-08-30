@@ -30,7 +30,6 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     func yieldFocusToSystemSettings() {
         guard let window else { return }
         window.level = .normal
-        window.orderBack(nil)
     }
 
     func prepareForNativePermissionPrompt() {
@@ -60,6 +59,11 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         window.level = .floating
         window.collectionBehavior = [.moveToActiveSpace]
         window.backgroundColor = NSColor(red: 0.067, green: 0.071, blue: 0.078, alpha: 1)
+        // OnboardingView forces .preferredColorScheme(.dark), so pin the window to the dark
+        // appearance rather than inheriting it. Without this the window follows whatever
+        // NSApp.appearance happens to be, and AppKit chrome the SwiftUI color scheme cannot
+        // reach (focus rings, panels, menus) renders light around permanently dark content.
+        window.appearance = NSAppearance(named: .darkAqua)
 
         let rootView: OnboardingView
         if let progress = resumeProgress {

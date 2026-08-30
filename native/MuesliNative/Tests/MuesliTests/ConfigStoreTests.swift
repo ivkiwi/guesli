@@ -235,7 +235,7 @@ struct ConfigStoreTests {
         #expect(loaded.userName == "Ivan")
         #expect(loaded.customMeetingTemplates == [legacyTemplate])
         #expect(loaded.defaultMeetingTemplateID == legacyTemplate.id)
-        #expect(loaded.chatGPTModel == "gpt-5.5")
+        #expect(loaded.chatGPTModel == "gpt-5.6-sol")
         #expect(loaded.chatGPTDictationCleanupModel == "gpt-legacy-dictation")
         #expect(loaded.chatGPTMeetingCleanupModel == "gpt-legacy-meeting")
         #expect(loaded.meetingRecordingSavePolicy == .always)

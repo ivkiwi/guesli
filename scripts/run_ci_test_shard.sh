@@ -17,8 +17,10 @@ case "${shard}" in
       ChatGPTAuthTests
       ChatGPTTokenStorageTests
       FloatingIndicatorVisibilityTests
+      FloatingIndicatorPointerInteractionTests
       IndicatorFrameSizeTests
       OpenAILogoShapeTests
+      StandardMenuShortcutTests
       MeetingChunkCollectorTests
       AppConfigTests
       CGPointCodableTests
@@ -53,6 +55,7 @@ case "${shard}" in
       DictationStateTests
       HotkeyConfigTests
       DictationStateIdleTests
+      DictationCorrectionMonitorTests
     )
     ;;
   meetings)
@@ -62,10 +65,14 @@ case "${shard}" in
       MeetingSummaryClientTests
       MeetingsNavigationTests
       MeetingBrowserLogicTests
+      MeetingNotesInlineMarkdownTests
       TranscriptFormatterTests
       MeetingSummaryBackendTests
+      MeetingAutoStopPolicyTests
+      MeetingMediaSessionTrackerTests
       MeetingResummarizationPolicyTests
       MeetingTemplateResolutionTests
+      MeetingResumeAndFollowUpTests
       MeetSpeakerBridgeTests
       DisabledCalendarFilterTests
       GoogleCalendarTests

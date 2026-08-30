@@ -85,6 +85,26 @@ struct MeetingStopOrderingTests {
         #expect(systemRecorder.didStart == false)
         #expect(systemRecorder.isRecording == false)
     }
+
+    @Test("stop phase timeout is a wall-clock bound for non-cooperative work")
+    func stopPhaseTimeoutBoundsNonCooperativeWork() async {
+        let session = makeSession()
+        let startedAt = ContinuousClock.now
+
+        do {
+            _ = try await session.withStopPhaseTimeout("non_cooperative", timeout: 0.02) {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                        continuation.resume(returning: "Too late")
+                    }
+                }
+            }
+            Issue.record("Expected non-cooperative stop phase to time out")
+        } catch {
+            #expect(startedAt.duration(to: .now) < .seconds(1))
+            #expect(error.localizedDescription.contains("non_cooperative timed out"))
+        }
+    }
 #endif
 
     @Test("collector drain terminates while producer keeps feeding")

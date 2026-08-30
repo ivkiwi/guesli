@@ -229,6 +229,51 @@ struct MeetingCaptureFirstTests {
         #expect(await order.preloadCount == 1)
     }
 
+    @Test("post mode recovers when system audio arrives without microphone callbacks")
+    func postModeRecoversMissingMicrophoneCallbacks() async throws {
+        let micRecorder = CaptureFirstMicRecorder()
+        let systemRecorder = CaptureFirstSystemRecorder()
+        let session = MeetingSession(
+            title: "Post-mode microphone recovery",
+            calendarEventID: nil,
+            backend: .gigaAMV3Russian,
+            runtime: testRuntime(),
+            config: postModeConfig(),
+            transcriptionCoordinator: TranscriptionCoordinator(),
+            meetingMicRecorder: micRecorder,
+            systemAudioRecorder: systemRecorder
+        )
+
+        try await session.start()
+        systemRecorder.onPCMSamples?(Array(repeating: Int16.max, count: 48_000))
+
+        #expect(await waitUntil { micRecorder.recoveryCount == 1 })
+        session.discard()
+    }
+
+    @Test("post mode starts system audio watchdog and recovers a stalled tap")
+    func postModeRecoversStalledSystemAudio() async throws {
+        let micRecorder = CaptureFirstMicRecorder()
+        let systemRecorder = CaptureFirstSystemRecorder(supportsHeartbeatMonitoring: true)
+        let session = MeetingSession(
+            title: "Post-mode system recovery",
+            calendarEventID: nil,
+            backend: .gigaAMV3Russian,
+            runtime: testRuntime(),
+            config: postModeConfig(),
+            transcriptionCoordinator: TranscriptionCoordinator(),
+            meetingMicRecorder: micRecorder,
+            systemAudioRecorder: systemRecorder
+        )
+
+        try await session.start()
+
+        #expect(session.systemAudioWatchdogIsRunningForTesting)
+        session.tickSystemAudioWatchdogForTesting()
+        #expect(systemRecorder.recoveryCount == 1)
+        session.discard()
+    }
+
     private func postModeConfig() -> AppConfig {
         var config = AppConfig()
         config.meetingProcessingMode = MeetingProcessingMode.post.rawValue
@@ -313,10 +358,12 @@ private final class CaptureFirstMicRecorder: MeetingMicRecording, @unchecked Sen
     var onRecordingFailed: ((Error) -> Void)?
     private let state = OSAllocatedUnfairLock(initialState: false)
     private let cancelState = OSAllocatedUnfairLock(initialState: false)
+    private let recoveryState = OSAllocatedUnfairLock(initialState: 0)
 
     var didStart: Bool { state.withLock { $0 } }
     var isRecording: Bool { state.withLock { $0 } }
     var didCancel: Bool { cancelState.withLock { $0 } }
+    var recoveryCount: Int { recoveryState.withLock { $0 } }
 
     func prepare() throws {}
     func start() throws { state.withLock { $0 = true } }
@@ -331,6 +378,10 @@ private final class CaptureFirstMicRecorder: MeetingMicRecording, @unchecked Sen
         state.withLock { $0 = false }
     }
     func currentPower() -> Float { -80 }
+    func requestSameRouteRecovery(reason: String) -> MeetingMicRecoveryRequestResult {
+        recoveryState.withLock { $0 += 1 }
+        return .initiated
+    }
     func diagnosticsSnapshot() -> MeetingMicRecorderDiagnosticsSnapshot {
         MeetingMicRecorderDiagnosticsSnapshot(
             recorderKind: .systemDefaultStreaming,
@@ -397,10 +448,18 @@ private final class ThrowingCaptureFirstSystemRecorder: SystemAudioCapturing, @u
 private final class CaptureFirstSystemRecorder: SystemAudioCapturing, @unchecked Sendable {
     var onPCMSamples: (([Int16]) -> Void)?
     private let state = OSAllocatedUnfairLock(initialState: false)
+    private let recoveryState = OSAllocatedUnfairLock(initialState: 0)
+
+    let supportsHeartbeatMonitoring: Bool
+
+    init(supportsHeartbeatMonitoring: Bool = false) {
+        self.supportsHeartbeatMonitoring = supportsHeartbeatMonitoring
+    }
 
     var isRecording: Bool { state.withLock { $0 } }
     var isPaused = false
     var didStart: Bool { state.withLock { $0 } }
+    var recoveryCount: Int { recoveryState.withLock { $0 } }
 
     func start() async throws { state.withLock { $0 = true } }
     func pause() { isPaused = true }
@@ -410,6 +469,10 @@ private final class CaptureFirstSystemRecorder: SystemAudioCapturing, @unchecked
         isPaused = false
         onPCMSamples = nil
         return nil
+    }
+    func rebuildForHealthRecovery(reason: String) -> Bool {
+        recoveryState.withLock { $0 += 1 }
+        return true
     }
 }
 

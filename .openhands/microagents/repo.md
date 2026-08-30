@@ -4,10 +4,10 @@ You are working on Muesli, a Swift/SwiftUI macOS app.
 
 ## Primary Goal
 
-- Fix current PR review findings from Claude Code and Greptile.
+- Fix current PR review findings from Claude Code.
 - P0/P1 findings are blocking if they still apply to the current HEAD.
 - P2 findings are optional unless they are low-risk and clearly correct.
-- Greptile findings may be stale. Verify each finding against current code before changing anything.
+- Review findings may be stale. Verify each finding against current code before changing anything.
 - If the trigger asks specifically for P0/P1 fixes and there are no current code-backed P0/P1 findings, do not fix P2/minor items unless the trigger explicitly asks for them.
 
 ## Hard Rules
@@ -29,7 +29,7 @@ You are working on Muesli, a Swift/SwiftUI macOS app.
 
 ## PR Review Policy
 
-- Read the latest Claude Code and Greptile comments before editing.
+- Read the latest Claude Code comments before editing.
 - Classify each review item as current blocking, stale, optional, or out-of-scope.
 - For stale findings, cite the current file/function evidence that makes the finding obsolete.
 - Fix all current code-backed P0/P1 findings.

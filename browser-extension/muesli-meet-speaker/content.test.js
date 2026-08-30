@@ -65,3 +65,29 @@ test("current explicit speaking state wins over a stale caption speaker", () => 
     ["Alice Owner"]
   );
 });
+
+test("a unique caption wins when broad Meet selectors mark several tiles active", () => {
+  assert.deepEqual(
+    speakerDetection.preferExplicitSpeakers(
+      ["Alice Owner", "Bob Reviewer", "Carol Observer"],
+      ["Bob Reviewer"]
+    ),
+    ["Bob Reviewer"]
+  );
+  assert.deepEqual(
+    speakerDetection.preferExplicitSpeakers(["Alice Owner", "Bob Reviewer"], []),
+    []
+  );
+});
+
+test("page lifecycle persists backup observations for reload recovery", () => {
+  assert.match(source, /loadBackupObservations\(\)\.slice\(-BACKUP_MAX_EVENTS\)/);
+  assert.match(source, /window\.addEventListener\("pagehide", persistBackupObservationsNow\)/);
+  assert.match(source, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
+});
+
+test("transport falls back to direct bridge fetch after extension reload", () => {
+  assert.match(source, /Extension context invalidated/i);
+  assert.match(source, /await fetchBridgePayload\(payload\)/);
+  assert.match(source, /chrome\.runtime\.sendMessage\(message,/);
+});

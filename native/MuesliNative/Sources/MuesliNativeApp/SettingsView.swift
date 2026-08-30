@@ -25,6 +25,18 @@ private struct DictationMicrophoneOption: Identifiable {
     var id: String { uid ?? "__automatic__" }
 }
 
+enum SettingsPermissionRefreshReason {
+    case initialDisplay, periodicPoll, permissionRequested, settingsSelected, appActivated
+
+    var refreshesLaunchAtLogin: Bool { self == .appActivated }
+    var refreshesSystemAudio: Bool {
+        switch self {
+        case .initialDisplay, .settingsSelected, .appActivated: true
+        case .periodicPoll, .permissionRequested: false
+        }
+    }
+}
+
 struct SettingsView: View {
     private enum PendingDataDestruction {
         case dictations
@@ -94,6 +106,7 @@ struct SettingsView: View {
     @State private var downloadedBackendOptions: [BackendOption] = []
     @State private var downloadedPostProcOptions: [PostProcessorOption] = []
     @State private var dictationInputDevices: [AudioInputDeviceInfo] = []
+    @State private var audioInputDeviceRefreshTask: Task<Void, Never>?
     @State private var permissionPollTimer: Timer?
     @State private var isCleanupPromptManagerPresented = false
     @State private var micGranted = false
@@ -239,18 +252,20 @@ struct SettingsView: View {
         .onDisappear {
             SoundController.stopMaraudersMapClip()
             isPreviewingClip = false
+            audioInputDeviceRefreshTask?.cancel()
+            audioInputDeviceRefreshTask = nil
             stopPermissionPolling()
         }
         .onChange(of: appState.selectedTab) { _, tab in
             if tab == .settings {
                 refreshDownloadedModelOptions()
                 refreshDictationInputDevices()
-                refreshPermissionStatuses(refreshLaunchAtLogin: true)
+                refreshPermissionStatuses(for: .settingsSelected)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             guard appState.selectedTab == .settings else { return }
-            refreshPermissionStatuses(refreshLaunchAtLogin: true)
+            refreshPermissionStatuses(for: .appActivated)
         }
         .onChange(of: appState.selectedBackend) { _, _ in
             refreshDownloadedModelOptions()
@@ -316,7 +331,13 @@ struct SettingsView: View {
     }
 
     private func refreshDictationInputDevices() {
-        dictationInputDevices = controller.availableDictationInputDevices()
+        dictationInputDevices = controller.cachedDictationInputDevices()
+        audioInputDeviceRefreshTask?.cancel()
+        audioInputDeviceRefreshTask = Task { @MainActor in
+            let devices = await controller.refreshDictationInputDevices()
+            guard !Task.isCancelled else { return }
+            dictationInputDevices = devices
+        }
     }
 
     private func backendOptions(including selection: BackendOption) -> [BackendOption] {
@@ -652,7 +673,7 @@ struct SettingsView: View {
                     settingsRow("Cleanup model") {
                         settingsModelMenu(
                             currentModel: appState.config.chatGPTDictationCleanupModel,
-                            presets: SummaryModelPreset.chatGPTModels,
+                            presets: SummaryModelPreset.chatGPTTranscriptCleanupModels,
                             defaultModel: AppConfig.defaultChatGPTDictationCleanupModel
                         ) { val in controller.setChatGPTDictationCleanupModel(val) }
                     }
@@ -887,7 +908,7 @@ struct SettingsView: View {
                     settingsRow("Cleanup model", controlWidth: meetingControlWidth) {
                         settingsModelMenu(
                             currentModel: appState.config.chatGPTMeetingCleanupModel,
-                            presets: SummaryModelPreset.chatGPTModels,
+                            presets: SummaryModelPreset.chatGPTTranscriptCleanupModels,
                             defaultModel: AppConfig.defaultChatGPTMeetingCleanupModel
                         ) { val in controller.updateConfig { $0.chatGPTMeetingCleanupModel = val } }
                     }
@@ -1173,6 +1194,19 @@ struct SettingsView: View {
 
                 Divider().background(MuesliTheme.surfaceBorder)
 
+                settingsRow("Default action", controlWidth: meetingControlWidth) {
+                    settingsMenu(
+                        selection: appState.config.meetingJoinDefaultAction.buttonLabel,
+                        options: MeetingJoinDefaultAction.allCases.map(\.buttonLabel)
+                    ) { label in
+                        guard let action = meetingJoinDefaultAction(for: label) else { return }
+                        controller.updateConfig { $0.meetingJoinDefaultAction = action }
+                    }
+                }
+                settingsDescription("Primary button for notifications and Coming Up.")
+
+                Divider().background(MuesliTheme.surfaceBorder)
+
                 settingsRow("Auto-detected meetings") {
                     settingsSwitch(isOn: appState.config.showMeetingDetectionNotification) { newValue in
                         controller.updateConfig { $0.showMeetingDetectionNotification = newValue }
@@ -1229,8 +1263,11 @@ struct SettingsView: View {
             .padding(.top, MuesliTheme.spacing8)
         }
         .onAppear {
-            controller.refreshAvailableEventKitCalendars()
-            Task { await controller.refreshGoogleCalendarList() }
+            Task {
+                async let eventKitRefresh: Void = controller.refreshAvailableEventKitCalendars()
+                async let googleRefresh: Void = controller.refreshGoogleCalendarList()
+                _ = await (eventKitRefresh, googleRefresh)
+            }
         }
     }
 
@@ -1710,7 +1747,9 @@ struct SettingsView: View {
                     "System Audio",
                     granted: systemAudioGranted,
                     action: {
-                        Task { await CoreAudioSystemRecorder.requestSystemAudioAccess() }
+                        Task { @MainActor in
+                            systemAudioGranted = await CoreAudioSystemRecorder.requestSystemAudioAccess()
+                        }
                     },
                     pane: "Privacy_ScreenCapture"
                 )
@@ -1770,11 +1809,11 @@ struct SettingsView: View {
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { _ in
                 Task { @MainActor in
-                    refreshPermissionStatuses()
+                    refreshPermissionStatuses(for: .permissionRequested)
                 }
             }
         case .authorized:
-            refreshPermissionStatuses()
+            refreshPermissionStatuses(for: .permissionRequested)
         case .denied, .restricted:
             openPrivacyPane("Privacy_Microphone")
         @unknown default:
@@ -1835,10 +1874,10 @@ struct SettingsView: View {
     }
 
     private func startPermissionPolling() {
-        refreshPermissionStatuses(refreshLaunchAtLogin: true)
+        refreshPermissionStatuses(for: .initialDisplay)
         permissionPollTimer?.invalidate()
         let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            refreshPermissionStatuses()
+            refreshPermissionStatuses(for: .periodicPoll)
         }
         RunLoop.main.add(timer, forMode: .common)
         permissionPollTimer = timer
@@ -1849,13 +1888,13 @@ struct SettingsView: View {
         permissionPollTimer = nil
     }
 
-    private func refreshPermissionStatuses(refreshLaunchAtLogin: Bool = false) {
+    private func refreshPermissionStatuses(for reason: SettingsPermissionRefreshReason) {
         micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         accessibilityGranted = AXIsProcessTrusted()
         controller.reconcilePendingDictionaryCorrectionAccessibilityEnable()
         inputMonitoringGranted = CGPreflightListenEventAccess()
         screenRecordingGranted = CGPreflightScreenCaptureAccess()
-        if refreshLaunchAtLogin {
+        if reason.refreshesLaunchAtLogin {
             controller.refreshLaunchAtLoginState()
         }
         if accessibilityGranted && pendingScreenContextEnable {
@@ -1875,7 +1914,9 @@ struct SettingsView: View {
             accessibilityGranted: accessibilityGranted,
             inputMonitoringGranted: inputMonitoringGranted
         )
-        refreshSystemAudioPermissionIfNeeded()
+        if reason.refreshesSystemAudio {
+            refreshSystemAudioPermissionIfNeeded()
+        }
     }
 
     private var isPendingScreenContextGrantExpired: Bool {
@@ -2895,6 +2936,14 @@ struct SettingsView: View {
             assertionFailure("Unexpected scheduled meeting notification lead time label: \(label)")
         }
         return leadTime
+    }
+
+    private func meetingJoinDefaultAction(for label: String) -> MeetingJoinDefaultAction? {
+        let action = MeetingJoinDefaultAction.allCases.first { $0.buttonLabel == label }
+        if action == nil {
+            assertionFailure("Unexpected meeting join default action label: \(label)")
+        }
+        return action
     }
 }
 

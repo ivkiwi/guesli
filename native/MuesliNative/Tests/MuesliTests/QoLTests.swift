@@ -3,6 +3,23 @@ import Foundation
 import MuesliCore
 @testable import MuesliNativeApp
 
+@Suite("Dictation backend readiness")
+struct DictationBackendReadinessTests {
+    @Test("preparing and failed states block dictation")
+    func blockedStates() {
+        #expect(!DictationBackendReadiness.preparing.allowsDictation)
+        #expect(DictationBackendReadiness.preparing.blockingMessage(backendLabel: "GigaAM") == "Warming up GigaAM...")
+        #expect(!DictationBackendReadiness.failed.allowsDictation)
+        #expect(DictationBackendReadiness.failed.blockingMessage(backendLabel: "GigaAM") == "GigaAM unavailable")
+    }
+
+    @Test("ready state allows dictation")
+    func readyState() {
+        #expect(DictationBackendReadiness.ready.allowsDictation)
+        #expect(DictationBackendReadiness.ready.blockingMessage(backendLabel: "GigaAM") == nil)
+    }
+}
+
 // MARK: - ChatGPT File-based Token Storage
 
 @Suite("ChatGPT Token Storage", .muesliHermeticSupport)
@@ -83,11 +100,11 @@ struct FloatingIndicatorVisibilityTests {
     func postProcessorRoundTrip() throws {
         var config = AppConfig()
         config.enablePostProcessor = true
-        config.activePostProcessorId = PostProcessorOption.finetunedV2.id
+        config.activePostProcessorId = PostProcessorOption.qwen35_0_8b.id
         let data = try JSONEncoder().encode(config)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
         #expect(decoded.enablePostProcessor == true)
-        #expect(decoded.activePostProcessorId == PostProcessorOption.finetunedV2.id)
+        #expect(decoded.activePostProcessorId == PostProcessorOption.qwen35_0_8b.id)
     }
 
     @Test("post processor decodes from snake_case JSON")
@@ -205,6 +222,134 @@ struct IndicatorFrameSizeTests {
         #expect(short.height >= 44)
         #expect(long.width <= 372)
         #expect(long.height > short.height)
+    }
+}
+
+@Suite("Floating indicator pointer interaction")
+struct FloatingIndicatorPointerInteractionTests {
+    @MainActor
+    @Test("clicking the stop control stops the meeting")
+    func stopControlStopsMeeting() throws {
+        let indicator = makeIndicator()
+        var stopCount = 0
+        indicator.onStopMeeting = { stopCount += 1 }
+        indicator.setMeetingRecording(true, config: AppConfig())
+
+        let size = try #require(indicator.controlHitTestSizeForTesting)
+        let stopFrame = FloatingIndicatorControlLayout.trailingControlFrame(in: size)
+        indicator.handleClick(at: CGPoint(x: stopFrame.midX, y: stopFrame.midY))
+
+        #expect(stopCount == 1)
+        indicator.close()
+    }
+
+    @MainActor
+    @Test("clicking the pill body no longer stops the meeting")
+    func bodyClickLeavesMeetingRecording() throws {
+        let indicator = makeIndicator()
+        var stopCount = 0
+        var pauseCount = 0
+        indicator.onStopMeeting = { stopCount += 1 }
+        indicator.onToggleMeetingPause = { pauseCount += 1 }
+        indicator.setMeetingRecording(true, config: AppConfig())
+
+        let size = try #require(indicator.controlHitTestSizeForTesting)
+        let bodyPoint = CGPoint(x: size.width / 2, y: size.height / 2)
+        // Guard the assumption that the pill centre really is body, so a future
+        // narrower pill fails here rather than silently weakening the test.
+        #expect(FloatingIndicatorControlLayout.hit(at: bodyPoint, in: size) == .body)
+
+        indicator.handleClick(at: bodyPoint)
+
+        #expect(stopCount == 0)
+        #expect(pauseCount == 0)
+        indicator.close()
+    }
+
+    @Test("stop hit region tracks the drawn control instead of the pill body")
+    func stopHitRegionMatchesDrawnControl() {
+        let size = CGSize(width: 190, height: 34)
+        let stopFrame = FloatingIndicatorControlLayout.trailingControlFrame(in: size)
+
+        // The drawn dot and its immediate surround stop the recording.
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: stopFrame.midX, y: stopFrame.midY),
+            in: size
+        ) == .trailingControl)
+
+        // The old behaviour treated everything past x=30 as a stop.
+        for x in stride(from: 30.0, through: 150.0, by: 20.0) {
+            #expect(FloatingIndicatorControlLayout.hit(
+                at: CGPoint(x: x, y: size.height / 2),
+                in: size
+            ) == .body)
+        }
+    }
+
+    @Test("leading control keeps its own hit region")
+    func leadingHitRegionMatchesDrawnControl() {
+        let size = CGSize(width: 190, height: 34)
+        let leadingFrame = FloatingIndicatorControlLayout.leadingControlFrame(in: size)
+
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: leadingFrame.midX, y: leadingFrame.midY),
+            in: size
+        ) == .leadingControl)
+
+        // Just outside the widened target is body, not a control.
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: 40, y: size.height / 2),
+            in: size
+        ) == .body)
+    }
+
+    @Test("controls stay reachable across the pill's full height")
+    func controlsSpanFullPillHeight() {
+        let size = CGSize(width: 190, height: 34)
+        let stopFrame = FloatingIndicatorControlLayout.trailingControlFrame(in: size)
+
+        for y in [0.5, size.height / 2, size.height - 0.5] {
+            #expect(FloatingIndicatorControlLayout.hit(
+                at: CGPoint(x: stopFrame.midX, y: y),
+                in: size
+            ) == .trailingControl)
+        }
+    }
+
+    @Test("a narrow pill resolves overlapping targets to the nearer control")
+    func narrowPillPrefersNearerControl() {
+        let size = CGSize(width: 36, height: 34)
+        let leadingFrame = FloatingIndicatorControlLayout.leadingControlFrame(in: size)
+        let trailingFrame = FloatingIndicatorControlLayout.trailingControlFrame(in: size)
+
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: leadingFrame.midX, y: size.height / 2),
+            in: size
+        ) == .leadingControl)
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: trailingFrame.midX, y: size.height / 2),
+            in: size
+        ) == .trailingControl)
+
+        // Both points above sit in exactly one touch target, so they never reach
+        // the tie-break. Probe either side of the boundary between the two
+        // control centres, which is inside the overlapping region.
+        let boundary = (leadingFrame.midX + trailingFrame.midX) / 2
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: boundary - 2, y: size.height / 2),
+            in: size
+        ) == .leadingControl)
+        #expect(FloatingIndicatorControlLayout.hit(
+            at: CGPoint(x: boundary + 2, y: size.height / 2),
+            in: size
+        ) == .trailingControl)
+    }
+
+    @MainActor
+    private func makeIndicator() -> FloatingIndicatorController {
+        let supportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        return FloatingIndicatorController(configStore: ConfigStore(supportURL: supportDirectory))
     }
 }
 

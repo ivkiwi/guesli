@@ -10,6 +10,15 @@ struct BackendOption: Equatable {
     let description: String
     let recommended: Bool
 
+    static let parakeetUnified = BackendOption(
+        backend: "parakeet-unified",
+        model: "FluidInference/parakeet-unified-en-0.6b-coreml",
+        label: "Parakeet Unified",
+        sizeLabel: "~565 MB",
+        description: "Newest English-focused Parakeet generation with lower error rates and fast offline CoreML inference.",
+        recommended: false
+    )
+
     static let parakeetMultilingual = BackendOption(
         backend: "fluidaudio",
         model: "FluidInference/parakeet-tdt-0.6b-v3-coreml",
@@ -104,7 +113,7 @@ struct BackendOption: Equatable {
     static let whisper = parakeetMultilingual
 
     static let parakeetFamily: [BackendOption] = [
-        .parakeetMultilingual, .parakeetEnglish,
+        .parakeetMultilingual, .parakeetUnified, .parakeetEnglish,
     ]
 
     static let whisperFamily: [BackendOption] = [
@@ -140,6 +149,10 @@ struct BackendOption: Equatable {
         all.filter { $0.isDownloaded }
     }
 
+    static var downloadedMeetingTranscription: [BackendOption] {
+        downloaded.filter(\.supportsMeetingTranscription)
+    }
+
     static func resolve(backend: String, model: String) -> BackendOption? {
         let legacyGigaAMModels: Set<String> = [
             "huggingfinger0/gigaam-v3-coreml",
@@ -154,6 +167,10 @@ struct BackendOption: Equatable {
 
     var isStreamingDictationBackend: Bool {
         backend == "nemotron35"
+    }
+
+    var supportsMeetingTranscription: Bool {
+        !isStreamingDictationBackend
     }
 
     static func resolveDownloaded(
@@ -176,23 +193,17 @@ struct BackendOption: Equatable {
     var isDownloaded: Bool {
         let fm = FileManager.default
         switch backend {
+        case "parakeet-unified":
+            return ManagedASRModelPlans.parakeetUnified().isAvailableLocally(fileManager: fm)
         case "whisper":
             return WhisperKitTranscriber.isModelDownloaded(model)
         case "fluidaudio":
-            let supportDir = fm.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support/FluidAudio/Models")
-            if model.contains("parakeet") {
-                let version = model.contains("v2") ? "v2" : "v3"
-                if let contents = try? fm.contentsOfDirectory(at: supportDir, includingPropertiesForKeys: nil) {
-                    return contents.contains { $0.lastPathComponent.contains("parakeet") && $0.lastPathComponent.contains(version) }
-                }
-            }
-            return false
+            let plan = model.contains("v2")
+                ? ManagedASRModelPlans.parakeetV2()
+                : ManagedASRModelPlans.parakeetV3()
+            return plan.isAvailableLocally(fileManager: fm)
         case "qwen":
-            let supportDir = fm.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support/FluidAudio/Models/qwen3-asr-0.6b-coreml")
-            return fm.fileExists(atPath: supportDir.appendingPathComponent("int8/vocab.json").path)
-                || fm.fileExists(atPath: supportDir.appendingPathComponent("f32/vocab.json").path)
+            return Qwen3AsrModelStore.isModelDownloaded(fileManager: fm)
         case "nemotron35":
             let path = fm.homeDirectoryForCurrentUser
                 .appendingPathComponent(".cache/muesli/models/nemotron35-multilingual-2240ms/encoder.mlmodelc/coremldata.bin")
@@ -202,7 +213,7 @@ struct BackendOption: Equatable {
         case "cohere":
             return CohereTranscribeModelStore.isAvailableLocally()
         case "sensevoice":
-            return SenseVoiceTranscriber.isModelDownloaded()
+            return SenseVoiceTranscriber.isModelDownloaded(fileManager: fm)
         default:
             return false
         }
@@ -279,13 +290,91 @@ enum Nemotron35Language: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// Qwen3 uses nil for automatic language detection and an ISO code when pinned.
+enum Qwen3AsrLanguage: Hashable, Sendable {
+    case auto
+    case pinned(MuesliQwen3AsrConfig.Language)
+
+    static let defaultLanguage: Self = .auto
+    static var allCases: [Self] {
+        [.auto] + MuesliQwen3AsrConfig.Language.allCases.map(Self.pinned)
+    }
+
+    var label: String {
+        switch self {
+        case .auto: return "Auto-detect"
+        case .pinned(let language): return language.englishName
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .auto: return "auto"
+        case .pinned(let language): return language.rawValue
+        }
+    }
+
+    var pinnedCode: String? {
+        switch self {
+        case .auto: return nil
+        case .pinned(let language): return language.rawValue
+        }
+    }
+
+    static func resolved(_ rawValue: String?) -> Self {
+        let normalized = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let normalized, !normalized.isEmpty, normalized != "auto" else { return .auto }
+        if let language = MuesliQwen3AsrConfig.Language(rawValue: normalized) {
+            return .pinned(language)
+        }
+        if let language = MuesliQwen3AsrConfig.Language(from: normalized) {
+            return .pinned(language)
+        }
+        return .auto
+    }
+
+    static func resolvedCode(_ rawValue: String?) -> String {
+        resolved(rawValue).rawValue
+    }
+}
+
+/// Optional script filter for multilingual Parakeet v3 decoding.
+enum ParakeetLanguage: String, CaseIterable, Codable, Sendable {
+    case auto, english = "en", spanish = "es", french = "fr", german = "de"
+    case italian = "it", portuguese = "pt", romanian = "ro", dutch = "nl"
+    case danish = "da", swedish = "sv", finnish = "fi", hungarian = "hu"
+    case estonian = "et", latvian = "lv", lithuanian = "lt", maltese = "mt"
+    case polish = "pl", czech = "cs", slovak = "sk", slovenian = "sl"
+    case croatian = "hr", bosnian = "bs", russian = "ru", ukrainian = "uk"
+    case belarusian = "be", bulgarian = "bg", serbian = "sr", greek = "el"
+
+    static let defaultLanguage: Self = .auto
+
+    var label: String {
+        if self == .auto { return "Auto-detect" }
+        return Locale(identifier: "en").localizedString(forLanguageCode: rawValue) ?? rawValue.uppercased()
+    }
+
+    var isoCode: String? { self == .auto ? nil : rawValue }
+
+    static func resolved(_ rawValue: String?) -> Self {
+        guard let value = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              let language = Self(rawValue: value) else { return .auto }
+        return language
+    }
+
+    static func resolvedCode(_ rawValue: String?) -> String { resolved(rawValue).rawValue }
+}
+
 struct SummaryModelPreset {
     let id: String
     let label: String
 
     static let openAIModels: [SummaryModelPreset] = [
         SummaryModelPreset(id: "gpt-5.4-mini", label: "GPT-5.4 Mini (default)"),
-        SummaryModelPreset(id: "gpt-5.5", label: "GPT-5.5"),
+        SummaryModelPreset(id: "gpt-5.6-sol", label: "GPT-5.6 Sol"),
+        SummaryModelPreset(id: "gpt-5.6-terra", label: "GPT-5.6 Terra"),
+        SummaryModelPreset(id: "gpt-5.6-luna", label: "GPT-5.6 Luna"),
         SummaryModelPreset(id: "gpt-5.4-nano", label: "GPT-5.4 Nano"),
         SummaryModelPreset(id: "gpt-5.4", label: "GPT-5.4"),
         SummaryModelPreset(id: "gpt-5.4-pro", label: "GPT-5.4 Pro"),
@@ -295,15 +384,26 @@ struct SummaryModelPreset {
 
     static let chatGPTModels: [SummaryModelPreset] = [
         SummaryModelPreset(id: "gpt-5.4-mini", label: "GPT-5.4 Mini (default)"),
-        SummaryModelPreset(id: "gpt-5.5", label: "GPT-5.5"),
+        SummaryModelPreset(id: "gpt-5.6-sol", label: "GPT-5.6 Sol"),
+        SummaryModelPreset(id: "gpt-5.6-terra", label: "GPT-5.6 Terra"),
+        SummaryModelPreset(id: "gpt-5.6-luna", label: "GPT-5.6 Luna"),
         SummaryModelPreset(id: "gpt-5.4-nano", label: "GPT-5.4 Nano"),
         SummaryModelPreset(id: "gpt-5.4", label: "GPT-5.4"),
         SummaryModelPreset(id: "gpt-5.2", label: "GPT-5.2"),
         SummaryModelPreset(id: "gpt-4o", label: "GPT-4o"),
     ]
 
+    static let chatGPTTranscriptCleanupModels: [SummaryModelPreset] = [
+        SummaryModelPreset(id: "gpt-5.6-terra", label: "GPT-5.6 Terra (default)"),
+        SummaryModelPreset(id: "gpt-5.4-mini", label: "GPT-5.4 Mini"),
+        SummaryModelPreset(id: "gpt-5.6-sol", label: "GPT-5.6 Sol"),
+        SummaryModelPreset(id: "gpt-5.6-luna", label: "GPT-5.6 Luna"),
+    ]
+
     static let computerUsePlannerModels: [SummaryModelPreset] = [
-        SummaryModelPreset(id: "gpt-5.5", label: "GPT-5.5 (default)"),
+        SummaryModelPreset(id: "gpt-5.6-sol", label: "GPT-5.6 Sol (default)"),
+        SummaryModelPreset(id: "gpt-5.6-terra", label: "GPT-5.6 Terra"),
+        SummaryModelPreset(id: "gpt-5.6-luna", label: "GPT-5.6 Luna"),
         SummaryModelPreset(id: "gpt-5.4", label: "GPT-5.4"),
         SummaryModelPreset(id: "gpt-5.4-mini", label: "GPT-5.4 Mini"),
         SummaryModelPreset(id: "gpt-5.2", label: "GPT-5.2"),
@@ -321,6 +421,21 @@ struct SummaryModelPreset {
         guard !trimmedModel.isEmpty else { return presets }
         guard !presets.contains(where: { $0.id == trimmedModel }) else { return presets }
         return presets + [SummaryModelPreset(id: trimmedModel, label: "Custom: \(trimmedModel)")]
+    }
+
+    static func reasoningEffort(for model: String) -> String? {
+        switch model.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+            return "high"
+        default:
+            return nil
+        }
+    }
+
+    static func migratedFromGPT55(_ model: String) -> String {
+        model.trimmingCharacters(in: .whitespacesAndNewlines) == "gpt-5.5"
+            ? "gpt-5.6-sol"
+            : model
     }
 }
 
@@ -684,50 +799,6 @@ enum TranscriptCleanupPrompts {
     }
 }
 
-struct CustomWord: Codable, Equatable, Identifiable {
-    var id = UUID()
-    var word: String
-    var replacement: String?
-    var matchingThreshold: Double = 0.85
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case word
-        case replacement
-        case matchingThreshold = "matching_threshold"
-    }
-
-    init(id: UUID = UUID(), word: String, replacement: String?, matchingThreshold: Double = 0.85) {
-        self.id = id
-        self.word = word
-        self.replacement = replacement
-        self.matchingThreshold = Self.clampedThreshold(matchingThreshold)
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = (try? c.decode(UUID.self, forKey: .id)) ?? UUID()
-        word = try c.decode(String.self, forKey: .word)
-        replacement = try c.decodeIfPresent(String.self, forKey: .replacement)
-        matchingThreshold = Self.clampedThreshold(try c.decodeIfPresent(Double.self, forKey: .matchingThreshold) ?? 0.85)
-    }
-
-    var displayLabel: String {
-        if let replacement, !replacement.isEmpty {
-            return "\(word) → \(replacement)"
-        }
-        return word
-    }
-
-    var targetWord: String {
-        replacement ?? word
-    }
-
-    private static func clampedThreshold(_ value: Double) -> Double {
-        min(max(value, 0.70), 0.95)
-    }
-}
-
 struct DictionarySuggestion: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     var observed: String
@@ -1021,8 +1092,8 @@ enum MeetingProcessingMode: String, Codable, CaseIterable, Sendable {
 }
 
 struct AppConfig: Codable {
-    static let defaultChatGPTDictationCleanupModel = "gpt-5.4-nano"
-    static let defaultChatGPTMeetingCleanupModel = "gpt-5.4-mini"
+    static let defaultChatGPTDictationCleanupModel = "gpt-5.6-terra"
+    static let defaultChatGPTMeetingCleanupModel = "gpt-5.6-terra"
 
     var dictationHotkey: HotkeyConfig = .default
     var computerUseHotkey: HotkeyConfig = .computerUseDefault
@@ -1040,6 +1111,8 @@ struct AppConfig: Codable {
     var cohereLanguageMeetings: String = CohereTranscribeLanguage.defaultLanguage.rawValue
     private var legacyCohereLanguage: String? = nil
     var nemotron35Language: String = Nemotron35Language.defaultLanguage.rawValue
+    var qwen3AsrLanguage: String = Qwen3AsrLanguage.defaultLanguage.rawValue
+    var parakeetLanguage: String = ParakeetLanguage.defaultLanguage.rawValue
     var meetingTranscriptionBackend: String = BackendOption.gigaAMV3Russian.backend
     var meetingTranscriptionModel: String = BackendOption.gigaAMV3Russian.model
     var preferredMeetingBrowserBundleID: String = ""
@@ -1052,6 +1125,7 @@ struct AppConfig: Codable {
     var upcomingMeetingsDayCount: Int = UpcomingMeetingsWindow.defaultDayCount
     var showScheduledMeetingNotifications: Bool = true
     var scheduledMeetingNotificationLeadTime: ScheduledMeetingNotificationLeadTime = .atStart
+    var meetingJoinDefaultAction: MeetingJoinDefaultAction = .fallback
     var showMeetingDetectionNotification: Bool = true
     var mutedMeetingDetectionAppBundleIDs: [String] = []
     var meetingRecordingSavePolicy: MeetingRecordingSavePolicy = .never
@@ -1152,6 +1226,8 @@ struct AppConfig: Codable {
         case cohereLanguageDictation = "cohere_language_dictation"
         case cohereLanguageMeetings = "cohere_language_meetings"
         case nemotron35Language = "nemotron35_language"
+        case qwen3AsrLanguage = "qwen3_asr_language"
+        case parakeetLanguage = "parakeet_language"
         case meetingTranscriptionBackend = "meeting_transcription_backend"
         case meetingTranscriptionModel = "meeting_transcription_model"
         case preferredMeetingBrowserBundleID = "preferred_meeting_browser_bundle_id"
@@ -1164,6 +1240,7 @@ struct AppConfig: Codable {
         case upcomingMeetingsDayCount = "upcoming_meetings_day_count"
         case showScheduledMeetingNotifications = "show_scheduled_meeting_notifications"
         case scheduledMeetingNotificationLeadTime = "scheduled_meeting_notification_lead_time"
+        case meetingJoinDefaultAction = "meeting_join_default_action"
         case showMeetingDetectionNotification = "show_meeting_detection_notification"
         case mutedMeetingDetectionAppBundleIDs = "muted_meeting_detection_app_bundle_ids"
         case meetingRecordingSavePolicy = "meeting_recording_save_policy"
@@ -1262,7 +1339,9 @@ struct AppConfig: Codable {
         meetingRecordingHotkey = (try? c.decode(HotkeyConfig.self, forKey: .meetingRecordingHotkey)) ?? defaults.meetingRecordingHotkey
         enableMeetingRecordingHotkey = (try? c.decode(Bool.self, forKey: .enableMeetingRecordingHotkey)) ?? defaults.enableMeetingRecordingHotkey
         enableComputerUsePlanner = (try? c.decode(Bool.self, forKey: .enableComputerUsePlanner)) ?? defaults.enableComputerUsePlanner
-        computerUsePlannerModel = (try? c.decode(String.self, forKey: .computerUsePlannerModel)) ?? defaults.computerUsePlannerModel
+        computerUsePlannerModel = SummaryModelPreset.migratedFromGPT55(
+            (try? c.decode(String.self, forKey: .computerUsePlannerModel)) ?? defaults.computerUsePlannerModel
+        )
         computerUseTimeoutSeconds = (try? c.decode(Int.self, forKey: .computerUseTimeoutSeconds)) ?? defaults.computerUseTimeoutSeconds
         sttBackend = (try? c.decode(String.self, forKey: .sttBackend)) ?? defaults.sttBackend
         sttModel = (try? c.decode(String.self, forKey: .sttModel)) ?? defaults.sttModel
@@ -1277,6 +1356,8 @@ struct AppConfig: Codable {
         cohereLanguageDictation = CohereTranscribeLanguage.resolvedCode(cohereLanguageDictationRaw)
         cohereLanguageMeetings = CohereTranscribeLanguage.resolvedCode(cohereLanguageMeetingsRaw)
         nemotron35Language = Nemotron35Language.resolvedCode(try? c.decode(String.self, forKey: .nemotron35Language))
+        qwen3AsrLanguage = Qwen3AsrLanguage.resolvedCode(try? c.decode(String.self, forKey: .qwen3AsrLanguage))
+        parakeetLanguage = ParakeetLanguage.resolvedCode(try? c.decode(String.self, forKey: .parakeetLanguage))
         meetingTranscriptionBackend = (try? c.decode(String.self, forKey: .meetingTranscriptionBackend)) ?? sttBackend
         meetingTranscriptionModel = (try? c.decode(String.self, forKey: .meetingTranscriptionModel)) ?? sttModel
         preferredMeetingBrowserBundleID = (try? c.decode(String.self, forKey: .preferredMeetingBrowserBundleID)) ?? defaults.preferredMeetingBrowserBundleID
@@ -1303,6 +1384,9 @@ struct AppConfig: Codable {
         scheduledMeetingNotificationLeadTime =
             (try? c.decode(ScheduledMeetingNotificationLeadTime.self, forKey: .scheduledMeetingNotificationLeadTime))
             ?? defaults.scheduledMeetingNotificationLeadTime
+        meetingJoinDefaultAction =
+            (try? c.decode(MeetingJoinDefaultAction.self, forKey: .meetingJoinDefaultAction))
+            ?? defaults.meetingJoinDefaultAction
         showMeetingDetectionNotification = decodedShowMeetingDetectionNotification ?? defaults.showMeetingDetectionNotification
         mutedMeetingDetectionAppBundleIDs = (try? c.decode([String].self, forKey: .mutedMeetingDetectionAppBundleIDs)) ?? defaults.mutedMeetingDetectionAppBundleIDs
         meetingRecordingSavePolicy = (try? c.decode(MeetingRecordingSavePolicy.self, forKey: .meetingRecordingSavePolicy)) ?? defaults.meetingRecordingSavePolicy
@@ -1334,11 +1418,19 @@ struct AppConfig: Codable {
         indicatorOrigin = try? c.decode(CGPointCodable.self, forKey: .indicatorOrigin)
         openAIAPIKey = (try? c.decode(String.self, forKey: .openAIAPIKey)) ?? defaults.openAIAPIKey
         openRouterAPIKey = (try? c.decode(String.self, forKey: .openRouterAPIKey)) ?? defaults.openRouterAPIKey
-        openAIModel = (try? c.decode(String.self, forKey: .openAIModel)) ?? defaults.openAIModel
+        openAIModel = SummaryModelPreset.migratedFromGPT55(
+            (try? c.decode(String.self, forKey: .openAIModel)) ?? defaults.openAIModel
+        )
         openRouterModel = (try? c.decode(String.self, forKey: .openRouterModel)) ?? defaults.openRouterModel
-        chatGPTModel = (try? c.decode(String.self, forKey: .chatGPTModel)) ?? defaults.chatGPTModel
-        chatGPTDictationCleanupModel = (try? c.decode(String.self, forKey: .chatGPTDictationCleanupModel)) ?? defaults.chatGPTDictationCleanupModel
-        chatGPTMeetingCleanupModel = (try? c.decode(String.self, forKey: .chatGPTMeetingCleanupModel)) ?? defaults.chatGPTMeetingCleanupModel
+        chatGPTModel = SummaryModelPreset.migratedFromGPT55(
+            (try? c.decode(String.self, forKey: .chatGPTModel)) ?? defaults.chatGPTModel
+        )
+        chatGPTDictationCleanupModel = SummaryModelPreset.migratedFromGPT55(
+            (try? c.decode(String.self, forKey: .chatGPTDictationCleanupModel)) ?? defaults.chatGPTDictationCleanupModel
+        )
+        chatGPTMeetingCleanupModel = SummaryModelPreset.migratedFromGPT55(
+            (try? c.decode(String.self, forKey: .chatGPTMeetingCleanupModel)) ?? defaults.chatGPTMeetingCleanupModel
+        )
         meetingSummaryRetryCount = MeetingSummaryRetryPolicy.clampedRetryCount(
             (try? c.decode(Int.self, forKey: .meetingSummaryRetryCount)) ?? defaults.meetingSummaryRetryCount
         )
@@ -1438,6 +1530,14 @@ struct AppConfig: Codable {
 
     var resolvedNemotron35Language: Nemotron35Language {
         Nemotron35Language.resolved(nemotron35Language)
+    }
+
+    var resolvedQwen3AsrLanguage: Qwen3AsrLanguage {
+        Qwen3AsrLanguage.resolved(qwen3AsrLanguage)
+    }
+
+    var resolvedParakeetLanguage: ParakeetLanguage {
+        ParakeetLanguage.resolved(parakeetLanguage)
     }
 
     var resolvedOnboardingUseCase: OnboardingUseCase {

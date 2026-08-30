@@ -45,6 +45,10 @@ struct MeetingCandidate: Equatable {
     let sourceBundleID: String?
     let sourcePID: pid_t?
     let suppressionID: String
+    /// Calendar event this candidate is attributed to, when one is active.
+    /// Stable across the browser/app/calendar fallbacks in `resolve`, so it
+    /// survives changes in how the same meeting is being observed.
+    let calendarEventID: String?
 
     init(
         id: String,
@@ -56,7 +60,8 @@ struct MeetingCandidate: Equatable {
         meetingTitle: String?,
         sourceBundleID: String? = nil,
         sourcePID: pid_t? = nil,
-        suppressionID: String? = nil
+        suppressionID: String? = nil,
+        calendarEventID: String? = nil
     ) {
         self.id = id
         self.platform = platform
@@ -68,6 +73,7 @@ struct MeetingCandidate: Equatable {
         self.sourceBundleID = sourceBundleID
         self.sourcePID = sourcePID
         self.suppressionID = suppressionID ?? id
+        self.calendarEventID = calendarEventID
     }
 
     var subtitle: String {
@@ -84,6 +90,7 @@ struct MeetingCandidate: Equatable {
             && lhs.sourceBundleID == rhs.sourceBundleID
             && lhs.sourcePID == rhs.sourcePID
             && lhs.suppressionID == rhs.suppressionID
+            && lhs.calendarEventID == rhs.calendarEventID
     }
 }
 
@@ -180,21 +187,24 @@ enum MeetingURLNormalizer {
             )
         }
 
-        if host.hasSuffix("zoom.us") {
+        if isHost(host, orSubdomainOf: "zoom.us") {
             if let meetingID = zoomMeetingID(from: path) {
                 let identity = "\(host)/j/\(meetingID)"
                 return NormalizedMeetingURL(id: "zoom:\(identity)", url: identity, platform: .zoom)
             }
+            guard !isNonMeetingPath(path) else { return nil }
             let identity = compactIdentity(host: host, path: compactPath)
             return NormalizedMeetingURL(id: "zoom:\(identity)", url: identity, platform: .zoom)
         }
 
-        if host.hasSuffix("teams.microsoft.com") || host == "teams.live.com" {
+        if isHost(host, orSubdomainOf: "teams.microsoft.com") || host == "teams.live.com" {
+            guard !isNonMeetingPath(path) else { return nil }
             let identity = compactIdentity(host: host, path: compactPath)
             return NormalizedMeetingURL(id: "teams:\(identity)", url: identity, platform: .teams)
         }
 
-        if host.hasSuffix("webex.com") {
+        if isHost(host, orSubdomainOf: "webex.com") {
+            guard !isNonMeetingPath(path) else { return nil }
             let identity = compactIdentity(host: host, path: compactPath)
             return NormalizedMeetingURL(id: "webex:\(identity)", url: identity, platform: .webex)
         }
@@ -205,6 +215,47 @@ enum MeetingURLNormalizer {
         }
 
         return nil
+    }
+
+    /// `host` is exactly `domain`, or a subdomain of it.
+    ///
+    /// A plain `hasSuffix` also matches `evilzoom.us` and `notwebex.com`, so any focused page on
+    /// a lookalike domain resolved as a meeting.
+    private static func isHost(_ host: String, orSubdomainOf domain: String) -> Bool {
+        host == domain || host.hasSuffix(".\(domain)")
+    }
+
+    /// Pages on a meeting host that are definitely not a room.
+    ///
+    /// Zoom, Teams and Webex match on host with any path, so a parked `zoom.us/download` tab or
+    /// the Teams web inbox counted as a meeting and prompted the user — repeatedly, since a
+    /// focused URL-only candidate re-arms every `browserAutoDismissCooldown`. Google Meet never
+    /// had this problem because it requires a real room code.
+    ///
+    /// Deliberately a denylist of known-static pages, not an allowlist of join paths: a missing
+    /// entry here costs one stray prompt, whereas an allowlist that misses a real room shape
+    /// would silently stop a meeting being detected at all.
+    ///
+    /// Matched against every path segment, not just the first, so locale-prefixed variants like
+    /// `zoom.us/en-us/download.html` are caught too. Room identifiers are numeric or hashes, so
+    /// an exact match against these words does not collide with one.
+    private static func isNonMeetingPath(_ path: String) -> Bool {
+        let segments = path.split(separator: "/").map { segment -> String in
+            let lowered = segment.lowercased()
+            // Trim a page extension so "download.html" matches "download".
+            guard let dot = lowered.firstIndex(of: "."),
+                  ["html", "htm", "php", "aspx"].contains(String(lowered[lowered.index(after: dot)...]))
+            else { return lowered }
+            return String(lowered[..<dot])
+        }
+        if segments.isEmpty { return true }   // bare host, e.g. the Teams web app inbox
+        let nonMeeting: Set<String> = [
+            "download", "pricing", "signin", "sign-in", "signup", "account", "profile",
+            "meeting", "meetings", "schedule", "support", "docs", "download-center",
+            "contactcenter", "contact", "blog", "home", "myhome", "buy", "billing",
+            "webappng", "v2", "_", "settings", "recording", "recordings",
+        ]
+        return segments.contains { nonMeeting.contains($0) }
     }
 
     private static func isGoogleMeetCode(_ value: String) -> Bool {
@@ -300,6 +351,7 @@ final class MeetingCandidateResolver {
                 sourceBundleID: browserMeeting.bundleID,
                 sourcePID: validSourcePID(inputProcess.pid),
                 suppressionID: suppressionID,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -315,6 +367,7 @@ final class MeetingCandidateResolver {
                 evidence: browserEvidence(from: snapshot, context: browserMeeting, inputProcess: nil),
                 sourceBundleID: browserMeeting.bundleID,
                 sourcePID: browserMeeting.pid,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -339,6 +392,7 @@ final class MeetingCandidateResolver {
                     sourceBundleID: browserMeeting.bundleID,
                     sourcePID: inputProcess.flatMap { validSourcePID($0.pid) } ?? browserMeeting.pid,
                     suppressionID: suppressionID,
+                    calendarEventID: snapshot.calendarEvent?.id,
                     now: snapshot.now
                 )
             }
@@ -355,6 +409,7 @@ final class MeetingCandidateResolver {
                     sourceBundleID: audioApp.bundleID,
                     sourcePID: validSourcePID(audioApp.pid),
                     suppressionID: appSessionID,
+                    calendarEventID: snapshot.calendarEvent?.id,
                     now: snapshot.now
                 )
             }
@@ -375,11 +430,18 @@ final class MeetingCandidateResolver {
                     sourceBundleID: browserAudio.bundleID,
                     sourcePID: validSourcePID(browserAudio.process.pid),
                     suppressionID: sessionID,
+                    calendarEventID: snapshot.calendarEvent?.id,
                     now: snapshot.now
                 )
             }
 
             let app = bestCalendarApp(from: snapshot.runningApps)
+            // Sole-evidence guard: with no meeting app running, the only thing left is "a
+            // calendar event exists and something is using the mic or camera". That is how a
+            // diary block became a meeting prompt. Require the event to actually look joinable,
+            // and require the mic specifically — camera alone is not a meeting, which is the
+            // documented rule everywhere else but was not enforced on this branch.
+            guard app != nil || (calendarEvent.isJoinable && hasMicActivity(snapshot)) else { return nil }
             return candidate(
                 id: "cal:\(calendarEvent.id)",
                 platform: app?.platform ?? .unknown,
@@ -389,6 +451,7 @@ final class MeetingCandidateResolver {
                 evidence: mediaEvidence(from: snapshot).union([.calendarEvent]),
                 sourceBundleID: app?.bundleID,
                 sourcePID: nil,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -409,6 +472,7 @@ final class MeetingCandidateResolver {
                 sourceBundleID: browserAudio.bundleID,
                 sourcePID: validSourcePID(browserAudio.process.pid),
                 suppressionID: sessionID,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -426,6 +490,7 @@ final class MeetingCandidateResolver {
                 sourceBundleID: audioApp.bundleID,
                 sourcePID: validSourcePID(audioApp.pid),
                 suppressionID: appSessionID,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -440,6 +505,7 @@ final class MeetingCandidateResolver {
                 evidence: mediaEvidence(from: snapshot).union([.dedicatedApp, .foregroundApp]),
                 sourceBundleID: foregroundCameraApp.bundleID,
                 sourcePID: nil,
+                calendarEventID: snapshot.calendarEvent?.id,
                 now: snapshot.now
             )
         }
@@ -585,6 +651,15 @@ final class MeetingCandidateResolver {
         snapshot.micActive || snapshot.cameraActive || snapshot.audioInputProcesses.contains { $0.isRunningInput }
     }
 
+    /// Mic activity from either the device-level flag or per-process attribution.
+    ///
+    /// `micActive` alone is not enough: a call can be visible only as an attributed input
+    /// process. Camera activity is deliberately excluded — "camera alone won't trigger" is the
+    /// documented rule, but the calendar branch was not enforcing it.
+    private func hasMicActivity(_ snapshot: MeetingSignalSnapshot) -> Bool {
+        snapshot.micActive || snapshot.audioInputProcesses.contains { $0.isRunningInput }
+    }
+
     private func activeInputProcess(
         for bundleID: String,
         in snapshot: MeetingSignalSnapshot
@@ -643,6 +718,7 @@ final class MeetingCandidateResolver {
         sourceBundleID: String?,
         sourcePID: pid_t?,
         suppressionID: String? = nil,
+        calendarEventID: String?,
         now: Date
     ) -> MeetingCandidate {
         MeetingCandidate(
@@ -655,7 +731,8 @@ final class MeetingCandidateResolver {
             meetingTitle: title,
             sourceBundleID: sourceBundleID,
             sourcePID: sourcePID,
-            suppressionID: suppressionID
+            suppressionID: suppressionID,
+            calendarEventID: calendarEventID
         )
     }
 }

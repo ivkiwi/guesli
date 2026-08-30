@@ -30,6 +30,7 @@ struct FluidAudioTranscriberTests {
 
     @Test("parakeet models use FluidInference repo")
     func parakeetModels() {
+        #expect(BackendOption.parakeetUnified.model.contains("FluidInference"))
         #expect(BackendOption.parakeetMultilingual.model.contains("FluidInference"))
         #expect(BackendOption.parakeetEnglish.model.contains("FluidInference"))
     }

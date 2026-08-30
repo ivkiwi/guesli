@@ -14,11 +14,31 @@ struct SpeechTranscriptionResult: Sendable {
 }
 
 actor TranscriptionCoordinator {
+    typealias DiarizerModelLoader = @Sendable (DiarizerRuntimePolicy) async throws -> DiarizerModels
+    typealias VADLoader = @Sendable () async throws -> VadManager
+    typealias RequiredBackendLoader = @Sendable (BackendOption) async throws -> Void
+
+    private enum DiarizerLoadWaitOutcome {
+        case succeeded
+        case failed
+        case cancelled
+        case timedOut
+    }
+
+    private struct DiarizerLoadWaiter {
+        let continuation: CheckedContinuation<DiarizerLoadWaitOutcome, Never>
+        let timeoutTask: Task<Void, Never>
+    }
+
+    private static let defaultDiarizerLoadWaitTimeout: Duration = .seconds(5)
+    private static let defaultDiarizerLoadOperationTimeout: Duration = .seconds(300)
+
     static let explicitlyRoutedBackendIdentifiers: Set<String> = [
-        "whisper", "nemotron35", "gigaam_v3", "qwen", "cohere", "sensevoice",
+        "whisper", "nemotron35", "gigaam_v3", "parakeet-unified", "qwen", "cohere", "sensevoice",
     ]
 
     private let fluidTranscriber = FluidAudioTranscriber()
+    private let parakeetUnifiedTranscriber = ParakeetUnifiedTranscriber()
     private let whisperTranscriber = WhisperKitTranscriber()
     private var _qwen3Transcriber: Any?
     private var _qwen3PostProcessor: Any?
@@ -27,7 +47,19 @@ actor TranscriptionCoordinator {
     private let senseVoiceTranscriber = SenseVoiceTranscriber()
     private var vadManager: VadManager?
     private var diarizerManager: DiarizerManager?
+    private var vadLoadTask: Task<Void, Never>?
+    private var activeDiarizerLoadID: UUID?
+    private var diarizerLoadTask: Task<Void, Never>?
+    private var diarizerLoadTimeoutTask: Task<Void, Never>?
+    private var didDiarizerLoadTimeOut = false
+    private var diarizerLoadWaiters: [UUID: DiarizerLoadWaiter] = [:]
+    private let diarizerModelLoader: DiarizerModelLoader
+    private let vadLoader: VADLoader
+    private let requiredBackendLoader: RequiredBackendLoader?
+    private let diarizerLoadOperationTimeout: Duration
     private var activeBackend: String?
+    private var qwen3AsrLanguage: Qwen3AsrLanguage = .auto
+    private var parakeetLanguage: ParakeetLanguage = .auto
 
     private var _nemotron35Transcriber: Any?
     /// Selected Nemotron 3.5 language prompt id (101 = auto). Stored so it survives
@@ -70,6 +102,36 @@ actor TranscriptionCoordinator {
         }
     }
 
+    func unloadParakeetUnifiedTranscriber() async {
+        await parakeetUnifiedTranscriber.shutdown()
+    }
+
+    func unloadFluidAudioTranscriber(version: AsrModelVersion) async {
+        await fluidTranscriber.shutdown(ifLoadedVersion: version)
+    }
+
+    func unloadWhisperTranscriber() async {
+        await whisperTranscriber.shutdown()
+    }
+
+    func unloadSenseVoiceTranscriber() async {
+        await senseVoiceTranscriber.shutdown()
+    }
+
+    func unloadQwen3Transcriber() async {
+        if #available(macOS 15, *), let transcriber = _qwen3Transcriber as? Qwen3AsrTranscriber {
+            await transcriber.shutdown()
+        }
+    }
+
+    func setQwen3AsrLanguage(_ language: Qwen3AsrLanguage) {
+        qwen3AsrLanguage = language
+    }
+
+    func setParakeetLanguage(_ language: ParakeetLanguage) {
+        parakeetLanguage = language
+    }
+
     @available(macOS 15, *)
     private var qwen3Transcriber: Qwen3AsrTranscriber {
         if _qwen3Transcriber == nil {
@@ -88,9 +150,19 @@ actor TranscriptionCoordinator {
     init(
         externalTranscriptCleanup: @escaping TranscriptCleanupRequest = { text, appContext, settings in
             try await ExternalTranscriptCleanupClient.cleanup(text, appContext: appContext, settings: settings)
-        }
+        },
+        diarizerModelLoader: @escaping DiarizerModelLoader = { policy in
+            try await DiarizerModels.download(configuration: policy.modelConfiguration)
+        },
+        vadLoader: @escaping VADLoader = { try await VadManager() },
+        requiredBackendLoader: RequiredBackendLoader? = nil,
+        diarizerLoadOperationTimeout: Duration = TranscriptionCoordinator.defaultDiarizerLoadOperationTimeout
     ) {
         self.externalTranscriptCleanup = externalTranscriptCleanup
+        self.diarizerModelLoader = diarizerModelLoader
+        self.vadLoader = vadLoader
+        self.requiredBackendLoader = requiredBackendLoader
+        self.diarizerLoadOperationTimeout = diarizerLoadOperationTimeout
     }
 
     @available(macOS 15, *)
@@ -174,14 +246,18 @@ actor TranscriptionCoordinator {
         backend: BackendOption,
         enablePostProcessor: Bool = false,
         includeMeetingHelpers: Bool = true,
-        progress: ((Double, String?) -> Void)? = nil
+        meetingHelperTrigger: DiarizerPreloadTrigger = .unspecified,
+        progress: ((Double, String?) -> Void)? = nil,
+        progressSnapshot: ModelDownloadProgressHandler? = nil
     ) async {
         do {
             try await preloadRequired(
                 backend: backend,
                 enablePostProcessor: enablePostProcessor,
                 includeMeetingHelpers: includeMeetingHelpers,
-                progress: progress
+                meetingHelperTrigger: meetingHelperTrigger,
+                progress: progress,
+                progressSnapshot: progressSnapshot
             )
         } catch {
             fputs("[muesli-native] preload failed for \(backend.backend)/\(backend.model): \(error)\n", stderr)
@@ -192,40 +268,24 @@ actor TranscriptionCoordinator {
         backend: BackendOption,
         enablePostProcessor: Bool = false,
         includeMeetingHelpers: Bool = true,
-        progress: ((Double, String?) -> Void)? = nil
+        meetingHelperTrigger: DiarizerPreloadTrigger = .unspecified,
+        progress: ((Double, String?) -> Void)? = nil,
+        progressSnapshot: ModelDownloadProgressHandler? = nil
     ) async throws {
         activeBackend = backend.backend
+        let startedAt = ContinuousClock.now
 
-        if includeMeetingHelpers {
-            // Meeting helpers are intentionally loaded only when the caller needs meeting behavior.
-            if vadManager == nil {
-                do {
-                    vadManager = try await VadManager()
-                    fputs("[muesli-native] Silero VAD loaded\n", stderr)
-                } catch {
-                    fputs("[muesli-native] VAD load failed (non-critical): \(error)\n", stderr)
-                }
-            }
-
-            if diarizerManager == nil {
-                do {
-                    let diarizer = DiarizerManager()
-                    let models = try await DiarizerModels.download()
-                    diarizer.initialize(models: models)
-                    diarizerManager = diarizer
-                    fputs("[muesli-native] Speaker diarization loaded\n", stderr)
-                } catch {
-                    fputs("[muesli-native] Diarization load failed (non-critical): \(error)\n", stderr)
-                }
-            }
-        }
-
-        switch backend.backend {
+        if let requiredBackendLoader {
+            try await requiredBackendLoader(backend)
+        } else {
+            switch backend.backend {
         case "fluidaudio":
             let version: AsrModelVersion = backend.model.contains("v2") ? .v2 : .v3
-            try await fluidTranscriber.loadModels(version: version, progress: progress)
+            try await fluidTranscriber.loadModels(version: version, progress: progress, progressSnapshot: progressSnapshot)
+        case "parakeet-unified":
+            try await parakeetUnifiedTranscriber.loadModels(progress: progress, progressSnapshot: progressSnapshot)
         case "whisper":
-            try await whisperTranscriber.loadModel(modelName: backend.model, progress: progress)
+            try await whisperTranscriber.loadModel(modelName: backend.model, progress: progress, progressSnapshot: progressSnapshot)
             // Warmup ANE/GPU so first dictation doesn't pay CoreML compilation cost
             fputs("[muesli-native] WhisperKit warmup: running silent audio for CoreML compilation...\n", stderr)
             progress?(0.9, "Warming up model...")
@@ -250,7 +310,7 @@ actor TranscriptionCoordinator {
             try await onnxGigaAMTranscriber.loadModels(progress: progress)
         case "qwen":
             if #available(macOS 15, *) {
-                try await qwen3Transcriber.loadModels(progress: progress)
+                try await qwen3Transcriber.loadModels(progress: progress, progressSnapshot: progressSnapshot)
             } else {
                 throw NSError(domain: "MuesliTranscriptionRuntime", code: 2, userInfo: [
                     NSLocalizedDescriptionKey: "Qwen3 ASR requires macOS 15 or later.",
@@ -265,15 +325,214 @@ actor TranscriptionCoordinator {
                 ])
             }
         case "sensevoice":
-            try await senseVoiceTranscriber.loadModels(progress: progress)
+            try await senseVoiceTranscriber.loadModels(progress: progress, progressSnapshot: progressSnapshot)
         default:
             throw NSError(domain: "MuesliTranscriptionRuntime", code: 5, userInfo: [
                 NSLocalizedDescriptionKey: "Unknown transcription backend: \(backend.backend)",
             ])
+            }
         }
 
         await preloadPostProcessorIfNeeded(enabled: enablePostProcessor)
+        let elapsed = startedAt.duration(to: .now).components
+        let elapsedMs = Double(elapsed.seconds) * 1_000
+            + Double(elapsed.attoseconds) / 1_000_000_000_000_000
+        DiagnosticsLog.write(
+            "[asr-latency] stage=required_preload backend=\(backend.backend) model=\(backend.model) elapsed_ms=\(String(format: "%.1f", elapsedMs))"
+        )
+
+        if includeMeetingHelpers {
+            startMeetingHelperPreloads(trigger: meetingHelperTrigger)
+        }
     }
+
+    private func startMeetingHelperPreloads(trigger: DiarizerPreloadTrigger) {
+        startVADLoadIfNeeded()
+        startDiarizerLoadIfNeeded(trigger: trigger)
+    }
+
+    private func startVADLoadIfNeeded() {
+        guard vadManager == nil, vadLoadTask == nil else { return }
+        let loader = vadLoader
+        let startedAt = ContinuousClock.now
+        vadLoadTask = Task { [weak self] in
+            let result: Result<VadManager, Error>
+            do {
+                result = .success(try await loader())
+            } catch {
+                result = .failure(error)
+            }
+            await self?.finishVADLoad(result, startedAt: startedAt)
+        }
+    }
+
+    private func finishVADLoad(
+        _ result: Result<VadManager, Error>,
+        startedAt: ContinuousClock.Instant
+    ) {
+        vadLoadTask = nil
+        let elapsed = startedAt.duration(to: .now).components
+        let elapsedMs = Double(elapsed.seconds) * 1_000
+            + Double(elapsed.attoseconds) / 1_000_000_000_000_000
+        switch result {
+        case .success(let manager):
+            vadManager = manager
+            DiagnosticsLog.write("[asr-latency] stage=vad_preload outcome=ok elapsed_ms=\(String(format: "%.1f", elapsedMs))")
+            fputs("[muesli-native] Silero VAD loaded\n", stderr)
+        case .failure(let error):
+            DiagnosticsLog.write("[asr-latency] stage=vad_preload outcome=failed elapsed_ms=\(String(format: "%.1f", elapsedMs))")
+            fputs("[muesli-native] VAD load failed (non-critical): \(error)\n", stderr)
+        }
+    }
+
+    func preloadDiarizer(
+        trigger: DiarizerPreloadTrigger = .unspecified,
+        waitTimeout: Duration = TranscriptionCoordinator.defaultDiarizerLoadWaitTimeout
+    ) async {
+        if diarizerManager != nil { return }
+        startDiarizerLoadIfNeeded(trigger: trigger)
+        _ = await waitForActiveDiarizerLoad(timeout: waitTimeout)
+    }
+
+    private func startDiarizerLoadIfNeeded(trigger: DiarizerPreloadTrigger) {
+        guard diarizerManager == nil, activeDiarizerLoadID == nil else { return }
+        let policy = DiarizerRuntimePolicy.resolve(for: .current())
+        let loadID = UUID()
+        let loader = diarizerModelLoader
+        let startedAt = ContinuousClock.now
+        activeDiarizerLoadID = loadID
+        didDiarizerLoadTimeOut = false
+        DiagnosticsLog.write(
+            "[asr-latency] stage=diarizer_preload outcome=started trigger=\(trigger.rawValue) compute=\(policy.computePolicy.rawValue)"
+        )
+
+        diarizerLoadTask = Task { [weak self] in
+            let result: Result<DiarizerModels, Error>
+            do {
+                result = .success(try await loader(policy))
+            } catch {
+                result = .failure(error)
+            }
+            await self?.finishDiarizerLoad(
+                id: loadID,
+                result: result,
+                policy: policy,
+                startedAt: startedAt
+            )
+        }
+
+        let operationTimeout = diarizerLoadOperationTimeout
+        diarizerLoadTimeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: operationTimeout)
+            } catch {
+                return
+            }
+            await self?.timeoutDiarizerLoad(id: loadID)
+        }
+    }
+
+    private func finishDiarizerLoad(
+        id: UUID,
+        result: Result<DiarizerModels, Error>,
+        policy: DiarizerRuntimePolicy,
+        startedAt: ContinuousClock.Instant
+    ) {
+        guard activeDiarizerLoadID == id else { return }
+        let timedOut = didDiarizerLoadTimeOut
+        diarizerLoadTimeoutTask?.cancel()
+        diarizerLoadTimeoutTask = nil
+        diarizerLoadTask = nil
+        activeDiarizerLoadID = nil
+        didDiarizerLoadTimeOut = false
+
+        let elapsed = startedAt.duration(to: .now).components
+        let elapsedMs = Double(elapsed.seconds) * 1_000
+            + Double(elapsed.attoseconds) / 1_000_000_000_000_000
+        let outcome: DiarizerLoadWaitOutcome
+        if timedOut {
+            outcome = .timedOut
+            fputs("[muesli-native] Diarization load timed out (non-critical)\n", stderr)
+        } else {
+            switch result {
+            case .success(let models):
+                let diarizer = DiarizerManager()
+                diarizer.initialize(models: models)
+                diarizerManager = diarizer
+                outcome = .succeeded
+                fputs("[muesli-native] Speaker diarization loaded (compute: \(policy.computePolicy.rawValue))\n", stderr)
+            case .failure(let error):
+                outcome = error is CancellationError ? .cancelled : .failed
+                fputs("[muesli-native] Diarization load failed (non-critical): \(error)\n", stderr)
+            }
+        }
+        DiagnosticsLog.write(
+            "[asr-latency] stage=diarizer_preload outcome=\(String(describing: outcome)) compute=\(policy.computePolicy.rawValue) elapsed_ms=\(String(format: "%.1f", elapsedMs))"
+        )
+        resumeAllDiarizerLoadWaiters(with: outcome)
+    }
+
+    private func timeoutDiarizerLoad(id: UUID) {
+        guard activeDiarizerLoadID == id else { return }
+        let timedOutTask = diarizerLoadTask
+        activeDiarizerLoadID = nil
+        diarizerLoadTask = nil
+        diarizerLoadTimeoutTask = nil
+        didDiarizerLoadTimeOut = false
+        timedOutTask?.cancel()
+        resumeAllDiarizerLoadWaiters(with: .timedOut)
+    }
+
+    private func waitForActiveDiarizerLoad(timeout: Duration) async -> DiarizerLoadWaitOutcome {
+        if diarizerManager != nil { return .succeeded }
+        guard activeDiarizerLoadID != nil else { return .failed }
+        if didDiarizerLoadTimeOut { return .timedOut }
+
+        let waiterID = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: .cancelled)
+                    return
+                }
+                let timeoutTask = Task { [weak self] in
+                    do {
+                        try await Task.sleep(for: timeout)
+                    } catch {
+                        return
+                    }
+                    await self?.resumeDiarizerLoadWaiter(id: waiterID, with: .timedOut)
+                }
+                diarizerLoadWaiters[waiterID] = DiarizerLoadWaiter(
+                    continuation: continuation,
+                    timeoutTask: timeoutTask
+                )
+            }
+        } onCancel: { [weak self] in
+            Task { await self?.resumeDiarizerLoadWaiter(id: waiterID, with: .cancelled) }
+        }
+    }
+
+    private func resumeDiarizerLoadWaiter(id: UUID, with outcome: DiarizerLoadWaitOutcome) {
+        guard let waiter = diarizerLoadWaiters.removeValue(forKey: id) else { return }
+        waiter.timeoutTask.cancel()
+        waiter.continuation.resume(returning: outcome)
+    }
+
+    private func resumeAllDiarizerLoadWaiters(with outcome: DiarizerLoadWaitOutcome) {
+        let waiters = diarizerLoadWaiters.values
+        diarizerLoadWaiters.removeAll()
+        for waiter in waiters {
+            waiter.timeoutTask.cancel()
+            waiter.continuation.resume(returning: outcome)
+        }
+    }
+
+    #if DEBUG
+    func helperPreloadStateForTesting() -> (vadLoading: Bool, diarizerLoading: Bool, waiterCount: Int) {
+        (vadLoadTask != nil, activeDiarizerLoadID != nil, diarizerLoadWaiters.count)
+    }
+    #endif
 
     func preloadPostProcessorIfNeeded(enabled: Bool) async {
         guard enabled, transcriptCleanupSettings.provider == .local else { return }
@@ -389,12 +648,27 @@ actor TranscriptionCoordinator {
         vadManager
     }
 
-    func getDiarizerManager() -> DiarizerManager? {
-        diarizerManager
+    func getDiarizerManager(
+        waitTimeout: Duration = TranscriptionCoordinator.defaultDiarizerLoadWaitTimeout
+    ) async -> DiarizerManager? {
+        if diarizerManager == nil {
+            await preloadDiarizer(waitTimeout: waitTimeout)
+        }
+        return diarizerManager
     }
 
     func shutdown() async {
+        vadLoadTask?.cancel()
+        vadLoadTask = nil
+        diarizerLoadTask?.cancel()
+        diarizerLoadTimeoutTask?.cancel()
+        diarizerLoadTask = nil
+        diarizerLoadTimeoutTask = nil
+        activeDiarizerLoadID = nil
+        didDiarizerLoadTimeOut = false
+        resumeAllDiarizerLoadWaiters(with: .cancelled)
         await fluidTranscriber.shutdown()
+        await parakeetUnifiedTranscriber.shutdown()
         await whisperTranscriber.shutdown()
         await onnxGigaAMTranscriber.shutdown()
         await senseVoiceTranscriber.shutdown()
@@ -548,6 +822,8 @@ actor TranscriptionCoordinator {
             return try await transcribeWithNemotron35(url: url, samples: samples)
         case "gigaam_v3":
             return try await transcribeWithONNXGigaAM(url: url, samples: samples)
+        case "parakeet-unified":
+            return try await transcribeWithParakeetUnified(url: url, samples: samples)
         case "qwen":
             return try await transcribeWithQwen3(url: url, samples: samples)
         case "cohere":
@@ -555,15 +831,18 @@ actor TranscriptionCoordinator {
         case "sensevoice":
             return try await transcribeWithSenseVoice(url: url, samples: samples)
         default:
-            return try await transcribeWithFluidAudio(url: url)
+            return try await transcribeWithFluidAudio(url: url, language: parakeetLanguage)
         }
     }
 
     // MARK: - FluidAudio (Parakeet on ANE)
 
-    private func transcribeWithFluidAudio(url: URL) async throws -> SpeechTranscriptionResult {
+    private func transcribeWithFluidAudio(
+        url: URL,
+        language: ParakeetLanguage
+    ) async throws -> SpeechTranscriptionResult {
         fputs("[muesli-native] transcribing with FluidAudio: \(url.lastPathComponent)\n", stderr)
-        let result = try await fluidTranscriber.transcribe(wavURL: url)
+        let result = try await fluidTranscriber.transcribe(wavURL: url, language: language.isoCode)
         fputs("[muesli-native] FluidAudio result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
         let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let segments = (result.tokenTimings ?? []).map { timing in
@@ -572,6 +851,26 @@ actor TranscriptionCoordinator {
         return SpeechTranscriptionResult(
             text: text,
             segments: segments.isEmpty && !text.isEmpty ? [SpeechSegment(start: 0, end: result.duration, text: text)] : segments
+        )
+    }
+
+    // MARK: - Parakeet Unified (FastConformer-RNNT offline batch)
+
+    private func transcribeWithParakeetUnified(
+        url: URL,
+        samples: [Float]? = nil
+    ) async throws -> SpeechTranscriptionResult {
+        fputs("[muesli-native] transcribing with Parakeet Unified: \(url.lastPathComponent)\n", stderr)
+        let result = if let samples {
+            try await parakeetUnifiedTranscriber.transcribe(samples: samples)
+        } else {
+            try await parakeetUnifiedTranscriber.transcribe(wavURL: url)
+        }
+        fputs("[muesli-native] Parakeet Unified result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
+        let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return SpeechTranscriptionResult(
+            text: text,
+            segments: text.isEmpty ? [] : [SpeechSegment(start: 0, end: 0, text: text)]
         )
     }
 
@@ -629,9 +928,9 @@ actor TranscriptionCoordinator {
             fputs("[muesli-native] transcribing with Qwen3 ASR: \(url.lastPathComponent)\n", stderr)
             let result: (text: String, processingTime: Double)
             if let samples {
-                result = try await qwen3Transcriber.transcribe(audioSamples: samples)
+                result = try await qwen3Transcriber.transcribe(audioSamples: samples, language: qwen3AsrLanguage.pinnedCode)
             } else {
-                result = try await qwen3Transcriber.transcribe(wavURL: url)
+                result = try await qwen3Transcriber.transcribe(wavURL: url, language: qwen3AsrLanguage.pinnedCode)
             }
             fputs("[muesli-native] Qwen3 ASR result: \(result.text.prefix(80)) (took \(String(format: "%.3f", result.processingTime))s)\n", stderr)
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)

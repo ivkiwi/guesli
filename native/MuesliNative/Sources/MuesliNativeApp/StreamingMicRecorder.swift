@@ -15,6 +15,17 @@ protocol StreamingDictationRecording: AnyObject {
     func stop() -> URL?
     func cancel()
     func currentPower() -> Float
+
+    /// Permanently disqualify this recorder instance from ever starting
+    /// capture again. Unlike cancel() (which disposes but allows re-prepare),
+    /// this is terminal and synchronous, so a stale handoff worker that calls
+    /// start() after meeting teardown loses the race no matter the
+    /// interleaving. Default no-op for recorders that don't need it.
+    func invalidateForTeardown()
+}
+
+extension StreamingDictationRecording {
+    func invalidateForTeardown() {}
 }
 
 protocol StreamingDictationLatencyReporting: AnyObject {
@@ -38,6 +49,10 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
     private let engine = AVAudioEngine()
     private let directoryName: String
     private let graphLock = NSRecursiveLock()
+    /// Published independently of graphLock: invalidateForTeardown() must land
+    /// even while a worker is blocked in engine startup holding graphLock, so
+    /// the post-start self-check observes it before start() returns.
+    private let teardownInvalidation = OSAllocatedUnfairLock(initialState: false)
     private let lock = OSAllocatedUnfairLock(initialState: FileState())
     private let failureLock = OSAllocatedUnfairLock(initialState: FailureState())
     private let failureCallbackQueue = DispatchQueue(label: "com.muesli.streaming-mic-recorder-failures")
@@ -45,6 +60,8 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
     private var tapInstalled = false
     private var graphPreparedInputDeviceID: AudioObjectID?
     private var isGraphPrepared = false
+    private var configurationChangeObserver: (any NSObjectProtocol)?
+    private let configurationChangeQueue = DispatchQueue(label: "com.muesli.streaming-mic-recorder-config-change")
 
     private struct FailureState {
         var activeRecordingID: UUID?
@@ -66,9 +83,21 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         self.directoryName = directoryName
     }
 
+    deinit {
+        // Safety net for callers that drop the recorder without stop()/cancel().
+        if let observer = configurationChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
     func prepare() throws {
         graphLock.lock()
         defer { graphLock.unlock() }
+        guard !isPermanentlyInvalidated else {
+            throw NSError(domain: "StreamingMicRecorder", code: 9, userInfo: [
+                NSLocalizedDescriptionKey: "Recorder was invalidated by teardown",
+            ])
+        }
 
         try prepareLocked()
     }
@@ -107,6 +136,11 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         graphLock.lock()
         defer { graphLock.unlock() }
 
+        guard !isPermanentlyInvalidated else {
+            throw NSError(domain: "StreamingMicRecorder", code: 9, userInfo: [
+                NSLocalizedDescriptionKey: "Recorder was invalidated by teardown",
+            ])
+        }
         guard !isRunning else { return }
         try prepareLocked()
         let recordingID = UUID()
@@ -115,6 +149,54 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
             $0.hasReportedFailure = false
         }
 
+        let fileState = try createNewFile()
+        lock.withLock { $0 = fileState }
+
+        installConfigurationChangeObserverIfNeeded(recordingID: recordingID)
+        do {
+            try startEngineWithTapLocked(recordingID: recordingID)
+            // Engine start can block while the daemon negotiates the route;
+            // teardown may have landed during that window. Synchronously stop
+            // what just started rather than letting capture outlive teardown.
+            if isPermanentlyInvalidated {
+                removeTapIfNeeded()
+                engine.stop()
+                removeConfigurationChangeObserverIfNeeded()
+                clearFailureState()
+                let state = lock.withLock { state -> FileState in
+                    let old = state
+                    state = FileState()
+                    return old
+                }
+                if let url = state.fileURL {
+                    try? FileManager.default.removeItem(at: url)
+                }
+                throw NSError(domain: "StreamingMicRecorder", code: 9, userInfo: [
+                    NSLocalizedDescriptionKey: "Recorder was invalidated by teardown",
+                ])
+            }
+            isRunning = true
+        } catch {
+            removeTapIfNeeded()
+            engine.stop()
+            removeConfigurationChangeObserverIfNeeded()
+            clearFailureState()
+            let state = lock.withLock { state -> FileState in
+                let old = state
+                state = FileState()
+                return old
+            }
+            if let url = state.fileURL {
+                try? FileManager.default.removeItem(at: url)
+            }
+            throw error
+        }
+    }
+
+    /// Installs the input tap (with conversion to 16kHz mono) and starts the engine.
+    /// Callers hold `graphLock`. Shared by `start()` and the configuration-change
+    /// restart path, so the tap keeps appending to the current file.
+    private func startEngineWithTapLocked(recordingID: UUID) throws {
         let inputNode = engine.inputNode
         let hwFormat = inputNode.outputFormat(forBus: 0)
 
@@ -135,9 +217,6 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         let converter: AVAudioConverter? = needsConversion
             ? AVAudioConverter(from: hwFormat, to: targetFormat)
             : nil
-
-        let fileState = try createNewFile()
-        lock.withLock { $0 = fileState }
 
         emitLatency("app_scoped_tap_install_begin")
         inputNode.installTap(onBus: 0, bufferSize: Self.bufferSize, format: nil) { [weak self] buffer, _ in
@@ -226,24 +305,92 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         tapInstalled = true
         emitLatency("app_scoped_tap_install_end")
 
+        emitLatency("app_scoped_engine_start_begin")
+        try engine.start()
+        emitLatency("app_scoped_engine_start_end")
+    }
+
+    private var configChangeRestartItem: DispatchWorkItem?
+    /// Settle debounce for engine config-change restarts. A route transition
+    /// fires a burst of notifications while the daemon negotiates, and
+    /// restarting mid-churn reliably fails tap installation (measured live on
+    /// macOS 26.5.2, aged daemon). The current engine keeps its state during
+    /// the window; we restart once after the notifications stop.
+    /// (var so tests can inject a fast settle)
+    var configChangeSettleDelay: TimeInterval = 1.5
+
+    // MARK: - Input Configuration Changes
+
+    /// AVAudioEngine stops delivering input buffers when its I/O configuration
+    /// changes mid-recording (e.g. AirPods connect and become the default input).
+    /// Without handling this, the microphone side of a meeting recording dies
+    /// silently while system audio keeps flowing. Rebuild the tap and restart
+    /// the engine so capture continues into the same file.
+    private func installConfigurationChangeObserverIfNeeded(recordingID: UUID) {
+        guard configurationChangeObserver == nil else { return }
+        let callbackQueue = configurationChangeQueue
+        configurationChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            callbackQueue.async { [weak self] in
+                self?.scheduleConfigurationChangeRestart(recordingID: recordingID)
+            }
+        }
+    }
+
+    private func scheduleConfigurationChangeRestart(recordingID: UUID) {
+        // On configurationChangeQueue. Each notification resets the settle
+        // timer; the restart fires once after the burst quiets.
+        configChangeRestartItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.handleEngineConfigurationChange(recordingID: recordingID)
+        }
+        configChangeRestartItem = item
+        configurationChangeQueue.asyncAfter(deadline: .now() + configChangeSettleDelay, execute: item)
+    }
+
+    private func removeConfigurationChangeObserverIfNeeded() {
+        configChangeRestartItem?.cancel()
+        configChangeRestartItem = nil
+        guard let observer = configurationChangeObserver else { return }
+        NotificationCenter.default.removeObserver(observer)
+        configurationChangeObserver = nil
+    }
+
+    private func handleEngineConfigurationChange(recordingID: UUID) {
+        graphLock.lock()
+        defer { graphLock.unlock() }
+
+        guard isRunning else { return }
+        let mayRestart = failureLock.withLock {
+            $0.activeRecordingID == recordingID && !$0.hasReportedFailure
+        }
+        guard mayRestart else { return }
+
+        fputs("[streaming-mic] engine configuration changed; restarting input capture\n", stderr)
+        emitLatency("engine_config_change_restart_begin")
+        removeTapIfNeeded()
+        engine.stop()
+        isGraphPrepared = false
+        graphPreparedInputDeviceID = nil
+
         do {
-            emitLatency("app_scoped_engine_start_begin")
-            try engine.start()
-            emitLatency("app_scoped_engine_start_end")
-            isRunning = true
+            try prepareLocked()
+            try startEngineWithTapLocked(recordingID: recordingID)
+            emitLatency("engine_config_change_restart_end")
+            fputs("[streaming-mic] microphone capture restarted after configuration change\n", stderr)
         } catch {
+            fputs("[streaming-mic] failed to restart microphone capture after configuration change: \(error)\n", stderr)
+            // startEngineWithTapLocked() can fail after installing the tap; drop it so
+            // tapInstalled stays consistent with the stopped engine. Remove the observer
+            // too: once the failure is reported this recording must not silently resume
+            // on a later configuration change.
             removeTapIfNeeded()
             engine.stop()
-            clearFailureState()
-            let state = lock.withLock { state -> FileState in
-                let old = state
-                state = FileState()
-                return old
-            }
-            if let url = state.fileURL {
-                try? FileManager.default.removeItem(at: url)
-            }
-            throw error
+            removeConfigurationChangeObserverIfNeeded()
+            reportRecordingFailure(error, recordingID: recordingID)
         }
     }
 
@@ -276,6 +423,7 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         guard isRunning else { return nil }
         isRunning = false
         clearFailureState()
+        removeConfigurationChangeObserverIfNeeded()
 
         removeTapIfNeeded()
         engine.stop()
@@ -304,12 +452,23 @@ final class StreamingMicRecorder: StreamingDictationRecording, StreamingDictatio
         }
     }
 
+    /// Terminal and synchronous: this instance must never start capture again
+    /// after meeting teardown. Distinct from cancel(), which permits reuse.
+    func invalidateForTeardown() {
+        teardownInvalidation.withLock { $0 = true }
+    }
+
+    private var isPermanentlyInvalidated: Bool {
+        teardownInvalidation.withLock { $0 }
+    }
+
     func cancel() {
         graphLock.lock()
         defer { graphLock.unlock() }
 
         isRunning = false
         clearFailureState()
+        removeConfigurationChangeObserverIfNeeded()
         removeTapIfNeeded()
         engine.stop()
         isGraphPrepared = false

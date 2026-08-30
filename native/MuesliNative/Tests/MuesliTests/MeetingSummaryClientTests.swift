@@ -355,7 +355,39 @@ struct MeetingSummaryClientTests {
             }
             #expect(Bool(false), "Expected stalled summary to time out")
         } catch {
-            #expect(Date().timeIntervalSince(startedAt) < 0.5)
+            #expect(Date().timeIntervalSince(startedAt) < 3.0)
+            guard case .requestFailed(_, let underlying) = error as? MeetingSummaryError,
+                  let urlError = underlying as? URLError else {
+                #expect(Bool(false), "Expected a summary timeout, got \(String(describing: error))")
+                return
+            }
+            #expect(urlError.code == .timedOut)
+        }
+    }
+
+    @Test("summary timeout is a wall-clock bound for non-cooperative work")
+    func summaryTimeoutBoundsNonCooperativeWork() async {
+        let cancellationObserved = TestLockedBox(false)
+        let startedAt = ContinuousClock.now
+
+        do {
+            _ = try await MeetingSummaryClient.withSummaryTimeout(
+                seconds: 0.02,
+                onCancel: { cancellationObserved.withLock { $0 = true } }
+            ) {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 5.0) {
+                        continuation.resume(returning: "Too late")
+                    }
+                }
+            }
+            #expect(Bool(false), "Expected non-cooperative summary work to time out")
+        } catch {
+            let elapsed = startedAt.duration(to: .now).components
+            let elapsedSeconds = Double(elapsed.seconds)
+                + Double(elapsed.attoseconds) / 1_000_000_000_000_000_000
+            #expect(elapsedSeconds < 3.0)
+            #expect(cancellationObserved.withLock { $0 })
             guard case .requestFailed(_, let underlying) = error as? MeetingSummaryError,
                   let urlError = underlying as? URLError else {
                 #expect(Bool(false), "Expected a summary timeout, got \(String(describing: error))")

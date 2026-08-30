@@ -1,6 +1,7 @@
 import AVFoundation
 import FluidAudio
 import Foundation
+import MuesliCore
 import os
 
 /// Optional Parakeet EOU model storage. Nothing here downloads or preloads the
@@ -20,7 +21,7 @@ enum MeetingParakeetLiveCaptionModelStore {
     }
 
     static func modelDirectory(in cacheRoot: URL) -> URL {
-        cacheRoot.appendingPathComponent(repo.folderName, isDirectory: true)
+        ManagedASRModelPlans.parakeetRealtimeEOU320(modelsRoot: cacheRoot).cacheDirectory
     }
 
     static func isDownloaded(fileManager: FileManager = .default) -> Bool {
@@ -28,22 +29,21 @@ enum MeetingParakeetLiveCaptionModelStore {
     }
 
     static func isDownloaded(in cacheRoot: URL, fileManager: FileManager = .default) -> Bool {
-        let directory = modelDirectory(in: cacheRoot)
-        return ModelNames.ParakeetEOU.requiredModels.allSatisfy {
-            fileManager.fileExists(atPath: directory.appendingPathComponent($0).path)
-        }
+        ManagedASRModelPlans.parakeetRealtimeEOU320(modelsRoot: cacheRoot)
+            .isAvailableLocally(fileManager: fileManager)
     }
 
     static func download(progress: (@Sendable (Double) -> Void)? = nil) async throws {
-        try await DownloadUtils.downloadRepo(repo, to: cacheRoot()) { update in
-            progress?(update.fractionCompleted)
-        }
+        try await ManagedASRModelDownloader.downloadIfNeeded(
+            ManagedASRModelPlans.parakeetRealtimeEOU320(),
+            progress: { fraction, _ in progress?(fraction) }
+        )
     }
 
     static func delete(fileManager: FileManager = .default) throws {
-        let directory = modelDirectory(fileManager: fileManager)
-        guard fileManager.fileExists(atPath: directory.path) else { return }
-        try fileManager.removeItem(at: directory)
+        try ManagedASRModelPlans.parakeetRealtimeEOU320(
+            modelsRoot: cacheRoot(fileManager: fileManager)
+        ).delete(fileManager: fileManager)
     }
 
     static func makeEngine(label: String) async throws -> MeetingStreamingPartialEngine {
@@ -87,6 +87,7 @@ extension MeetingStreamingPartialEngine {
 private actor ParakeetEOUMeetingPartialEngine: MeetingStreamingPartialEngine {
     private let manager = StreamingEouAsrManager(chunkSize: .ms320)
     private let label: String
+    private var partialHandler: (@Sendable (String) -> Void)?
 
     init(label: String) {
         self.label = label
@@ -97,6 +98,7 @@ private actor ParakeetEOUMeetingPartialEngine: MeetingStreamingPartialEngine {
     }
 
     func setPartialHandler(_ handler: @escaping @Sendable (String) -> Void) async {
+        partialHandler = handler
         await manager.setPartialCallback(handler)
     }
 
@@ -122,7 +124,15 @@ private actor ParakeetEOUMeetingPartialEngine: MeetingStreamingPartialEngine {
         _ = try await manager.process(audioBuffer: buffer)
     }
 
+    func finish() async throws {
+        let finalText = try await manager.finish()
+        if !finalText.isEmpty {
+            partialHandler?(finalText)
+        }
+    }
+
     func shutdown() async {
+        partialHandler = nil
         await manager.cleanup()
         fputs("[meeting-partials] \(label) Parakeet EOU session stopped\n", stderr)
     }

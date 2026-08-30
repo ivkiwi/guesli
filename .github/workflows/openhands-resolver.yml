@@ -163,7 +163,7 @@ jobs:
             const issueNumber = Number(process.env.ISSUE_NUMBER);
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const botAuthorPattern = /^(claude|greptile)(?:$|-|\[bot\])/i;
+            const botAuthorPattern = /^claude(?:$|-|\[bot\])/i;
 
             const issueComments = await github.paginate(github.rest.issues.listComments, {
               owner,
@@ -191,9 +191,7 @@ jobs:
             ].filter((item) => botAuthorPattern.test(item.author));
 
             function hasBlockingFinding(body) {
-              // Greptile uses severity badge images on inline findings; preserve that signal before stripping HTML.
-              const bodyWithBadges = body.replace(/<img[^>]*badges\/(p[01])\.svg[^>]*>/gi, ' $1-badge ');
-              const lines = bodyWithBadges
+              const lines = body
                 .replace(/<[^>]*>/g, ' ')
                 .split(/\r?\n/);
               let inCodeFence = false;
@@ -233,16 +231,16 @@ jobs:
             if (reviewSources.length === 0) {
               core.setOutput('blocking_source_count', '0');
               core.setOutput('should_skip', 'false');
-              core.notice('No Claude/Greptile reviews found; proceeding because the PR review gate cannot evaluate yet.');
+              core.notice('No Claude reviews found; proceeding because the PR review gate cannot evaluate yet.');
             } else {
               const blockingSources = reviewSources.filter((item) => hasBlockingFinding(item.body));
               core.setOutput('blocking_source_count', String(blockingSources.length));
               core.setOutput('should_skip', String(blockingSources.length === 0));
 
               if (blockingSources.length === 0) {
-                core.notice(`No P0/P1 findings found in ${reviewSources.length} Claude/Greptile review source(s).`);
+                core.notice(`No P0/P1 findings found in ${reviewSources.length} Claude review source(s).`);
               } else {
-                core.notice(`Found ${blockingSources.length} Claude/Greptile review source(s) with P0/P1 findings.`);
+                core.notice(`Found ${blockingSources.length} Claude review source(s) with P0/P1 findings.`);
               }
             }
 
@@ -253,7 +251,7 @@ jobs:
           ISSUE_NUMBER: ${{ steps.context.outputs.issue_number }}
         run: |
           gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" \
-            -f body="OpenHands did not run because the PR review gate failed while reading Claude/Greptile review comments. Check the workflow logs, then retry the trigger comment. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            -f body="OpenHands did not run because the PR review gate failed while reading Claude review comments. Check the workflow logs, then retry the trigger comment. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           exit 1
 
       - name: Comment on skipped PR review request
@@ -263,7 +261,7 @@ jobs:
           ISSUE_NUMBER: ${{ steps.context.outputs.issue_number }}
         run: |
           gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" \
-            -f body="OpenHands did not run because no current P0/P1 findings were found in Claude/Greptile PR review comments. Re-trigger with a specific P2/minor request if you want optional findings handled. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            -f body="OpenHands did not run because no current P0/P1 findings were found in Claude PR review comments. Re-trigger with a specific P2/minor request if you want optional findings handled. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
       - name: Check required configuration
         if: steps.review_gate.outcome != 'failure' && steps.review_gate.outputs.should_skip != 'true'

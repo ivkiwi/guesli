@@ -198,6 +198,37 @@ struct DictationAudioRouteControllerTests {
         #expect(controller.preferredInputDeviceIDForDictation() == nil)
     }
 
+    @Test("settings device inventory reads use the route cache")
+    func settingsDeviceInventoryReadsUseRouteCache() {
+        let inspector = FakeCoreAudioDeviceInspector(
+            defaultOutputDeviceID: 10,
+            outputRouteKind: .speakerLike,
+            builtInInputDeviceID: 82,
+            inputDevices: [
+                AudioInputDeviceInfo(uid: "built-in-mic", name: "MacBook Microphone", deviceID: 82, isBuiltIn: true),
+            ]
+        )
+        let routeQueue = DispatchQueue(label: "test.dictation-audio-route.cached-device-inventory")
+        let controller = DictationAudioRouteController(
+            inspector: inspector,
+            queue: routeQueue,
+            observesDefaultOutputChanges: false
+        )
+        routeQueue.sync {}
+        let inspectionCountBeforeRead = inspector.inspectionCallCount
+
+        #expect(controller.cachedAvailableInputDevices().map(\.uid) == ["built-in-mic"])
+        #expect(inspector.inspectionCallCount == inspectionCountBeforeRead)
+
+        inspector.inputDevices.append(
+            AudioInputDeviceInfo(uid: "external-mic", name: "External Mic", deviceID: 91, isBuiltIn: false)
+        )
+        controller.refreshAvailableInputDevices { _ in }
+        routeQueue.sync {}
+
+        #expect(controller.cachedAvailableInputDevices().map(\.uid) == ["built-in-mic", "external-mic"])
+    }
+
     @Test("default input refresh can notify even when preferred route is unchanged")
     func defaultInputRefreshCanNotifyEvenWhenPreferredRouteIsUnchanged() {
         let inspector = FakeCoreAudioDeviceInspector(
@@ -228,6 +259,7 @@ private final class FakeCoreAudioDeviceInspector: CoreAudioDeviceInspecting {
     var outputIsAmbiguousBluetoothValue: Bool
     var builtInInputDeviceIDValue: AudioObjectID?
     var inputDevices: [AudioInputDeviceInfo]
+    private(set) var inspectionCallCount = 0
 
     init(
         defaultOutputDeviceID: AudioObjectID?,
@@ -258,7 +290,8 @@ private final class FakeCoreAudioDeviceInspector: CoreAudioDeviceInspecting {
     }
 
     func availableInputDevices() -> [AudioInputDeviceInfo] {
-        inputDevices.filter { !$0.uid.hasPrefix("CADefaultDeviceAggregate") }
+        inspectionCallCount += 1
+        return inputDevices.filter { !$0.uid.hasPrefix("CADefaultDeviceAggregate") }
     }
 
     func inputDeviceID(matchingUID uid: String) -> AudioObjectID? {

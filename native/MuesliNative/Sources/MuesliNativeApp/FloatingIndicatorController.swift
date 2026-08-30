@@ -3,6 +3,85 @@ import QuartzCore
 import Foundation
 import MuesliCore
 
+/// Geometry for the two controls drawn on the recording pill, shared by the
+/// layout code and by click hit-testing so the visible affordance and the
+/// clickable region cannot drift apart.
+///
+/// The trailing control finalizes a meeting recording, so its hit region must
+/// stay anchored to the dot the user can actually see rather than absorbing
+/// every click that lands on the pill body.
+enum FloatingIndicatorControlLayout {
+    /// Leading control: cancel for dictation, pause/resume for meetings.
+    static let leadingInset: CGFloat = 7
+    static let leadingSize: CGFloat = 10
+
+    /// Trailing control: stop.
+    static let trailingInset: CGFloat = 8
+    static let trailingSize: CGFloat = 6
+
+    /// Both controls are drawn only a few points across. Clicks get a wider
+    /// column so they stay comfortable to hit without swallowing the pill.
+    static let minimumTouchTarget: CGFloat = 24
+
+    enum Hit: Equatable {
+        case leadingControl
+        case trailingControl
+        case body
+    }
+
+    static func leadingControlFrame(in size: CGSize) -> CGRect {
+        CGRect(
+            x: leadingInset,
+            y: floor((size.height - leadingSize) / 2),
+            width: leadingSize,
+            height: leadingSize
+        )
+    }
+
+    static func trailingControlFrame(in size: CGSize) -> CGRect {
+        CGRect(
+            x: size.width - trailingSize - trailingInset,
+            y: floor((size.height - trailingSize) / 2),
+            width: trailingSize,
+            height: trailingSize
+        )
+    }
+
+    static func hit(at point: CGPoint, in size: CGSize) -> Hit {
+        let leadingFrame = leadingControlFrame(in: size)
+        let trailingFrame = trailingControlFrame(in: size)
+        let inLeading = touchTarget(for: leadingFrame, in: size).contains(point)
+        let inTrailing = touchTarget(for: trailingFrame, in: size).contains(point)
+
+        switch (inLeading, inTrailing) {
+        case (true, false):
+            return .leadingControl
+        case (false, true):
+            return .trailingControl
+        case (true, true):
+            // A narrow pill can overlap the two targets; pick the nearer control.
+            let toLeading = abs(point.x - leadingFrame.midX)
+            let toTrailing = abs(point.x - trailingFrame.midX)
+            return toTrailing < toLeading ? .trailingControl : .leadingControl
+        case (false, false):
+            return .body
+        }
+    }
+
+    /// Widen a control to the minimum touch target horizontally, and to the full
+    /// pill height vertically. Nothing is stacked vertically, so being generous
+    /// there costs no precision.
+    private static func touchTarget(for frame: CGRect, in size: CGSize) -> CGRect {
+        let dx = max(0, (minimumTouchTarget - frame.width) / 2)
+        return CGRect(
+            x: frame.minX - dx,
+            y: 0,
+            width: frame.width + (dx * 2),
+            height: size.height
+        )
+    }
+}
+
 @MainActor
 private final class HoverIndicatorView: NSView {
     weak var owner: FloatingIndicatorController?
@@ -59,8 +138,8 @@ private final class HoverIndicatorView: NSView {
         } else if event.modifierFlags.contains(.option) {
             owner?.handleOptionClick()
         } else {
-            let clickX = convert(event.locationInWindow, from: nil).x
-            owner?.handleClick(atX: clickX)
+            let clickPoint = convert(event.locationInWindow, from: nil)
+            owner?.handleClick(at: clickPoint)
         }
         dragOrigin = nil
         didDrag = false
@@ -100,6 +179,7 @@ final class FloatingIndicatorController: NSObject {
     var onToggleMeetingPause: (() -> Void)?
     var onCancelToggleDictation: (() -> Void)?
     var onPositionSaved: ((CGPoint) -> Void)?
+    var onOpenMeetingNotes: (() -> Void)?
     var isToggleDictation = false
     private var stopLayer: CALayer?
     private var transcribingTitle = "Transcribing"
@@ -108,6 +188,18 @@ final class FloatingIndicatorController: NSObject {
     private var isShowingLoading = false
     private var isComputerUseCursorMode = false
     private var computerUseCursorReturnFrame: NSRect?
+    private var isMeetingTranscriptManuallyDismissed = false
+    private lazy var meetingTranscriptPanel = FloatingMeetingTranscriptPanelController(
+        onHoverChanged: { [weak self] hovered in
+            self?.setMeetingTranscriptPanelHovered(hovered)
+        },
+        onOpenNotes: { [weak self] in
+            self?.openMeetingNotesFromTranscript()
+        },
+        onDismiss: { [weak self] in
+            self?.dismissMeetingTranscript()
+        }
+    )
 
     private enum WaveformAnimationMode {
         case level
@@ -125,27 +217,41 @@ final class FloatingIndicatorController: NSObject {
         panel?.frame
     }
 
-    func handleClick(atX x: CGFloat? = nil) {
-        if state == .recording, let x {
-            if x < 30 {
-                if isMeetingRecording {
-                    onToggleMeetingPause?()
-                } else {
-                    onCancelToggleDictation?()
-                }
-            } else {
-                if isMeetingRecording {
-                    onStopMeeting?()
-                } else {
-                    onStopToggleDictation?()
-                }
-            }
-        } else if state == .recording {
-            if isMeetingRecording {
-                onStopMeeting?()
-            } else {
-                onStopToggleDictation?()
-            }
+    func handleClick(at point: CGPoint? = nil) {
+        guard state == .recording else { return }
+
+        guard let point, let size = contentView?.bounds.size else {
+            // No pointer context (programmatic invocation): run the primary command.
+            performTrailingControl()
+            return
+        }
+
+        switch FloatingIndicatorControlLayout.hit(at: point, in: size) {
+        case .leadingControl:
+            performLeadingControl()
+        case .trailingControl:
+            performTrailingControl()
+        case .body:
+            // Clicks on the pill body used to stop the recording outright, which
+            // silently finalized meetings whenever the indicator was clicked for
+            // any other reason. Only the drawn controls act now.
+            break
+        }
+    }
+
+    private func performLeadingControl() {
+        if isMeetingRecording {
+            onToggleMeetingPause?()
+        } else {
+            onCancelToggleDictation?()
+        }
+    }
+
+    private func performTrailingControl() {
+        if isMeetingRecording {
+            onStopMeeting?()
+        } else {
+            onStopToggleDictation?()
         }
     }
 
@@ -210,6 +316,8 @@ final class FloatingIndicatorController: NSObject {
         recordingWaveformMode = .level
         if !recording {
             isMeetingRecordingPaused = false
+            isMeetingTranscriptManuallyDismissed = false
+            meetingTranscriptPanel.hide(reset: true)
         }
         if recording {
             setState(.recording, config: config)
@@ -249,8 +357,17 @@ final class FloatingIndicatorController: NSObject {
     func setMeetingRecordingPaused(_ paused: Bool, config: AppConfig) {
         guard isMeetingRecordingPaused != paused else { return }
         isMeetingRecordingPaused = paused
+        meetingTranscriptPanel.setPaused(paused)
         guard isMeetingRecording, state == .recording else { return }
         setState(.recording, config: config)
+    }
+
+    func updateMeetingTranscript(transcript: String, partialYou: String, partialOthers: String) {
+        meetingTranscriptPanel.update(
+            transcript: transcript,
+            partialYou: partialYou,
+            partialOthers: partialOthers
+        )
     }
 
     func setTranscribingTitle(_ title: String, config: AppConfig) {
@@ -340,12 +457,8 @@ final class FloatingIndicatorController: NSObject {
                 iconLabel.stringValue = recordingControlSymbol()
                 iconLabel.textColor = .white.withAlphaComponent(isMeetingRecording ? 0.86 : 0.45)
                 iconLabel.font = NSFont.systemFont(ofSize: isMeetingRecording ? 8 : 7, weight: .semibold)
-                let xSize: CGFloat = 10
-                iconLabel.frame = NSRect(
-                    x: 7,
-                    y: floor((targetFrame.height - xSize) / 2),
-                    width: xSize,
-                    height: xSize
+                iconLabel.frame = FloatingIndicatorControlLayout.leadingControlFrame(
+                    in: targetFrame.size
                 )
 
                 textLabel.animator().alphaValue = 0
@@ -671,7 +784,19 @@ final class FloatingIndicatorController: NSObject {
     }
 
     func setHovered(_ hovered: Bool) {
-        guard state == .idle, !isShowingLoading, !isDragging, isHovered != hovered else { return }
+        guard !isShowingLoading, !isDragging else { return }
+        if state == .recording, isMeetingRecording {
+            hoverExitWorkItem?.cancel()
+            isHovered = hovered
+            if hovered, !isMeetingTranscriptManuallyDismissed, let indicatorFrame = panel?.frame {
+                meetingTranscriptPanel.show(beside: indicatorFrame)
+            } else if !hovered {
+                isMeetingTranscriptManuallyDismissed = false
+                meetingTranscriptPanel.hide()
+            }
+            return
+        }
+        guard state == .idle, isHovered != hovered else { return }
         hoverExitWorkItem?.cancel()
         isHovered = hovered
         let config = configStore.load()
@@ -679,11 +804,13 @@ final class FloatingIndicatorController: NSObject {
     }
 
     func scheduleHoverExit() {
-        guard state == .idle, !isShowingLoading, isHovered else { return }
+        guard (state == .idle || (state == .recording && isMeetingRecording)),
+              !isShowingLoading,
+              isHovered else { return }
         hoverExitWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            guard !self.pointerIsInsidePanel() else { return }
+            guard !self.pointerIsInsidePanel(), !self.meetingTranscriptPanel.containsMouseLocation else { return }
             self.setHovered(false)
         }
         hoverExitWorkItem = workItem
@@ -700,6 +827,7 @@ final class FloatingIndicatorController: NSObject {
         hoverExitWorkItem = nil
         panel?.close()
         panel = nil
+        meetingTranscriptPanel.close()
         contentView = nil
         iconLabel = nil
         textLabel = nil
@@ -709,20 +837,33 @@ final class FloatingIndicatorController: NSObject {
         wandIconView = nil
     }
 
+    private func setMeetingTranscriptPanelHovered(_ hovered: Bool) {
+        hoverExitWorkItem?.cancel()
+        if hovered {
+            isHovered = true
+        } else {
+            scheduleHoverExit()
+        }
+    }
+
+    private func dismissMeetingTranscript() {
+        isMeetingTranscriptManuallyDismissed = true
+        meetingTranscriptPanel.hide()
+    }
+
+    private func openMeetingNotesFromTranscript() {
+        meetingTranscriptPanel.hide()
+        onOpenMeetingNotes?()
+    }
+
     // MARK: - Stop Layer (toggle dictation)
 
     private func addStopLayer(in size: NSSize) {
         removeStopLayer()
         guard let contentView else { return }
 
-        let sq: CGFloat = 6
         let stop = CALayer()
-        stop.frame = CGRect(
-            x: size.width - sq - 8,
-            y: floor((size.height - sq) / 2),
-            width: sq,
-            height: sq
-        )
+        stop.frame = FloatingIndicatorControlLayout.trailingControlFrame(in: size)
         stop.cornerRadius = 1
         stop.backgroundColor = NSColor.white.withAlphaComponent(0.85).cgColor
 
@@ -1398,6 +1539,11 @@ final class FloatingIndicatorController: NSObject {
             textLabel.alphaValue = 1
             textLabel.frame = textFrame
         }
+    }
+
+    /// The pill size that `handleClick(at:)` hit-tests against.
+    var controlHitTestSizeForTesting: CGSize? {
+        contentView?.bounds.size
     }
 
     static func transcribingPillSizeForTesting(title: String, screenWidth: CGFloat) -> NSSize {

@@ -270,6 +270,7 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
     public let selectedTemplateKind: MeetingTemplateKind?
     public let selectedTemplatePrompt: String?
     public let source: MeetingSource
+    public let followUpToID: Int64?
 
     public init(
         id: Int64,
@@ -291,7 +292,8 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
         selectedTemplateName: String? = nil,
         selectedTemplateKind: MeetingTemplateKind? = nil,
         selectedTemplatePrompt: String? = nil,
-        source: MeetingSource = .meeting
+        source: MeetingSource = .meeting,
+        followUpToID: Int64? = nil
     ) {
         self.id = id
         self.title = title
@@ -313,6 +315,7 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
         self.selectedTemplateKind = selectedTemplateKind
         self.selectedTemplatePrompt = selectedTemplatePrompt
         self.source = source
+        self.followUpToID = followUpToID
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -336,6 +339,7 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
         case selectedTemplateKind
         case selectedTemplatePrompt
         case source
+        case followUpToID
     }
 
     public init(from decoder: Decoder) throws {
@@ -360,7 +364,8 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
             selectedTemplateName: try c.decodeIfPresent(String.self, forKey: .selectedTemplateName),
             selectedTemplateKind: try c.decodeIfPresent(MeetingTemplateKind.self, forKey: .selectedTemplateKind),
             selectedTemplatePrompt: try c.decodeIfPresent(String.self, forKey: .selectedTemplatePrompt),
-            source: (try? c.decode(MeetingSource.self, forKey: .source)) ?? .meeting
+            source: (try? c.decode(MeetingSource.self, forKey: .source)) ?? .meeting,
+            followUpToID: try c.decodeIfPresent(Int64.self, forKey: .followUpToID)
         )
     }
 
@@ -386,6 +391,42 @@ public struct MeetingRecord: Identifiable, Codable, Sendable {
 
     public var appliedTemplateKind: MeetingTemplateKind {
         selectedTemplateKind ?? .auto
+    }
+}
+
+public struct MeetingParticipantRecord: Identifiable, Equatable, Sendable {
+    public let meetingID: Int64
+    public let participantIdentifier: String
+    public let displayName: String
+    public let emailAddress: String?
+    public let insertionOrder: Int
+
+    public var id: String { "\(meetingID):\(participantIdentifier)" }
+
+    public init(
+        meetingID: Int64,
+        participantIdentifier: String,
+        displayName: String,
+        emailAddress: String? = nil,
+        insertionOrder: Int
+    ) {
+        self.meetingID = meetingID
+        self.participantIdentifier = participantIdentifier
+        self.displayName = displayName
+        self.emailAddress = emailAddress
+        self.insertionOrder = insertionOrder
+    }
+}
+
+public struct MeetingParticipantDraft: Equatable, Sendable {
+    public let participantIdentifier: String
+    public let displayName: String
+    public let emailAddress: String?
+
+    public init(participantIdentifier: String, displayName: String, emailAddress: String? = nil) {
+        self.participantIdentifier = participantIdentifier
+        self.displayName = displayName
+        self.emailAddress = emailAddress
     }
 }
 

@@ -140,7 +140,7 @@ struct MeetingTranscriptCleanupTests {
         )
 
         let call = await recorder.recordedCall()
-        #expect(AppConfig.defaultChatGPTMeetingCleanupModel == "gpt-5.4-mini")
+        #expect(AppConfig.defaultChatGPTMeetingCleanupModel == "gpt-5.6-terra")
         #expect(call?.model == AppConfig.defaultChatGPTMeetingCleanupModel)
         #expect(call?.timeout == 120)
     }

@@ -29,6 +29,19 @@ struct CalendarEventContext {
     let id: String
     let title: String
     var participants: [MeetingParticipant] = []
+    let isJoinable: Bool
+
+    init(
+        id: String,
+        title: String,
+        participants: [MeetingParticipant] = [],
+        isJoinable: Bool = true
+    ) {
+        self.id = id
+        self.title = title
+        self.participants = participants
+        self.isJoinable = isJoinable
+    }
 }
 
 /// A running application on the system.

@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/muesli_spm_cache.sh"
+source "$ROOT/scripts/localvqe_runtime.sh"
 PACKAGE_DIR="$ROOT/native/MuesliNative"
 DIST_DIR="$ROOT/dist-native"
 INSTALL_DIR="${MUESLI_INSTALL_DIR:-/Applications}"
@@ -15,7 +16,7 @@ APP_BUNDLE_NAME="${MUESLI_APP_BUNDLE_NAME:-$APP_NAME.app}"
 APP_EXECUTABLE_NAME="${MUESLI_EXECUTABLE_NAME:-Guesli}"
 APP_SUPPORT_DIR_NAME="${MUESLI_SUPPORT_DIR_NAME:-Guesli}"
 BUNDLE_ID="${MUESLI_BUNDLE_ID:-com.guesli.app}"
-DEFAULT_APP_VERSION="0.7.2.12"
+DEFAULT_APP_VERSION="0.8.3.2"
 APP_VERSION="${MUESLI_BUILD_VERSION:-$DEFAULT_APP_VERSION}"
 APP_BUNDLE_VERSION="${MUESLI_BUNDLE_VERSION:-$APP_VERSION}"
 APP_SHORT_VERSION="${MUESLI_SHORT_VERSION:-$APP_VERSION}"
@@ -91,12 +92,25 @@ for bundle in "$BIN_DIR"/*.bundle; do
   ditto "$bundle" "$STAGED_APP_DIR/Contents/Resources/$(basename "$bundle")"
 done
 
-# Bundle optional LocalVQE runtime if it has been built for local AEC testing.
+# Bundle the complete LocalVQE runtime when available. Release packaging sets
+# both BUILD and REQUIRE so a half-present runtime can never silently ship.
 LOCALVQE_LIB_DIR="${MUESLI_LOCALVQE_LIB_DIR:-$ROOT/native/MuesliNative/LocalVQE/lib}"
-if [[ -d "$LOCALVQE_LIB_DIR" ]]; then
-  find "$LOCALVQE_LIB_DIR" -maxdepth 1 \( -name "liblocalvqe*.dylib" -o -name "libggml*.dylib" -o -name "libggml*.so" \) \( -type f -o -type l \) | while read -r dylib; do
+BUILD_LOCALVQE="${MUESLI_BUILD_LOCALVQE:-0}"
+REQUIRE_LOCALVQE="${MUESLI_REQUIRE_LOCALVQE:-0}"
+if ! muesli_localvqe_runtime_is_complete "$LOCALVQE_LIB_DIR" >/dev/null 2>&1 && [[ "$BUILD_LOCALVQE" == "1" ]]; then
+  MUESLI_LOCALVQE_LIB_DIR="$LOCALVQE_LIB_DIR" "$ROOT/scripts/build_localvqe.sh"
+fi
+if muesli_localvqe_runtime_is_complete "$LOCALVQE_LIB_DIR"; then
+  while IFS= read -r dylib; do
+    [[ -n "$dylib" ]] || continue
     cp -P "$dylib" "$STAGED_APP_DIR/Contents/MacOS/$(basename "$dylib")"
-  done
+  done < <(muesli_collect_localvqe_runtime "$LOCALVQE_LIB_DIR")
+  echo "Bundled complete LocalVQE runtime from $LOCALVQE_LIB_DIR"
+elif [[ "$REQUIRE_LOCALVQE" == "1" ]]; then
+  echo "ERROR: complete LocalVQE runtime is required for this build." >&2
+  exit 1
+else
+  echo "Warning: LocalVQE runtime unavailable; meeting AEC will use DTLN." >&2
 fi
 LOCALVQE_MODEL_PATH="${MUESLI_LOCALVQE_MODEL_PATH:-$ROOT/native/MuesliNative/LocalVQE/models/localvqe-v1.2-1.3M-f32.gguf}"
 if [[ -f "$LOCALVQE_MODEL_PATH" ]]; then
@@ -115,6 +129,9 @@ cp "$ROOT/assets/Nvidia_logo.svg.png" "$STAGED_APP_DIR/Contents/Resources/nvidia
 cp "$ROOT/assets/OpenAI_Logo.svg.png" "$STAGED_APP_DIR/Contents/Resources/openai-logo.png"
 cp "$ROOT/assets/cohere.png" "$STAGED_APP_DIR/Contents/Resources/cohere-logo.png"
 cp "$ROOT/assets/Qwen_logo.svg.png" "$STAGED_APP_DIR/Contents/Resources/qwen-logo.png"
+cp "$ROOT/NOTICE" "$STAGED_APP_DIR/Contents/Resources/NOTICE"
+cp "$ROOT/native/MuesliNative/Sources/MuesliCore/Qwen3ASR/LICENSE-Apache-2.0" \
+  "$STAGED_APP_DIR/Contents/Resources/Qwen3ASR-LICENSE-Apache-2.0"
 if [[ -d "$ROOT/assets/fonts" ]]; then
   ditto "$ROOT/assets/fonts" "$STAGED_APP_DIR/Contents/Resources/fonts"
 fi
@@ -185,6 +202,7 @@ fi
 mkdir -p "$INSTALL_DIR"
 rm -rf "$APP_DIR"
 ditto "$STAGED_APP_DIR" "$APP_DIR"
+xattr -cr "$APP_DIR" 2>/dev/null || true
 
 if [[ "$SKIP_SIGN" != "1" ]]; then
   if ! security find-identity -v -p codesigning | grep -Fq "$SIGN_IDENTITY"; then
