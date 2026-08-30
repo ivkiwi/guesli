@@ -25,6 +25,18 @@ private struct DictationMicrophoneOption: Identifiable {
     var id: String { uid ?? "__automatic__" }
 }
 
+enum SettingsPermissionRefreshReason {
+    case initialDisplay, periodicPoll, permissionRequested, settingsSelected, appActivated
+
+    var refreshesLaunchAtLogin: Bool { self == .appActivated }
+    var refreshesSystemAudio: Bool {
+        switch self {
+        case .initialDisplay, .settingsSelected, .appActivated: true
+        case .periodicPoll, .permissionRequested: false
+        }
+    }
+}
+
 struct SettingsView: View {
     private enum PendingDataDestruction {
         case dictations
@@ -245,12 +257,12 @@ struct SettingsView: View {
             if tab == .settings {
                 refreshDownloadedModelOptions()
                 refreshDictationInputDevices()
-                refreshPermissionStatuses(refreshLaunchAtLogin: true)
+                refreshPermissionStatuses(for: .settingsSelected)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             guard appState.selectedTab == .settings else { return }
-            refreshPermissionStatuses(refreshLaunchAtLogin: true)
+            refreshPermissionStatuses(for: .appActivated)
         }
         .onChange(of: appState.selectedBackend) { _, _ in
             refreshDownloadedModelOptions()
@@ -1723,7 +1735,9 @@ struct SettingsView: View {
                     "System Audio",
                     granted: systemAudioGranted,
                     action: {
-                        Task { await CoreAudioSystemRecorder.requestSystemAudioAccess() }
+                        Task { @MainActor in
+                            systemAudioGranted = await CoreAudioSystemRecorder.requestSystemAudioAccess()
+                        }
                     },
                     pane: "Privacy_ScreenCapture"
                 )
@@ -1783,11 +1797,11 @@ struct SettingsView: View {
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { _ in
                 Task { @MainActor in
-                    refreshPermissionStatuses()
+                    refreshPermissionStatuses(for: .permissionRequested)
                 }
             }
         case .authorized:
-            refreshPermissionStatuses()
+            refreshPermissionStatuses(for: .permissionRequested)
         case .denied, .restricted:
             openPrivacyPane("Privacy_Microphone")
         @unknown default:
@@ -1848,10 +1862,10 @@ struct SettingsView: View {
     }
 
     private func startPermissionPolling() {
-        refreshPermissionStatuses(refreshLaunchAtLogin: true)
+        refreshPermissionStatuses(for: .initialDisplay)
         permissionPollTimer?.invalidate()
         let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            refreshPermissionStatuses()
+            refreshPermissionStatuses(for: .periodicPoll)
         }
         RunLoop.main.add(timer, forMode: .common)
         permissionPollTimer = timer
@@ -1862,13 +1876,13 @@ struct SettingsView: View {
         permissionPollTimer = nil
     }
 
-    private func refreshPermissionStatuses(refreshLaunchAtLogin: Bool = false) {
+    private func refreshPermissionStatuses(for reason: SettingsPermissionRefreshReason) {
         micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         accessibilityGranted = AXIsProcessTrusted()
         controller.reconcilePendingDictionaryCorrectionAccessibilityEnable()
         inputMonitoringGranted = CGPreflightListenEventAccess()
         screenRecordingGranted = CGPreflightScreenCaptureAccess()
-        if refreshLaunchAtLogin {
+        if reason.refreshesLaunchAtLogin {
             controller.refreshLaunchAtLoginState()
         }
         if accessibilityGranted && pendingScreenContextEnable {
@@ -1888,7 +1902,9 @@ struct SettingsView: View {
             accessibilityGranted: accessibilityGranted,
             inputMonitoringGranted: inputMonitoringGranted
         )
-        refreshSystemAudioPermissionIfNeeded()
+        if reason.refreshesSystemAudio {
+            refreshSystemAudioPermissionIfNeeded()
+        }
     }
 
     private var isPendingScreenContextGrantExpired: Bool {
