@@ -182,6 +182,7 @@ struct ParakeetLanguageTests {
         #expect(ParakeetLanguage.resolved("RU") == .russian)
         #expect(ParakeetLanguage.resolved("bogus") == .auto)
         #expect(ParakeetLanguage.auto.isoCode == nil)
+        #expect(ParakeetLanguage.auto.label == "Auto-detect")
         #expect(ParakeetLanguage.russian.isoCode == "ru")
 
         var config = AppConfig()

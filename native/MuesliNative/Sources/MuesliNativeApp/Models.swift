@@ -351,6 +351,7 @@ enum ParakeetLanguage: String, CaseIterable, Codable, Sendable {
     static let defaultLanguage: Self = .auto
 
     var label: String {
+        if self == .auto { return "Auto-detect" }
         Locale(identifier: "en").localizedString(forLanguageCode: rawValue) ?? rawValue.uppercased()
     }
 
