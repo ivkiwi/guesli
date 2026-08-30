@@ -2,6 +2,15 @@
     <channel>
         <title>Guesli</title>
         <item>
+            <title>0.0.0-beta.20</title>
+            <pubDate>Sun, 30 Aug 2026 22:47:47 +0000</pubDate>
+            <link>https://github.com/ivkiwi/guesli/releases</link>
+            <sparkle:version>20.1</sparkle:version>
+            <sparkle:shortVersionString>0.0.0-beta.20</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/ivkiwi/guesli/releases/download/beta-0.0.0-beta.20-20-1/Guesli-0.0.0-beta.20-selfsigned-unnotarized.dmg" length="113621930" type="application/octet-stream" sparkle:edSignature="a3vDqyceytuH//YyKuuLmG1AHzgXdHlQf7fPDB5I1UmLxLXaWoTTThyoNF8k/doLhoPlkClT5P8vOgJDwAnLAg=="/>
+        </item><item>
             <title>0.8.3.1</title>
             <pubDate>Sun, 23 Aug 2026 15:30:28 +0000</pubDate>
             <link>https://github.com/ivkiwi/guesli/releases</link>
