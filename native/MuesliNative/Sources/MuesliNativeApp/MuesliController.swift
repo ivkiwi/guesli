@@ -2429,11 +2429,13 @@ public final class MuesliController: NSObject {
         syncAppState()
     }
 
-    /// Refresh the EventKit-available calendars list. Cheap (no network), safe
-    /// to call frequently — driven by Settings panel onAppear and by the
-    /// EKEventStoreChangedNotification handler.
-    func refreshAvailableEventKitCalendars() {
-        appState.availableEventKitCalendars = calendarMonitor.availableCalendars()
+    /// Refresh without blocking the main actor on EventKit enumeration.
+    func refreshAvailableEventKitCalendars() async {
+        let calendars = await Task.detached(priority: .utility) {
+            CalendarMonitor.availableCalendars()
+        }.value
+        guard !Task.isCancelled else { return }
+        appState.availableEventKitCalendars = calendars
     }
 
     /// Refresh the Google calendar list via the Calendar API. No-op when OAuth
@@ -2586,7 +2588,7 @@ public final class MuesliController: NSObject {
     private func refreshCalendarPipeline(reason: String, meetingTrigger: MeetingDetectionTrigger) {
         Task { @MainActor in
             self.calendarMonitor.start()
-            self.refreshAvailableEventKitCalendars()
+            await self.refreshAvailableEventKitCalendars()
             let refreshed = await self.refreshUpcomingCalendarEvents(reason: reason)
             guard refreshed else { return }
             self.checkUpcomingCalendarNotifications(reason: reason)

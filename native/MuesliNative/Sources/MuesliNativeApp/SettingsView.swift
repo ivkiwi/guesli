@@ -1263,8 +1263,11 @@ struct SettingsView: View {
             .padding(.top, MuesliTheme.spacing8)
         }
         .onAppear {
-            controller.refreshAvailableEventKitCalendars()
-            Task { await controller.refreshGoogleCalendarList() }
+            Task {
+                async let eventKitRefresh: Void = controller.refreshAvailableEventKitCalendars()
+                async let googleRefresh: Void = controller.refreshGoogleCalendarList()
+                _ = await (eventKitRefresh, googleRefresh)
+            }
         }
     }
 
