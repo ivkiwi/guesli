@@ -16,10 +16,48 @@ APP_BUNDLE_NAME="${MUESLI_APP_BUNDLE_NAME:-$APP_NAME.app}"
 APP_EXECUTABLE_NAME="${MUESLI_EXECUTABLE_NAME:-Guesli}"
 APP_SUPPORT_DIR_NAME="${MUESLI_SUPPORT_DIR_NAME:-Guesli}"
 BUNDLE_ID="${MUESLI_BUNDLE_ID:-com.guesli.app}"
-DEFAULT_APP_VERSION="0.8.3.2"
+DEFAULT_APP_VERSION="0.8.3.4"
 APP_VERSION="${MUESLI_BUILD_VERSION:-$DEFAULT_APP_VERSION}"
-APP_BUNDLE_VERSION="${MUESLI_BUNDLE_VERSION:-$APP_VERSION}"
 APP_SHORT_VERSION="${MUESLI_SHORT_VERSION:-$APP_VERSION}"
+
+sparkle_bundle_version() {
+  local version="$1"
+  local major minor patch revision
+
+  if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    major="${BASH_REMATCH[1]}"
+    minor="${BASH_REMATCH[2]}"
+    patch="${BASH_REMATCH[3]}"
+    revision="${BASH_REMATCH[4]}"
+  elif [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-(alpha|beta|preprod)\.([0-9]+))?$ ]]; then
+    major="${BASH_REMATCH[1]}"
+    minor="${BASH_REMATCH[2]}"
+    patch="${BASH_REMATCH[3]}"
+    revision="${BASH_REMATCH[6]:-0}"
+  else
+    echo "Unsupported app version for CFBundleVersion: $version" >&2
+    return 1
+  fi
+
+  major=$((10#$major))
+  minor=$((10#$minor))
+  patch=$((10#$patch))
+  revision=$((10#$revision))
+  if (( major > 89 || minor > 99 || patch > 99 || revision > 99 )); then
+    echo "App version component exceeds CFBundleVersion limits: $version" >&2
+    return 1
+  fi
+
+  # Epoch 1000 keeps semantic builds newer than legacy CI run-number builds such as 21.1.
+  printf '%d.%d.%d\n' "$((1000 + major * 100 + minor))" "$patch" "$revision"
+}
+
+if [[ "${1:-}" == "--print-bundle-version" ]]; then
+  sparkle_bundle_version "${2:?missing app version}"
+  exit
+fi
+
+APP_BUNDLE_VERSION="${MUESLI_BUNDLE_VERSION:-$(sparkle_bundle_version "$APP_SHORT_VERSION")}"
 SPARKLE_FEED_URL="${MUESLI_SPARKLE_FEED_URL-https://raw.githubusercontent.com/ivkiwi/guesli/sparkle-feed/docs/appcast-guesli.xml}"
 SPARKLE_EDKEY="${MUESLI_SPARKLE_EDKEY-x1xV1WAX32xkX4Yl4dxV9HctwCP/dm/K/9YUzWxk7Kc=}"
 STAGED_APP_DIR="$DIST_DIR/$APP_BUNDLE_NAME"
