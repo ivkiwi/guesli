@@ -1462,6 +1462,44 @@ final class FloatingIndicatorController: NSObject {
         anchor == .custom || anchor.isDockPosition ? screen.frame : screen.visibleFrame
     }
 
+    static func customIndicatorCenter(
+        saved: CGPointCodable?,
+        currentFrame: NSRect?,
+        screenFrame: NSRect,
+        size: NSSize,
+        fallback: CGPoint
+    ) -> CGPoint {
+        if let saved,
+           isUsableIndicatorCenter(CGPoint(x: saved.x, y: saved.y), in: screenFrame, size: size) {
+            return CGPoint(x: saved.x, y: saved.y)
+        }
+        if let currentFrame, currentFrame.width > 0 {
+            return CGPoint(x: currentFrame.midX, y: currentFrame.midY)
+        }
+        return fallback
+    }
+
+    static func dockHoverFrame(
+        baseFrame: NSRect,
+        expandedSize: NSSize,
+        dockFrame: NSRect,
+        screenFrame: NSRect
+    ) -> NSRect {
+        let growsLeft = dockFrame.height > dockFrame.width
+            ? dockFrame.midX >= screenFrame.midX
+            : baseFrame.midX >= dockFrame.midX
+        let proposedX = growsLeft ? baseFrame.maxX - expandedSize.width : baseFrame.minX
+        return NSRect(
+            x: min(max(proposedX, screenFrame.minX), screenFrame.maxX - expandedSize.width),
+            y: min(
+                max(baseFrame.midY - expandedSize.height / 2, screenFrame.minY),
+                screenFrame.maxY - expandedSize.height
+            ),
+            width: expandedSize.width,
+            height: expandedSize.height
+        )
+    }
+
     static func isUsableIndicatorCenter(
         _ center: CGPoint,
         in visibleFrame: NSRect,
@@ -1476,10 +1514,11 @@ final class FloatingIndicatorController: NSObject {
             return NSRect(x: 0, y: 0, width: 64, height: 28)
         }
         let screen = targetScreen.visibleFrame
+        let idleSize = NSSize(width: 44, height: 28)
         let size: NSSize
         switch state {
         case .idle:
-            size = isHovered ? NSSize(width: 220, height: 36) : NSSize(width: 44, height: 28)
+            size = isHovered ? NSSize(width: 220, height: 36) : idleSize
         case .preparing: size = NSSize(width: 76, height: 22)
         case .recording: size = NSSize(width: 76, height: 22)
         case .transcribing:
@@ -1494,35 +1533,52 @@ final class FloatingIndicatorController: NSObject {
         // transitions resize around the current position rather than jumping
         // for custom placement. Preset anchors always resolve from config so
         // changing the setting snaps immediately to the chosen anchor.
+        let dockFrame = config.indicatorAnchor == .custom || config.indicatorAnchor.isDockPosition
+            ? Self.dockFrame(on: targetScreen)
+            : nil
+        let anchorSize = state == .idle && isHovered ? idleSize : size
         let center: CGPoint
-        if config.indicatorAnchor == .custom,
-           let currentFrame = panel?.frame,
-           currentFrame.width > 0 {
-            center = CGPoint(x: currentFrame.midX, y: currentFrame.midY)
-        } else {
-            switch config.indicatorAnchor {
-            case .custom:
-                if let saved = config.indicatorOrigin,
-                   Self.isUsableIndicatorCenter(CGPoint(x: saved.x, y: saved.y), in: targetScreen.frame, size: size) {
-                    center = CGPoint(x: saved.x, y: saved.y)
-                } else {
-                    center = Self.defaultIndicatorCenter(in: screen, idleSize: size)
-                }
-            case .dockInner, .dockStart, .dockEnd:
-                center = Self.dockAnchorCenter(
-                    config.indicatorAnchor,
-                    dockFrame: Self.dockFrame(on: targetScreen),
-                    screenFrame: targetScreen.frame,
-                    visibleFrame: screen,
-                    size: size,
-                    gap: CGFloat(config.indicatorDockGap)
-                )
-            default:
-                center = Self.anchorCenter(config.indicatorAnchor, in: screen, size: size)
-            }
+        switch config.indicatorAnchor {
+        case .custom:
+            center = Self.customIndicatorCenter(
+                saved: config.indicatorOrigin,
+                currentFrame: panel?.frame,
+                screenFrame: targetScreen.frame,
+                size: anchorSize,
+                fallback: Self.defaultIndicatorCenter(in: screen, idleSize: anchorSize)
+            )
+        case .dockInner, .dockStart, .dockEnd:
+            center = Self.dockAnchorCenter(
+                config.indicatorAnchor,
+                dockFrame: dockFrame,
+                screenFrame: targetScreen.frame,
+                visibleFrame: screen,
+                size: anchorSize,
+                gap: CGFloat(config.indicatorDockGap)
+            )
+        default:
+            center = Self.anchorCenter(config.indicatorAnchor, in: screen, size: size)
         }
 
         let bounds = Self.positioningBounds(for: config.indicatorAnchor, on: targetScreen)
+        let baseFrame = NSRect(
+            x: min(max(center.x - anchorSize.width / 2, bounds.minX), bounds.maxX - anchorSize.width),
+            y: min(max(center.y - anchorSize.height / 2, bounds.minY), bounds.maxY - anchorSize.height),
+            width: anchorSize.width,
+            height: anchorSize.height
+        )
+        if state == .idle,
+           isHovered,
+           let dockFrame,
+           config.indicatorAnchor.isDockPosition
+                || baseFrame.insetBy(dx: -64, dy: -64).intersects(dockFrame) {
+            return Self.dockHoverFrame(
+                baseFrame: baseFrame,
+                expandedSize: size,
+                dockFrame: dockFrame,
+                screenFrame: bounds
+            )
+        }
         let x = min(max(center.x - size.width / 2, bounds.minX), bounds.maxX - size.width)
         let y = min(max(center.y - size.height / 2, bounds.minY), bounds.maxY - size.height)
         return NSRect(x: x, y: y, width: size.width, height: size.height)

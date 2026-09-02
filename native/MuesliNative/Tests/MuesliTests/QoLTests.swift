@@ -223,6 +223,25 @@ struct IndicatorFrameSizeTests {
                 gap: 12
             ) == CGPoint(x: 1174, y: 40)
         )
+
+        let savedCenter = CGPointCodable(x: 1885, y: 900)
+        #expect(
+            FloatingIndicatorController.customIndicatorCenter(
+                saved: savedCenter,
+                currentFrame: NSRect(x: 1700, y: 882, width: 220, height: 36),
+                screenFrame: NSRect(x: 0, y: 0, width: 1920, height: 1243),
+                size: size,
+                fallback: .zero
+            ) == CGPoint(x: 1885, y: 900)
+        )
+        #expect(
+            FloatingIndicatorController.dockHoverFrame(
+                baseFrame: NSRect(x: 1863, y: 886, width: 44, height: 28),
+                expandedSize: NSSize(width: 220, height: 36),
+                dockFrame: NSRect(x: 1860, y: 325, width: 50, height: 555),
+                screenFrame: NSRect(x: 0, y: 0, width: 1920, height: 1243)
+            ) == NSRect(x: 1687, y: 882, width: 220, height: 36)
+        )
     }
 
     @Test("transcribing pill widens for live CUA status labels")
