@@ -8,6 +8,9 @@ trap 'rm -rf "$TMP"' EXIT
 
 test "$(MUESLI_RELEASE_VERSION='0.8.0-beta.2' GITHUB_RUN_NUMBER=41 "$ROOT/scripts/release_version.sh")" = '0.8.0-beta.2'
 test "$(MUESLI_RELEASE_VERSION='' GITHUB_RUN_NUMBER=41 "$ROOT/scripts/release_version.sh")" = '0.0.0-beta.41'
+test "$("$ROOT/scripts/build_native_app.sh" --print-bundle-version 0.8.3.2)" = '1008.3.2'
+test "$("$ROOT/scripts/build_native_app.sh" --print-bundle-version 0.8.3.4)" = '1008.3.4'
+test "$("$ROOT/scripts/build_native_app.sh" --print-bundle-version 0.0.0-beta.21)" = '1000.0.21'
 payload="\$(touch $TMP/injected)"
 if MUESLI_RELEASE_VERSION="$payload" GITHUB_RUN_NUMBER=41 \
   "$ROOT/scripts/release_version.sh" >/dev/null 2>&1; then
@@ -54,6 +57,7 @@ grep -Fq 'needs: authorize' "$WORKFLOW"
 grep -Fq 'actions: read' "$WORKFLOW"
 grep -Fq 'contents: write' "$WORKFLOW"
 grep -Fq 'MUESLI_RELEASE_VERSION: ${{ inputs.version }}' "$WORKFLOW"
+grep -Fq 'BUNDLE_VERSION="$(./scripts/build_native_app.sh --print-bundle-version "$VERSION")"' "$WORKFLOW"
 test "$(grep -Fc '${{ inputs.version }}' "$WORKFLOW")" -eq 1
 if grep -Fq '${{ github.event.inputs.version }}' "$WORKFLOW"; then
   echo "Release input is still interpolated into shell source" >&2

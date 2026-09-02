@@ -47,7 +47,7 @@ jobs:
           fi
 
           VERSION="$(./scripts/release_version.sh)"
-          BUNDLE_VERSION="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          BUNDLE_VERSION="$(./scripts/build_native_app.sh --print-bundle-version "$VERSION")"
           SAFE_VERSION="$VERSION"
           TAG_NAME="beta-${SAFE_VERSION}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           RELEASE_TITLE="Guesli Beta ${VERSION}"
