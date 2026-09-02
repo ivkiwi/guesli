@@ -897,6 +897,9 @@ enum IndicatorAnchor: String, Codable, CaseIterable {
     case bottomLeading = "bottom_leading"
     case bottomCenter = "bottom_center"
     case bottomTrailing = "bottom_trailing"
+    case dockInner = "dock_inner"
+    case dockStart = "dock_start"
+    case dockEnd = "dock_end"
     case custom = "custom"
 
     var label: String {
@@ -909,8 +912,15 @@ enum IndicatorAnchor: String, Codable, CaseIterable {
         case .bottomLeading: return "Bottom Left"
         case .bottomCenter: return "Bottom Center"
         case .bottomTrailing: return "Bottom Right"
+        case .dockInner: return "Dock — Inner Edge"
+        case .dockStart: return "Dock — Above / Left"
+        case .dockEnd: return "Dock — Below / Right"
         case .custom: return "Custom"
         }
+    }
+
+    var isDockPosition: Bool {
+        self == .dockInner || self == .dockStart || self == .dockEnd
     }
 }
 
@@ -1141,6 +1151,7 @@ struct AppConfig: Codable {
     var openDashboardOnLaunch: Bool = true
     var showFloatingIndicator: Bool = true
     var indicatorAnchor: IndicatorAnchor = .midTrailing
+    var indicatorDockGap: Int = 20
     var dashboardWindowFrame: WindowFrame? = nil
     var indicatorOrigin: CGPointCodable? = nil
     var openAIAPIKey: String = ""
@@ -1256,6 +1267,7 @@ struct AppConfig: Codable {
         case openDashboardOnLaunch = "open_dashboard_on_launch"
         case showFloatingIndicator = "show_floating_indicator"
         case indicatorAnchor = "indicator_anchor"
+        case indicatorDockGap = "indicator_dock_gap"
         case dashboardWindowFrame = "dashboard_window_frame"
         case indicatorOrigin = "indicator_origin"
         case openAIAPIKey = "openai_api_key"
@@ -1414,6 +1426,7 @@ struct AppConfig: Codable {
         showFloatingIndicator = (try? c.decode(Bool.self, forKey: .showFloatingIndicator)) ?? defaults.showFloatingIndicator
         indicatorAnchor = (try? c.decode(IndicatorAnchor.self, forKey: .indicatorAnchor))
             ?? ((try? c.decodeIfPresent(CGPointCodable.self, forKey: .indicatorOrigin)) != nil ? .custom : .midTrailing)
+        indicatorDockGap = min(max((try? c.decode(Int.self, forKey: .indicatorDockGap)) ?? defaults.indicatorDockGap, 0), 200)
         dashboardWindowFrame = try? c.decode(WindowFrame.self, forKey: .dashboardWindowFrame)
         indicatorOrigin = try? c.decode(CGPointCodable.self, forKey: .indicatorOrigin)
         openAIAPIKey = (try? c.decode(String.self, forKey: .openAIAPIKey)) ?? defaults.openAIAPIKey
