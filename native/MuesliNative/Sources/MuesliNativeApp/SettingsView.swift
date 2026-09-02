@@ -1296,6 +1296,26 @@ struct SettingsView: View {
                         controller.refreshIndicatorVisibility()
                     }
                 }
+                if appState.config.indicatorAnchor.isDockPosition {
+                    Divider().background(MuesliTheme.surfaceBorder)
+                    settingsRow("Dock gap") {
+                        Stepper(
+                            value: Binding(
+                                get: { min(max(appState.config.indicatorDockGap, 0), 200) },
+                                set: { newValue in
+                                    controller.updateConfig { $0.indicatorDockGap = newValue }
+                                    controller.refreshIndicatorVisibility()
+                                }
+                            ),
+                            in: 0...200
+                        ) {
+                            Text("\(appState.config.indicatorDockGap) px")
+                                .font(MuesliTheme.body())
+                                .foregroundStyle(MuesliTheme.textPrimary)
+                                .monospacedDigit()
+                        }
+                    }
+                }
             }
 
             settingsSection("Appearance") {

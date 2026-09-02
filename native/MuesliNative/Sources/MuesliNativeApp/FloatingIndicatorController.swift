@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import QuartzCore
 import Foundation
 import MuesliCore
@@ -611,7 +612,8 @@ final class FloatingIndicatorController: NSObject {
         let config = configStore.load()
         if panel == nil { createPanel(config: config) }
         guard let panel, let contentView, let iconLabel, let textLabel else { return }
-        guard let screen = NSScreen.main?.visibleFrame else { return }
+        guard let targetScreen = NSScreen.main else { return }
+        let screen = Self.positioningBounds(for: config.indicatorAnchor, on: targetScreen)
 
         let warningFont = NSFont.systemFont(ofSize: 11, weight: .medium)
         let warningSize = warningPillSize(
@@ -683,7 +685,8 @@ final class FloatingIndicatorController: NSObject {
         let config = configStore.load()
         if panel == nil { createPanel(config: config) }
         guard let panel, let contentView, let textLabel else { return }
-        guard let screen = NSScreen.main?.visibleFrame else { return }
+        guard let targetScreen = NSScreen.main else { return }
+        let screen = Self.positioningBounds(for: config.indicatorAnchor, on: targetScreen)
 
         isShowingLoading = true
         let loadingSize = loadingPillSize(message: message, screen: screen)
@@ -1372,9 +1375,91 @@ final class FloatingIndicatorController: NSObject {
             return CGPoint(x: centerX, y: bottomY)
         case .bottomTrailing:
             return CGPoint(x: trailingX, y: bottomY)
+        case .dockInner, .dockStart, .dockEnd:
+            return CGPoint(x: centerX, y: bottomY + 12)
         case .custom:
             return defaultIndicatorCenter(in: visibleFrame, idleSize: size)
         }
+    }
+
+    static func dockAnchorCenter(
+        _ anchor: IndicatorAnchor,
+        dockFrame: NSRect?,
+        screenFrame: NSRect,
+        visibleFrame: NSRect,
+        size: NSSize,
+        gap: CGFloat
+    ) -> CGPoint {
+        guard let dockFrame else {
+            return CGPoint(
+                x: visibleFrame.midX,
+                y: visibleFrame.minY + size.height / 2 + gap
+            )
+        }
+        let gap = max(gap, 0)
+        if dockFrame.height > dockFrame.width {
+            switch anchor {
+            case .dockStart:
+                return CGPoint(x: dockFrame.midX, y: dockFrame.maxY + gap + size.height / 2)
+            case .dockEnd:
+                return CGPoint(x: dockFrame.midX, y: dockFrame.minY - gap - size.height / 2)
+            default:
+                let x = dockFrame.midX < screenFrame.midX
+                    ? dockFrame.maxX + gap + size.width / 2
+                    : dockFrame.minX - gap - size.width / 2
+                return CGPoint(x: x, y: dockFrame.midY)
+            }
+        }
+        switch anchor {
+        case .dockStart:
+            return CGPoint(x: dockFrame.minX - gap - size.width / 2, y: dockFrame.midY)
+        case .dockEnd:
+            return CGPoint(x: dockFrame.maxX + gap + size.width / 2, y: dockFrame.midY)
+        default:
+            let y = dockFrame.midY < screenFrame.midY
+                ? dockFrame.maxY + gap + size.height / 2
+                : dockFrame.minY - gap - size.height / 2
+            return CGPoint(x: dockFrame.midX, y: y)
+        }
+    }
+
+    private static func dockFrame(on screen: NSScreen) -> NSRect? {
+        guard let dockPID = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "com.apple.dock")
+            .first?.processIdentifier
+        else { return nil }
+
+        let app = AXUIElementCreateApplication(dockPID)
+        var childrenRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+              let children = childrenRef as? [AXUIElement],
+              let dock = children.first,
+              var frame = accessibilityFrame(of: dock)
+        else { return nil }
+
+        frame.origin.y = (NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY) - frame.maxY
+        return frame.intersects(screen.frame) ? frame : nil
+    }
+
+    private static func accessibilityFrame(of element: AXUIElement) -> NSRect? {
+        var positionRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRef) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let positionRef,
+              let sizeRef else { return nil }
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionRef as! AXValue, .cgPoint, &position),
+              AXValueGetValue(sizeRef as! AXValue, .cgSize, &size),
+              size.width > 0,
+              size.height > 0 else { return nil }
+        return NSRect(origin: position, size: size)
+    }
+
+    private static func positioningBounds(for anchor: IndicatorAnchor, on screen: NSScreen) -> NSRect {
+        anchor == .custom || anchor.isDockPosition ? screen.frame : screen.visibleFrame
     }
 
     static func isUsableIndicatorCenter(
@@ -1387,9 +1472,10 @@ final class FloatingIndicatorController: NSObject {
     }
 
     private func frameForState(_ state: DictationState, config: AppConfig) -> NSRect {
-        guard let screen = NSScreen.main?.visibleFrame else {
+        guard let targetScreen = NSScreen.main else {
             return NSRect(x: 0, y: 0, width: 64, height: 28)
         }
+        let screen = targetScreen.visibleFrame
         let size: NSSize
         switch state {
         case .idle:
@@ -1417,18 +1503,28 @@ final class FloatingIndicatorController: NSObject {
             switch config.indicatorAnchor {
             case .custom:
                 if let saved = config.indicatorOrigin,
-                   Self.isUsableIndicatorCenter(CGPoint(x: saved.x, y: saved.y), in: screen, size: size) {
+                   Self.isUsableIndicatorCenter(CGPoint(x: saved.x, y: saved.y), in: targetScreen.frame, size: size) {
                     center = CGPoint(x: saved.x, y: saved.y)
                 } else {
                     center = Self.defaultIndicatorCenter(in: screen, idleSize: size)
                 }
+            case .dockInner, .dockStart, .dockEnd:
+                center = Self.dockAnchorCenter(
+                    config.indicatorAnchor,
+                    dockFrame: Self.dockFrame(on: targetScreen),
+                    screenFrame: targetScreen.frame,
+                    visibleFrame: screen,
+                    size: size,
+                    gap: CGFloat(config.indicatorDockGap)
+                )
             default:
                 center = Self.anchorCenter(config.indicatorAnchor, in: screen, size: size)
             }
         }
 
-        let x = min(max(center.x - size.width / 2, screen.minX), screen.maxX - size.width)
-        let y = min(max(center.y - size.height / 2, screen.minY), screen.maxY - size.height)
+        let bounds = Self.positioningBounds(for: config.indicatorAnchor, on: targetScreen)
+        let x = min(max(center.x - size.width / 2, bounds.minX), bounds.maxX - size.width)
+        let y = min(max(center.y - size.height / 2, bounds.minY), bounds.maxY - size.height)
         return NSRect(x: x, y: y, width: size.width, height: size.height)
     }
 
